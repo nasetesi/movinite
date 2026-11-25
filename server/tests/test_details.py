@@ -38,7 +38,7 @@ def check(cond, msg):
 def main():
     mock_tmdb.serve(PORT)
     db.migrate()
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] == "6", "schema 6")
+    check(int(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"]) >= 6, "schema 6 or later")
     now = int(time.time())
     # library: 1001/1002/1003 real mock movies + synthetic 5001.. with genres / collection for the similar list
     films = [(1, 1001, "The Big Test Movie"), (2, 1002, "Another Film"), (3, 1003, "Remux Test")]

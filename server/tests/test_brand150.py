@@ -71,11 +71,11 @@ check("ROT.open()" in js and "ROT.close()" in js and "ROT.manualExit()" in js, "
 check("MSAndroid.player" in rot, "tells the Android app (1.4+) when the player opens / closes")
 check("html.pl-pseudo-fs #player" in css and "100dvh" in css, "pseudo full screen CSS")
 # ---- Android source (if this copy ships it)
-A = os.environ.get("ANDROID_SRC", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "android"))
+A = os.environ.get("ANDROID_SRC", "/workspace/media-server/android/src")
 if os.path.isdir(A):
-    R = os.path.join(A, "app", "src", "main"); g = rd(A, "app", "build.gradle"); ma = rd(R, "java", "org", "movinite", "app", "MainActivity.java")
+    R = os.path.join(A, "app", "src", "main"); g = rd(A, "app", "build.gradle"); ma = rd(R, "java", "com", "tukuia", "mediaserver", "MainActivity.java")
     _vc = re.search(r"versionCode (\d+)", g); _vn = re.search(r"versionName '1\.(\d+)'", g)
-    check(_vc and int(_vc.group(1)) >= 5 and _vn and int(_vn.group(1)) >= 4 and "org.movinite.app" in g, "Android: 1.4+ (code %s), same package" % (_vc and _vc.group(1)))   # 1.5.1: app 1.5 = code 6
+    check(_vc and int(_vc.group(1)) >= 5 and _vn and int(_vn.group(1)) >= 4 and "com.tukuia.mediaserver" in g, "Android: 1.4+ (code %s), same package" % (_vc and _vc.group(1)))   # 1.5.1: app 1.5 = code 6
     check('<string name="app_name">Movinite</string>' in rd(R, "res", "values", "strings.xml"), "Android: app name Movinite")
     check("#9637FA" in rd(R, "res", "values", "colors.xml") and os.path.exists(os.path.join(R, "res", "drawable-nodpi", "logo.png")) and not os.path.exists(os.path.join(R, "res", "drawable", "logo.xml")), "Android: logo purple + the official M mark (no wording)")
     for d in ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"]:

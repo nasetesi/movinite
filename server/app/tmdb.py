@@ -708,6 +708,8 @@ def apply_movie_match(item_ids, tmdb_id, status, confidence=None, note=None, can
                 t = c.execute("SELECT title FROM items WHERE id=?", (iid,)).fetchone()
                 if t:
                     c.execute("UPDATE items SET sort_title=? WHERE id=?", (media.sort_key(t[0] or ""), iid))
+        from . import folderart
+        folderart.apply(c, item_ids)     # 1.7.3: folder poster of another film -> TMDB poster of this match
 
 
 def apply_match_result(item_ids, r, force=False):
@@ -784,6 +786,17 @@ def _after_match(library_id, item_ids):
             on_matched(library_id, item_ids)
         except Exception:
             log.exception("on_matched hook")
+
+
+def after_match_items(item_ids):
+    """1.7.1: run the artwork hook once per library when a match touched files on more than one share."""
+    if not item_ids:
+        return
+    by = {}
+    for r in db.rows("SELECT id, library_id FROM items WHERE id IN (%s)" % ",".join("?" * len(item_ids)), list(item_ids)):
+        by.setdefault(r["library_id"], []).append(r["id"])
+    for lid, ids in by.items():
+        _after_match(lid, ids)
 
 
 on_matched = None

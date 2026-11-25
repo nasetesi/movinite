@@ -8,7 +8,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from . import db, media
+from . import db, folderart, media
 
 log = logging.getLogger("media-server.scan")
 
@@ -354,6 +354,11 @@ def _finish(lib, st, state, error):
                   (int(time.time()), summary, lib["id"]))
     scan_log(lib["id"], "scan %s in %ds: %s" % (state, st["finished_at"] - st.get("started_at", st["finished_at"]), summary),
              logging.WARNING if state == "error" else logging.INFO)
+    if lib["kind"] == "movies":
+        try:      # 1.7.3: a folder poster whose .nfo names another film than the match is not shown
+            folderart.apply(library_id=lib["id"])
+        except Exception:
+            log.exception("folder art")
     if state in ("done", "cancelled") and lib["kind"] in ("movies", "tv"):
         _kick_tmdb(lib["id"])
 
@@ -419,6 +424,9 @@ def build_item(lib, root: Path, path: Path, size, mtime):
             img = media.find_local_image(path)
             if img:
                 poster = media.make_image_thumb(img)
+            if info.get("kind") == "movie":      # 1.7.3: remember the folder poster + the film its .nfo names
+                info["art_poster"] = poster
+                info["art_tmdb"] = folderart.nfo_tmdb(str(path)) if poster else 0
         subs = media.find_external_subs(path)
         info["external_subs"] = json.dumps(subs) if subs else None
     info["thumb"] = thumb
@@ -426,7 +434,7 @@ def build_item(lib, root: Path, path: Path, size, mtime):
     allowed = {"media_type", "kind", "title", "sort_title", "edition", "file_title", "year", "show", "season", "episode", "episode_title",
                "artist", "album", "album_artist", "track", "disc", "genre", "duration", "container", "vcodec",
                "acodec", "width", "height", "bitrate", "pix_fmt", "audio_streams", "subtitle_streams",
-               "external_subs", "size", "mtime", "thumb", "poster", "probed"}
+               "external_subs", "size", "mtime", "thumb", "poster", "probed", "art_poster", "art_tmdb"}
     return {k: v for k, v in info.items() if k in allowed}
 
 

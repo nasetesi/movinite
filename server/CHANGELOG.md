@@ -1,5 +1,140 @@
 # Changelog
 
+## 1.7.7 -- 2026-11-25
+Builds on 1.7.6, plus:
+- **Two 4K transcodes stay on the GPU.** Playing two 4K HEVC 10-bit films at once could exhaust VAAPI surfaces (the ffmpeg log was only "ffmpeg exited"). The player then restarted the same GPU attempt, so the stats badge flipped between CPU and GPU, and a full-stage failure could drop the stream to CPU decode (or, after a later encode failure, park the card for 10 minutes for everyone). The hardware path now passes `-extra_hw_frames 64` and `-low_power 1` (the Arc A310 only exposes the low-power / VDENC encoder, which is also what Plex uses). HDR10 / HLG uses `tonemap_vaapi` when ffmpeg has the filter, otherwise `scale_vaapi`. A fallback is sticky for that stream, with the reason logged, and no longer disables the card for other devices. A later seek or playlist reload of the same stream resumes at the stage that actually works. The VM is unchanged (`hw_transcode` off, libx264).
+- **Same account, two devices.** A transcode is limited per player (browser or app), not per login, so two devices signed in as the same user can watch at once. Switching title or quality on one device only replaces that device's session. There is a server-wide cap (default 4, change it under Settings > Transcoding or with `MS_MAX_TRANSCODES`). Hitting the cap is logged and the oldest idle session is evicted.
+- **ffmpeg errors stay visible.** ffmpeg is run at loglevel warning, and when it exits with an error the last 50 lines of `ffmpeg.log` are copied into the journal with the session id before the session directory is deleted. Session destroy is also logged with a reason (idle, client close, replaced, cap, error, shutdown).
+- **No more restart loops.** After an unexpected VAAPI/NVENC exit the same hardware stage is retried once (after a short backoff). If it fails again, that stream falls back stickily with the logged reason and does not bounce back to the failing stage.
+- **Prefer direct play or remux, like Plex.** Auto quality no longer starts a 4K-to-4K transcode just because a 2K/4K quality was saved earlier. If the device can play the original codec, Movinite uses direct play or remux (copy the video, convert only the container/audio). HEVC (including 10-bit) in MKV/MP4 can now be remuxed to fMP4 when the player reports HEVC support (hls.js cannot play HEVC in MPEG-TS). Each player sends a device id and codec capabilities (HEVC MSE, Main10, MKV, AC3) with the playlist request, and those are logged.
+
+
+## 1.7.6 -- 2026-11-25
+Builds on 1.7.5, plus:
+- **Themed now-playing chrome.** The equalizer and close (X) buttons in the full music player use the same rounded-square, purple-accent style and the outlined 24px-grid icon language as the 1.7.4 library icons. Previous and next are the same brightness (mirrored SVGs, shared colour and disabled opacity). A matching add-to-playlist button sits with them.
+- **Top controls auto-hide.** In the full now-playing view, the top-right close button (and the rest of the top chrome: back, add, visualizer toggle, equalizer) fade out after about 3 seconds with no interaction. A tap or touch brings them back with a short fade. The mini player at the bottom of the screen keeps its close button visible.
+- **Beat-reactive visualizer, mixed with the logo.** A radial frequency ring is drawn around the album art with `requestAnimationFrame`, using a Web Audio `AnalyserNode` tapped off the existing equalizer graph (one AudioContext, no second `createMediaElementSource`). The bars use a slowly rotating gradient in the theme purples (`#9637FA`, `#6A16C4`, `#D4BBFF`, magenta, indigo), with bass warmer and brighter, highs lighter, and a soft glow on the bars. A faint matching wash stays on the ring (not a busy page background). The art pulses on bass-energy beats. When a track has no artwork, a smaller transparent Movinite logo floats in the middle of the ring with no square tile. The animation pauses when the full player is closed, the tab is hidden, or the screen is off; it respects `prefers-reduced-motion`; and it can be turned off from the top chrome (saved on this device).
+- **Playlists.** You can create, rename and delete playlists, add a track from a track list (plus button or long-press) or from now playing, remove and reorder tracks, and play or shuffle a playlist. Playlists are stored per user on the server (schema 8, `/api/playlists`, login required). A Playlists section is in the Music library (Albums / Tracks / Playlists) on phone and desktop. The migration takes a one-time snapshot of the database (`media-server.db.pre-schema8`, mode 600) before creating the new tables, and is safe to run more than once.
+
+
+## 1.7.5 -- 2026-11-25
+Builds on 1.7.4, plus:
+- **Pinch to fill the picture on a phone.** In the video player you can pinch out to zoom the picture so it covers the whole screen (`object-fit: cover`) and pinch in to fit the whole picture (`contain`). The choice is remembered on this device. Fit / Fill is also in the Quality (gear) menu. The player tap layer no longer uses `touch-action: manipulation`, which was blocking pinch gestures in the Android WebView; double-tap left/right still skips 10 seconds.
+- **Captions come up promptly and stay on.** Turning subtitles on used to wait for a `<track>` element that was often dropped when the HLS stream (or a quality change) replaced the video source, and the first ffmpeg conversion of an embedded track can take a while, so cues appeared late or vanished on seek. The player now fetches and caches the WebVTT (with the login cookie), paints a custom overlay, prefetches tracks when the film starts, and re-applies them after an HLS attach, a quality change, and on seek. A short "Loading subtitles…" hint shows until the file is ready.
+- **Captions are see-through.** Native `::cue` and the custom overlay use a light translucent box (`rgba(0,0,0,0.25)`) and white text with a strong black outline, so they stay readable on bright scenes without the old opaque black caption bar. The custom overlay is the Android WebView fallback, because WebView often ignores `::cue` (and the cue backdrop).
+- **Server status in the player is a glass panel at the top.** It sits under the title bar, centered, as a compact 2×2 grid (CPU and RAM with small bars, GPU/encoder status, and dropped frames) on a blurred translucent background, and still fades with the other controls so it does not sit on the title on a phone. The **GPU** badge stays the solid purple pill.
+
+
+## 1.7.4 -- 2026-11-25
+- **Outlined library icons in the purple theme.** The emoji used for Movies, TV Shows, Music and
+  Other videos (and the share / this-server heading marks) are replaced by the outlined 24px-grid
+  SVG set chosen from the 1.7.3 icon preview. They use `currentColor` and the theme accent
+  (`--acc-text`, `--acc`) so they match the tab bar and the rest of the chrome. They appear in the
+  Libraries tab (phone and desktop), the sidebar, library page headings, Settings -> Libraries,
+  Scan activity, and the Add library type picker. Cache-busting is stamped `?v=1.7.4` (including
+  `sw.js`) so phones pick up the new icons on the next load.
+
+
+## 1.7.3 -- 2026-11-24
+Builds on 1.7.1, and includes the unreleased 1.7.2 phone work, plus:
+- **Fix match now really changes the poster when the movie's folder has artwork from an old match.** A poster.jpg
+  next to a movie wins over the TMDB poster. When Media Server had saved artwork (poster.jpg + movie.nfo) for an
+  earlier, wrong automatic match, that poster stayed after you fixed the match -- e.g. "Adore (2013)" kept the
+  poster of "Je t'adore" after being matched to Adoration. Now, when the folder's .nfo names a different TMDB film
+  than the current match, the folder poster is set aside and the TMDB poster of the match is shown (cards, details
+  page incl. the large poster, home rows, search). Matching back to the .nfo's film, unmatching, or a folder with no
+  .nfo / a matching .nfo keep showing the folder poster as before. Nothing in the folder is changed.
+  - New columns `items.art_poster` / `items.art_tmdb`; libraries from before 1.7.3 are checked once in the
+    background after start (reads the small .nfo files only, skips shares that are not online).
+  - Fix match re-reads the .nfo of every version and copy, so it takes effect at once.
+- **Artwork saving replaces its own leftovers.** With "Save artwork" on (and the share allowed to write), a
+  poster.jpg / fanart.jpg / movie.nfo that Media Server/Movinite itself wrote for a *different* TMDB film is
+  rewritten for the current match even without "Overwrite". Files written by other tools are never touched.
+- **Phone Libraries tab, kept simple.** The Collections, Recommended, Recently added and Top movies chips
+  under each movie library are gone, so every library is just its card -- the same as TV, Music and Other.
+  The list is still grouped under your share headings (NAS, Backup NAS, ...) and movie libraries
+  still say how many films they hold (1,967 movies), not how many files.
+  (Those two were already in 1.7. If the phone still showed a flat list and "2,022 items", it was keeping an
+  older copy of the page; see cache-busting below.)
+- **The mini music player no longer covers the last library.** On phones, every page leaves room for the
+  player and the tab bar, so you can scroll Music (and anything else) fully into view.
+- **The phone mini-player progress bar stays on the screen.** The bar used to be one crowded row, so on
+  a 360–430 px phone the slider ran off the right edge and the end time disappeared. It is now two rows:
+  title and controls on top, elapsed time, slider and total time on the row below, all inside the player.
+  Dragging the slider still seeks. The full-screen video player's seek bar already fits the width of the
+  phone. When Picture-in-Picture is available, the extra button used to push the last controls off the
+  right edge on a 360 px screen; the time now sits on its own line under the seek bar so every button
+  stays on screen.
+- **Phones pick up an update the next time they load the page.** The page itself is never stored; `app.js` and
+  `style.css` URLs include the version (`?v=1.7.3`); a request for an old URL (`?v=1.6`) is not cached, so the
+  phone revalidates and gets this release. A small service worker (`/sw.js?v=1.7.3`) also fetches the page and
+  those files from the network. After installing, use the Android app's **Reload** shortcut if the Libraries tab
+  still looks like the old one; no new APK is needed (the app is a WebView of this page).
+- **Previous and next match the purple theme.** The mini player's back and forward buttons were Unicode
+  glyphs (often drawn as a default white or system emoji, so they ignored the theme colour). They are now
+  the same SVG style as the rest of the app, in the purple accent, with hover, active and disabled states.
+  The play button matches. The video player's skip-back / skip-forward buttons already used SVGs; their
+  hover state now uses the same purple tint. Playback itself is unchanged.
+- **Music equalizer.** The now-playing view (tap the artwork or title; on a computer the EQ button is also
+  on the mini bar) opens a 10-band equalizer (32 Hz–16 kHz, ±12 dB) built with the Web Audio API, plus an
+  on/off switch, a reset button, and presets: Flat, Bass Boost, Treble Boost, Vocal, Rock, Pop, Jazz,
+  Classical, Dynamic and Custom. Dynamic is a loudness-style curve (+6, +5, +3, 0, −2, −2, 0, +3, +5, +6 dB)
+  with a gentle compressor and modest makeup gain so it stays loud without clipping. Settings are saved on
+  this device. The AudioContext starts on a tap so it works in the phone layout and the Android app. Only
+  the music player is connected; video is left alone. Streams stay on this server, so hooking up the
+  equalizer does not silence playback.
+
+
+## 1.7.1 -- 2026-11-24
+Builds on 1.7, plus:
+- **Poster updates when you Fix match.** On a movie that needed review, picking the right TMDB film (Fix match or
+  Accept suggestion) now refreshes the poster on the details page and on every card for that film. Two things were
+  getting in the way:
+  - The big details-page poster is loaded from `/api/items/{id}/poster-large`, a URL that did not change when the
+    match changed, and the browser was told to cache it for a week -- so it often kept showing the old (or
+    placeholder) image. The URL now includes the poster file (`?v=...`), so a new match is a new URL.
+  - Only the file you had open was updated. A 1080p version of the same film, or the copy on the other share, kept
+    the old match and the old poster. Fix match / Accept / Automatic / Use file name now apply to every version and
+    copy of that title.
+
+
+## 1.7 -- 2026-11-24
+Builds on 1.6, plus:
+- **Side menu grouped by network share.** Libraries are listed under a heading per share (its name, with the
+  share's status dot on the heading); folders on the server itself get their own group, "This server". Each
+  library stays separate -- nothing from two shares is merged into one library. A library only gets its own dot
+  when its state differs from its share (e.g. its folder is missing). Same grouping on the phone Libraries tab
+  and in **Settings -> Libraries**, where the arrows on a share's heading move the whole group and a library's
+  arrows / drag and drop move it within its group. **Rename** on a share's heading changes the name shown (new
+  `PUT /api/shares/{id}/name`); the share's address, login and write setting are not touched.
+- **The same film on two shares is shown once** in the views that span libraries:
+  - **Home page:** libraries of one type holding (mostly) the same titles -- at least half of the smaller one --
+    are treated as mirrors and get ONE section, from the first of them (library order) whose share is online,
+    marked "same films as <other library>". A library with different films keeps its own section.
+  - **Continue watching, My List, search** (films, shows, episodes, albums): each title once.
+  - **Watch progress is kept on every copy and version** of a title (both shares, 4K and 1080p), so it resumes
+    wherever it is played; "Mark watched" does the same. On the first start of 1.7, existing progress is copied
+    to the other files of the same title that have none (inserts only -- no existing row changes).
+  - **A share goes offline:** those views switch to the copy on the share that is online; a details page on the
+    offline share says so and **Play** uses the online copy.
+  - "Same title" = the same TMDB film (+ edition, so a Director's Cut stays separate); unmatched films by title +
+    year; episodes by show folder + season + episode.
+- **Versions: highest resolution first.** Several files of one film in a library (e.g. `Heat (1995) - 2160p.mkv`
+  and `Heat (1995) - 1080p.mp4`) are now ONE poster, always ordered 4K > 2K (1440p) > 1080p > 720p > SD, then
+  bitrate, then file size; the poster opens and plays the best one. Same for the home rows (Recommended, Top
+  movies, Recently added, genre rows used to pick the first file found), Similar movies, an actor's films and two
+  files of one episode on a show page. Movie libraries count films, not files ("1,965 movies"; the files are in
+  the tooltip); collections and genre counts too.
+  - **Poster badge:** "4K" (or "2K") on 4K/2K films; "+1", "+2" when there are more versions (tooltip lists them).
+  - **Version picker** on the details page lists the versions best first (resolution, codec, bitrate, size);
+    picking one opens and plays that file as-is.
+  - **When the best version is not played:** your saved player quality is a transcode size (e.g. 720p) -> the
+    smallest version still at least that big is used (same picture, less work); or the server has no GPU 2K/4K
+    transcoding and this browser can't play the 4K file as-is -> a smaller version it can play directly is used
+    (a short note says which). With GPU transcoding on (the Arc server) the 4K file plays as before.
+- Database: schema 7 (an index on `items.tmdb_id`; the progress copy above). No columns removed, nothing deleted.
+  `update.sh --rollback` restores 1.6. The shares' write settings are unchanged.
+
 ## 1.6 -- 2026-11-24
 Builds on 1.5.5, plus:
 - **Version numbers:** two parts from now on (1.6, 1.7, ...); a third digit only for quick fixes (1.6.1).

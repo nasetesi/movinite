@@ -285,7 +285,7 @@ class H(BaseHTTPRequestHandler):
                 stats["429"] += 1
             return self._json(429, {"status_code": 25, "status_message": "rate limit"}, {"Retry-After": "1"})
         auth = self.headers.get("Authorization", "")
-        if q.get("api_key") not in ("GOODKEY", "0123456789abcdef0123456789abcdef") and auth != "Bearer eyJmock.token.sig":   # gitleaks:allow -- fake test keys for the mock server
+        if q.get("api_key") not in ("GOODKEY", "0123456789abcdef0123456789abcdef") and auth != "Bearer eyJmock.token.sig":
             return self._json(401, {"status_code": 7, "status_message": "Invalid API key"})
         p = u.path[2:]
         delay = float(os.environ.get("MOCK_TMDB_DELAY") or 0)

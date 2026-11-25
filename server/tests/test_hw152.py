@@ -32,14 +32,26 @@ def mstate(s): open(os.environ.get("MOCK_HW_STATE", "/dev/null"), "w").write(s +
 pre, vf, enc = hwaccel.stage_args("vaapi", "/dev/dri/renderD128", "full", 720, 4000)
 check(pre[:2] == ["-threads", "1"] and "-noautorotate" in pre and pre[pre.index("-hwaccel") + 1] == "vaapi" and "-hwaccel_output_format" in pre,
       "vaapi full: hw decode, single decode thread (Arc EOF fix), no autorotate")
-check(vf == "scale_vaapi=w=-2:h=720:format=nv12" and enc[:2] == ["-c:v", "h264_vaapi"] and "-b:v" in enc and enc[enc.index("-maxrate") + 1] == "4000k",
-      "vaapi full: scale_vaapi + h264_vaapi at the profile bitrate (%s)" % vf)
+check(pre[pre.index("-extra_hw_frames") + 1] == "64", "vaapi full: extra_hw_frames 64 for concurrent 4K surfaces")
+check(vf == "scale_vaapi=w=-2:h=720:format=nv12" and enc[:2] == ["-c:v", "h264_vaapi"] and enc[enc.index("-low_power") + 1] == "1"
+      and "-b:v" in enc and enc[enc.index("-maxrate") + 1] == "4000k",
+      "vaapi full: scale_vaapi + h264_vaapi low_power at the profile bitrate (%s)" % vf)
 _, vfr, _ = hwaccel.stage_args("vaapi", "/dev/dri/renderD128", "full", 1080, 8000, 270)
 check(vfr.startswith("transpose_vaapi=dir=clock,scale_vaapi"), "rotated phone video (-90) turned on the GPU before scaling")
 check(hwaccel._vaapi_turn(90).startswith("transpose_vaapi=dir=cclock") and "reversal" in hwaccel._vaapi_turn(180) and hwaccel._vaapi_turn(0) == "",
       "rotation mapping 90/180/0")
+hwaccel._filters = {"scale_vaapi", "tonemap_vaapi", "transpose_vaapi"}
+_, vfh, _ = hwaccel.stage_args("vaapi", "/dev/dri/renderD128", "full", 1080, 8000, hdr="HDR10")
+check("tonemap_vaapi" in vfh and "format=p010" in vfh, "HDR10 stays on the GPU with tonemap_vaapi (%s)" % vfh)
+_, vfs, _ = hwaccel.stage_args("vaapi", "/dev/dri/renderD128", "full", 1080, 8000, hdr="")
+check(vfs == "scale_vaapi=w=-2:h=1080:format=nv12", "SDR stays on scale_vaapi to nv12")
+hwaccel._filters = set()  # filter not in this ffmpeg
+_, vfn, _ = hwaccel.stage_args("vaapi", "/dev/dri/renderD128", "full", 1080, 8000, hdr="HDR10")
+check(vfn == "scale_vaapi=w=-2:h=1080:format=nv12", "HDR falls back to scale_vaapi when tonemap_vaapi is missing")
+hwaccel._filters = None
 pre, vf, enc = hwaccel.stage_args("vaapi", "/dev/dri/renderD128", "enc", 720, 4000)
-check("-init_hw_device" in pre and "-hwaccel" not in pre and vf.endswith("format=nv12,hwupload") and "min(720,ih)" in vf, "vaapi enc: CPU decode + scale, hwupload")
+check("-init_hw_device" in pre and "-hwaccel" not in pre and vf.endswith("format=nv12,hwupload=extra_hw_frames=64") and "min(720,ih)" in vf,
+      "vaapi enc: CPU decode + scale, hwupload with extra surfaces")
 pre, vf, enc = hwaccel.stage_args("qsv", "/dev/dri/renderD128", "full", 720, 4000)
 check("qsv=qs@va" in pre and "hwmap=derive_device=qsv" in vf and enc[1] == "h264_qsv", "qsv full: vaapi decode mapped to qsv")
 pre, vf, enc = hwaccel.stage_args("nvenc", "nvidia", "full", 720, 4000)
@@ -52,7 +64,7 @@ check(hwaccel.rotation("/nonexistent/file.mkv") == 0, "rotation() of a missing f
 
 # ---- transcode wiring
 check("hwaccel.stage_args(self.hw[0], self.hw[1], self.stage, h, hk, self.rot" in tc and '["full", "enc", "cpu"]' in tc, "Session uses full -> enc -> cpu stages")
-check("HW_STALL_S = 20" in tc and "no output after %ds" in tc and "self._fallback(n, self._log_tail())" in tc, "fallback on exit-without-output and on a 20 s stall")
+check("HW_STALL_S = 20" in tc and "no output after %ds" in tc and "_handle_not_running" in tc, "fallback on exit-without-output and on a 20 s stall (one HW retry, then sticky)")
 check('self.stages = ["enc", "cpu"]' in tc, "NVENC skips the full stage for rotated videos")
 check('"libx264"' in tc and "config.HWACCEL" in tc, "CPU path (libx264) unchanged")
 
@@ -97,9 +109,10 @@ if have_mock:
     dev = os.path.join(os.environ["MS_HW_DEV"], "dri", "renderD128")
     hwaccel.save("vaapi", dev); check(hwaccel.active() == ("vaapi", dev), "saved VAAPI is active")
     hwaccel.note_failure("vaapi", dev, "full", "x"); check(hwaccel.active() == ("vaapi", dev), "a full-stage failure does not hold the method")
-    hwaccel.note_failure("vaapi", dev, "enc", "boom"); check(hwaccel.active() == (None, None), "falling past enc holds the method (CPU for 10 min)")
-    st = hwaccel.state(); check(st["held"] and st["last_failure"]["reason"] == "boom", "state() reports the hold + last failure")
-    r = hwaccel.test("vaapi", dev); check(r["ok"] and hwaccel.active() == ("vaapi", dev), "a passing Test clears the hold")
+    hwaccel.note_failure("vaapi", dev, "enc", "boom"); check(hwaccel.active() == ("vaapi", dev),
+          "an enc-stage failure stays per-stream and does not turn the card off for everyone")
+    st = hwaccel.state(); check(st["last_failure"]["reason"] == "boom" and not st["held"], "state() records the last failure without a global hold")
+    r = hwaccel.test("vaapi", dev); check(r["ok"] and hwaccel.active() == ("vaapi", dev), "a passing Test still leaves the card active")
     hwaccel.save("off", ""); check(hwaccel.active() == (None, None), "Off = CPU")
     # ---- CLI as install.sh calls it
     env = dict(os.environ); settings.put("hw_transcode", "")

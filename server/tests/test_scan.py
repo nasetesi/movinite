@@ -16,7 +16,7 @@ os.environ.update({"MS_DATA_DIR": TMP, "MS_TMDB_KEY": "", "MS_SCAN_WORKERS": "3"
 
 from app import db, scanner  # noqa: E402
 
-MEDIA = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("MOVINITE_TESTMEDIA", str(Path(__file__).resolve().parent / "testmedia")))
+MEDIA = Path(sys.argv[1] if len(sys.argv) > 1 else "/workspace/media-server/testmedia")
 LIB = Path(TMP) / "lib"
 n_ok = 0
 

@@ -103,7 +103,7 @@ def main():
     vc = up[up.index("vcmp() {"):]
     vc = vc[:vc.index("\n}\n") + 3]
     from app.version import __version__
-    check(__version__ == "1.6", "version is 1.6")
+    check(tuple(int(x) for x in __version__.split(".")) >= (1, 6), "version is 1.6 or later")
     for a, b, want in (("1.6", "1.5.5", "1"), ("1.6.1", "1.6", "1"), ("1.6", "1.6.0", "0"), ("1.5.5", "1.6", "-1"), ("1.10", "1.9", "1")):
         got = subprocess.run(["bash", "-c", vc + '\nvcmp "$1" "$2"', "x", a, b], capture_output=True, text=True).stdout.strip()
         check(got == want, "update.sh vcmp %s vs %s = %s" % (a, b, got))

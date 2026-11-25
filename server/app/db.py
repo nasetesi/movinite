@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from . import config
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 -- 1.4: categories
@@ -99,6 +99,30 @@ CREATE INDEX IF NOT EXISTS ix_items_album ON items(library_id, album_artist, alb
 CREATE INDEX IF NOT EXISTS ix_items_added ON items(added_at);
 CREATE TRIGGER IF NOT EXISTS items_drop_tags AFTER DELETE ON items BEGIN DELETE FROM item_tags WHERE item_id=old.id; END;
 CREATE TRIGGER IF NOT EXISTS items_drop_pins AFTER DELETE ON items BEGIN DELETE FROM home_pins WHERE item_id=old.id; END;
+CREATE TABLE IF NOT EXISTS playlists (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (user_id, name COLLATE NOCASE)
+);
+CREATE INDEX IF NOT EXISTS playlists_user ON playlists(user_id);
+CREATE TABLE IF NOT EXISTS playlist_tracks (
+    id INTEGER PRIMARY KEY,
+    playlist_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    added_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS playlist_tracks_pl ON playlist_tracks(playlist_id, position);
+CREATE INDEX IF NOT EXISTS playlist_tracks_item ON playlist_tracks(item_id);
+CREATE TRIGGER IF NOT EXISTS playlists_drop_tracks AFTER DELETE ON playlists BEGIN
+    DELETE FROM playlist_tracks WHERE playlist_id=old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS items_drop_playlist_tracks AFTER DELETE ON items BEGIN
+    DELETE FROM playlist_tracks WHERE item_id=old.id;
+END;
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 -- TMDB metadata cache (v1.1)
 CREATE TABLE IF NOT EXISTS metadata (
@@ -192,6 +216,8 @@ ADDED_COLUMNS = [
     ("libraries", "art_overwrite", "INTEGER DEFAULT 0"),
     ("libraries", "art_thumbs", "INTEGER DEFAULT 0"),   # 1.5.5: TV episode thumbnails (<file>-thumb.jpg)
     ("libraries", "sort_order", "INTEGER"),             # 1.6: admin-set display order (see liborder.py)
+    ("items", "art_poster", "TEXT"),                    # 1.7.3: folder poster (see folderart.py)
+    ("items", "art_tmdb", "INTEGER"),                   # 1.7.3: TMDB id named by the folder .nfo
     # 1.4: categories (collection / franchise, age rating; cat_v = version of the category fields fetched)
     ("metadata", "collection_id", "INTEGER"),
     ("metadata", "collection_name", "TEXT"),
@@ -205,6 +231,12 @@ def migrate():
     c = connect()
     try:
         c.execute("PRAGMA journal_mode=WAL")
+        try:
+            old_pre = c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        except sqlite3.Error:
+            old_pre = None
+        if old_pre and int(old_pre[0]) < 8:
+            _backup_db(c, 8)              # 1.7.6: snapshot before playlists (idempotent)
         c.executescript(SCHEMA)
         for table, col, typ in ADDED_COLUMNS:
             have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}
@@ -215,13 +247,53 @@ def migrate():
             _upgrade_3(c)
         if old and int(old[0]) < 4:
             _upgrade_4(c)
+        if old and int(old[0]) < 7:
+            from . import titles
+            titles.backfill_progress(c)   # 1.7: watch progress shared by every file of a title (inserts only)
         c.execute("CREATE INDEX IF NOT EXISTS metadata_collection ON metadata(collection_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_items_tmdb ON items(tmdb_id)")      # 1.7: versions / copies of a film
         from . import liborder
         liborder.assign_missing(c)      # 1.6: first run orders the libraries Movies, TV, Other videos, Music
         c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
         c.commit()
     finally:
         c.close()
+
+
+
+def _backup_db(c, ver):
+    """Copy the open database to data/media-server.db.pre-schemaN before a schema bump.
+    Skips if that file already exists so a later migrate() does not overwrite the first backup."""
+    dest = config.DATA_DIR / ("media-server.db.pre-schema%d" % ver)
+    if dest.exists():
+        return dest
+    tmp = config.DATA_DIR / ("media-server.db.pre-schema%d.tmp" % ver)
+    if tmp.exists():
+        tmp.unlink()
+    try:
+        dst = sqlite3.connect(str(tmp))
+        try:
+            c.backup(dst)
+            dst.close()
+            dst = None
+            tmp.replace(dest)
+            try:
+                dest.chmod(0o600)
+            except OSError:
+                pass
+            return dest
+        finally:
+            if dst is not None:
+                dst.close()
+            if tmp.exists() and not dest.exists():
+                tmp.unlink()
+    except Exception:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def _upgrade_4(c):

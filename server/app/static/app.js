@@ -178,7 +178,13 @@ new MutationObserver(() => $$("[data-bg]:not([data-lz])").forEach(el => {
   el.dataset.lz = "1";
   if (lazyIO) lazyIO.observe(el); else el.style.backgroundImage = `url('${el.dataset.bg}')`;
 })).observe(document.body, { childList: true, subtree: true });
-const KIND_ICON = { movies: "&#127916;", tv: "&#128250;", music: "&#127925;", other: "&#128193;" };
+const ico = (body) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+const KIND_ICON = {   // 1.7.4: outlined theme icons (24px grid, currentColor)
+  movies: `<span class="k-ic">${ico(`<path d="M5.25 10.25h12.5A2 2 0 0 1 19.75 12.25v6.75A2 2 0 0 1 17.75 21H5.25A2 2 0 0 1 3.25 19V12.25A2 2 0 0 1 5.25 10.25Z"/><path d="M3.25 10.25 5.5 3.4h16.5L19.75 10.25"/><path d="M9.7 3.4 7.45 10.25"/><path d="M13.7 3.4 11.45 10.25"/><path d="M17.7 3.4 15.45 10.25"/>`)}</span>`,
+  tv: `<span class="k-ic">${ico(`<path d="M5 3.75h14A2.25 2.25 0 0 1 21.25 6v8.25A2.25 2.25 0 0 1 19 16.5H5A2.25 2.25 0 0 1 2.75 14.25V6A2.25 2.25 0 0 1 5 3.75Z"/><path d="M6.15 5.85h11.7A1.1 1.1 0 0 1 18.95 6.95v6.35A1.1 1.1 0 0 1 17.85 14.4H6.15A1.1 1.1 0 0 1 5.05 13.3V6.95A1.1 1.1 0 0 1 6.15 5.85Z"/><path d="M12 16.5v3.15"/><path d="M7.75 20.75h8.5"/>`)}</span>`,
+  music: `<span class="k-ic">${ico(`<ellipse cx="8.35" cy="17.35" rx="3.85" ry="2.65" transform="rotate(-20 8.35 17.35)"/><path d="M12.05 16.15V4.55"/><path d="M12.05 4.55c4.35.15 7.15 2.55 6.85 6.55-1.7-2.55-4.35-3.35-6.85-3.15"/>`)}</span>`,
+  other: `<span class="k-ic">${ico(`<path d="M3.55 8.45h11.15A2 2 0 0 1 16.7 10.45v6.1A2 2 0 0 1 14.7 18.55H3.55A2 2 0 0 1 1.55 16.55v-6.1A2 2 0 0 1 3.55 8.45Z"/><circle cx="19.3" cy="13.5" r="3.35"/><circle cx="19.3" cy="13.5" r="1.5"/><path d="M5.15 5.6h5.7A1.1 1.1 0 0 1 11.95 6.7v1.75H5.15A1.1 1.1 0 0 1 4.05 7.35V6.7A1.1 1.1 0 0 1 5.15 5.6Z"/>`)}</span>`
+};
 
 function modal(html, onMount) {
   $("#modal-box").className = "modal-box";
@@ -268,28 +274,45 @@ function renderSysstat() {
 // 1.5.4: plus dropped / total video frames from this browser (getVideoPlaybackQuality), shown to everyone while the
 // controls are up -- the quickest way to tell a decoder or display that can't keep up from a slow network or server
 function frameStat() {
-  if (!P || !video.getVideoPlaybackQuality) return "";
-  let q; try { q = video.getVideoPlaybackQuality(); } catch (e) { return ""; }
-  const tot = (q && q.totalVideoFrames) || 0; if (!tot) return "";
+  if (!P || !video.getVideoPlaybackQuality) return null;
+  let q; try { q = video.getVideoPlaybackQuality(); } catch (e) { return null; }
+  const tot = (q && q.totalVideoFrames) || 0; if (!tot) return null;
   const dr = q.droppedVideoFrames || 0, pct = 100 * dr / tot;
-  return `<span class="k" title="Video frames this browser dropped / showed since the stream started">Dropped</span> <b class="pl-fr ${pct >= 5 ? "bad" : pct >= 1 ? "warn" : ""}">${nf(dr)} / ${nf(tot)}</b>`;
+  const cls = pct >= 5 ? "bad" : pct >= 1 ? "warn" : "";
+  return { html: `<span class="k" title="Video frames this browser dropped / showed since the stream started">Dropped</span> <b class="pl-fr ${cls}">${nf(dr)} / ${nf(tot)}</b>`,
+           cell: `<span class="k">Dropped</span><div class="row"><b class="pl-fr ${cls}" title="Video frames this browser dropped / showed since the stream started">${nf(dr)} / ${nf(tot)}</b></div>` };
 }
 // 1.5.4: refresh the frame counter once a second while the controls (and so the pill) are showing
 setInterval(() => { if (P && document.getElementById("player") && document.getElementById("player").classList.contains("ov-on")) renderPlayerStat(); }, 1000);
 function renderPlayerStat() {
   const el = document.getElementById("pl-ss"); if (!el) return;
   if (!P) { el.classList.add("hidden"); return; }
-  const d = SYS.d, parts = [];
-  if (d && ME && ME.show_status && P) {
-    const memPct = d.mem.total ? 100 * d.mem.used / d.mem.total : 0;
-    parts.push(`<span class="k">CPU</span> <b class="${sysLevel(d.cpu, 60, 85)}">${cpuPct(d)}</b><span class="sep">&middot;</span><span class="k">RAM</span> <b class="${sysLevel(memPct, 75, 90)}">${fmtGB(d.mem.used)}/${fmtGB(d.mem.total, 0)} GB</b>${d.hw && d.hw.streams ? `<span class="sep">&middot;</span><span class="hw-badge">GPU</span>` : ""}`);
-    el.title = `Server CPU ${cpuPct(d)}, RAM ${fmtGB(d.mem.used)} of ${fmtGB(d.mem.total)} GB`;
-  } else el.title = "";
-  const fr = frameStat(); if (fr) parts.push(fr);
-  if (!parts.length) { el.classList.add("hidden"); return; }
-  el.innerHTML = parts.join(`<span class="sep">&middot;</span>`);
+  const d = SYS.d, fr = frameStat();
+  const showSys = !!(d && ME && ME.show_status && P);
+  if (!showSys && !fr) { el.classList.add("hidden"); return; }
+  if (!showSys) {
+    el.className = "pl-ss pl-ss-fr";
+    el.innerHTML = fr.html;
+    el.title = "";
+    el.classList.remove("hidden");
+    return;
+  }
+  const memPct = d.mem.total ? 100 * d.mem.used / d.mem.total : 0;
+  const cl = sysLevel(d.cpu, 60, 85), ml = sysLevel(memPct, 75, 90);
+  const gpu = !!(d.hw && d.hw.streams);
+  const enc = gpu
+    ? `<span class="hw-badge" title="${d.hw.streams} stream${d.hw.streams > 1 ? "s" : ""} on the video card (${esc(d.hw.label || "")})">GPU</span>`
+    : `<span class="k">Encoder</span><div class="row"><b>${d.hw && d.hw.method ? esc(d.hw.label || "GPU ready") : "CPU"}</b></div>`;
+  el.className = "pl-ss";
+  el.innerHTML = `<div class="pl-ss-cell"><span class="k">CPU</span><div class="row"><b class="${cl}">${cpuPct(d)}</b></div>${sysBar(d.cpu || 0, cl)}</div>
+    <div class="pl-ss-cell"><span class="k">RAM</span><div class="row"><b class="${ml}">${fmtGB(d.mem.used)}/${fmtGB(d.mem.total, 0)} GB</b></div>${sysBar(memPct, ml)}</div>
+    <div class="pl-ss-cell">${gpu ? enc : enc}</div>
+    <div class="pl-ss-cell">${fr ? fr.cell : `<span class="k">Dropped</span><div class="row"><b>—</b></div>`}</div>`;
+  el.title = `Server CPU ${cpuPct(d)}, RAM ${fmtGB(d.mem.used)} of ${fmtGB(d.mem.total)} GB${gpu ? ` -- ${d.hw.streams} on the GPU (${d.hw.label || ""})` : ""}`;
   el.classList.remove("hidden");
 }
+// read-only hook for tests (and a curious admin console): push numbers into the player panel
+function __msSetPlayerStat(d) { if (ME) ME.show_status = true; if (d) SYS.d = d; renderSysstat(); }
 function renderSysPanel() {
   const d = SYS.d; if (!d) return;
   const memPct = d.mem.total ? 100 * d.mem.used / d.mem.total : 0;
@@ -370,9 +393,40 @@ function shareDot(l) {
     : "Share " + (h.state === "slow" ? "slow" : "not responding") + ": " + (h.reason || "") + when;
   return `<span class="ldot ${cls}" role="img" title="${esc(t)}" aria-label="${esc(t)}"></span>`;
 }
+const ICO_SHARE = ico(`<path d="M4.25 3.85h15.5A1.6 1.6 0 0 1 21.35 5.45v4.7A1.6 1.6 0 0 1 19.75 11.75H4.25A1.6 1.6 0 0 1 2.65 10.15v-4.7A1.6 1.6 0 0 1 4.25 3.85Z"/><path d="M4.25 13.25h15.5A1.6 1.6 0 0 1 21.35 14.85v4.7A1.6 1.6 0 0 1 19.75 21.15H4.25A1.6 1.6 0 0 1 2.65 19.55v-4.7A1.6 1.6 0 0 1 4.25 13.25Z"/><circle cx="6.55" cy="7.8" r="1.15" fill="currentColor" stroke="none"/><circle cx="6.55" cy="17.2" r="1.15" fill="currentColor" stroke="none"/><path d="M9.4 7.8h8.3"/><path d="M9.4 17.2h8.3"/>`);
+const ICO_LOCAL = ico(`<path d="M4.25 3.35h15.5A1.7 1.7 0 0 1 21.45 5.05v8.15A1.7 1.7 0 0 1 19.75 14.9H4.25A1.7 1.7 0 0 1 2.55 13.2V5.05A1.7 1.7 0 0 1 4.25 3.35Z"/><path d="M12 14.9v2.05"/><path d="M5.4 17.85h13.2A1.35 1.35 0 0 1 19.95 19.2v1.15A1.35 1.35 0 0 1 18.6 21.7H5.4A1.35 1.35 0 0 1 4.05 20.35V19.2A1.35 1.35 0 0 1 5.4 17.85Z"/><path d="M8.4 19.7h7.2"/>`);
+// 1.7: libraries grouped by the network share they are on (folders on the server itself in a group of their own).
+// Groups come in the order of their first library; inside a group the admin order is kept.
+function libGroups(libs) {
+  const out = [], by = {};
+  for (const l of (libs || LIBS)) {
+    const k = l.share_id ? "s" + l.share_id : "local";
+    if (!by[k]) { by[k] = { key: k, share: l.share_id ? (l.share || { id: l.share_id, name: "Share" }) : null, libs: [] }; out.push(by[k]); }
+    by[k].libs.push(l);
+  }
+  out.forEach(g => { g.name = g.share ? (g.share.name || "Network share") : "This server"; });
+  return out;
+}
+function libsGrouped(libs) { return (libs || LIBS).some(l => l.share_id); }
+// the group's status = its worst library (they share one mount, so normally all the same)
+const HSEV = { offline: 4, stuck: 3, slow: 2, checking: 1, online: 0 };
+function groupHealthLib(g) {
+  let w = null;
+  for (const l of g.libs) if (l.health && (!w || (HSEV[l.health.state] || 0) > (HSEV[w.health.state] || 0))) w = l;
+  return w;
+}
+function libDotInGroup(l, g) {   // a library's own dot only when it differs from the share's (e.g. its folder is missing)
+  const w = groupHealthLib(g);
+  return l.health && w && l.health.state !== w.health.state ? shareDot(l) : "";
+}
 function navLibsHtml() {
-  return LIBS.length ? LIBS.map(l => `<a href="#/library/${l.id}" data-nav="lib${l.id}">${KIND_ICON[l.kind] || ""} ${esc(l.name)}${shareDot(l)}</a>`).join("")
-    : `<div class="muted" style="padding:4px 10px;font-size:13px">No libraries yet</div>`;
+  if (!LIBS.length) return `<div class="muted" style="padding:4px 10px;font-size:13px">No libraries yet</div>`;
+  if (!libsGrouped()) return LIBS.map(l => `<a href="#/library/${l.id}" data-nav="lib${l.id}">${KIND_ICON[l.kind] || ""} ${esc(l.name)}${shareDot(l)}</a>`).join("");
+  return libGroups().map(g => {
+    const w = g.share ? groupHealthLib(g) : null;
+    return `<div class="navgrp" data-grp="${g.key}"><div class="navgrp-h" title="${g.share ? esc((g.share.kind ? g.share.kind.toUpperCase() + " share " : "Share ") + (g.share.remote || "")) : "Folders on this server"}"><span class="ng-ic" aria-hidden="true">${g.share ? ICO_SHARE : ICO_LOCAL}</span><span class="ng-n">${esc(g.name)}</span>${w ? shareDot(w) : ""}</div>`
+      + g.libs.map(l => `<a class="navgrp-a" href="#/library/${l.id}" data-nav="lib${l.id}">${KIND_ICON[l.kind] || ""} ${esc(l.name)}${libDotInGroup(l, g)}</a>`).join("") + `</div>`;
+  }).join("");
 }
 async function refreshLibs() {
   LIBS = await api("/api/libraries");
@@ -525,8 +579,11 @@ async function route() {
       case "library": setActive("lib" + parts[1]);
         if (parts[2] === "collections") await viewCollections(+parts[1]);
         else if (parts[2] === "smart") await viewSmart(+parts[1], parts[3]);
+        else if (parts[2] === "playlists") await viewPlaylists(+parts[1]);
+        else if (parts[2] === "playlist") await viewPlaylist(+parts[3], +parts[1]);
         else if (parts[2] === "collection") await viewLibrary(+parts[1], "", +parts[3]);
         else await viewLibrary(+parts[1], parts[2] || ""); break;
+      case "playlist": setActive(""); await viewPlaylist(+parts[1]); break;
       case "item": setActive(""); await viewItem(+parts[1]); break;
       case "person": setActive(""); await viewPerson(+parts[1], +parts[2] || 0); break;
       case "show": setActive("lib" + parts[1]); await viewShow(+parts[1], parts[2]); break;
@@ -565,11 +622,23 @@ function cardItem(i, opts) {
       ${img ? "" : `<div class="ph">${i.media_type === "audio" ? "&#9835;" : "&#127902;"}</div>`}
       ${i.watched ? `<span class="badge">&#10003;</span>` : ""}
       ${i.needs_review ? `<span class="badge rv" title="Match needs review">?</span>` : ""}
+      ${resBadge(i)}
       ${hov}
       ${pct ? `<div class="bar" style="width:${pct}%"></div>` : ""}
       ${quick}
     </div><div class="t" title="${esc(t)}">${esc(t)}</div><div class="s">${s}</div>${opts.reason && i.reason ? `<div class="why" title="${esc(i.reason)}">${esc(i.reason)}</div>` : ""}</div>`;
 }
+// 1.7: "4K" / "2K" on the poster; "+1" when the film has more versions (all listed best first in the tooltip)
+function resBadge(i) {
+  if (i.kind !== "movie" || !i.width) return "";
+  const r = resName(i.width, i.height), more = (i.versions || 1) - 1;
+  if (!more && r !== "4K" && r !== "2K") return "";
+  const t = more ? `${i.versions} versions: ${(i.vres || [r]).join(", ")} -- the best one plays` : r;
+  return `<span class="rbadge${r === "4K" ? " k4" : ""}" title="${esc(t)}">${r}${more ? `<small> +${more}</small>` : ""}</span>`;
+}
+// 1.7: "1,965 movies" for movie libraries (several files of one film count once), else "N items"
+function libCountText(l) { return l.film_count != null ? nf(l.film_count) + " movie" + (l.film_count === 1 ? "" : "s") : nf(l.item_count || 0) + " items"; }
+function libCountTitle(l) { return l.film_count != null && l.item_count > l.film_count ? ` title="${nf(l.item_count)} files -- ${nf(l.item_count - l.film_count)} are other versions (e.g. 1080p next to 4K)"` : ""; }
 function cardShow(libId, s) {
   return `<div class="card" tabindex="0" data-href="#/show/${libId}/${enc(s.show)}"><div class="art"${s.poster ? ` data-bg="${thumbUrl(s.poster)}"` : ""}>
     ${s.poster ? "" : `<div class="ph">&#128250;</div>`}</div>
@@ -838,7 +907,7 @@ function mlSheet(mode) {
     let h = "";
     const sorts = mlSorts(M.kind, M.collId), cur = M.collId && st.sort === "poster" ? "title" : st.sort;
     if (mode === "sort") return sec("", `<div class="mls-list" role="radiogroup" aria-label="Sort by">${sorts.map(([v, l]) => `<button type="button" class="mls-opt${cur === v ? " on" : ""}" role="radio" aria-checked="${cur === v}" data-k="sort" data-v="${v}">${l}<span class="ck" aria-hidden="true">&#10003;</span></button>`).join("")}</div>`);
-    if (M.kind === "music") h += sec("View", `<div class="mls-chips">${chip("view", "", "Albums", st.view === "")}${chip("view", "tracks", "Tracks", st.view === "tracks")}</div>`);
+    if (M.kind === "music") h += sec("View", `<div class="mls-chips">${chip("view", "", "Albums", st.view === "")}${chip("view", "tracks", "Tracks", st.view === "tracks")}${chip("view", "playlists", "Playlists", st.view === "playlists")}</div>`);
     if (withCat) {
       const sel = new Set(st.cat.genres), gs = f.genres.filter(g => g.n || sel.has(g.name));
       st.cat.genres.forEach(g => { if (!gs.find(x => x.name === g)) gs.unshift({ name: g, n: 0 }); });
@@ -1009,11 +1078,12 @@ async function viewHome(live) {
     if (L.smart_rows) {   // 1.4.1: Recommended, Recently released, Recently added, Top movies
       for (const R of L.smart_rows) {
         if (!R.items.length && R.key !== "added") continue;
-        html += rowHead(esc(R.title), `#/library/${lib.id}/smart/${R.key}`, { sub: esc(lib.name), extra: nMovieLibs > 1 ? ` <span class="muted d-only" style="font-size:14px;font-weight:400">in ${esc(lib.name)}</span>` : "" });
+        const mir = (lib.mirrors || []).length && R === L.smart_rows.find(x => x.items.length || x.key === "added") ? ` <span class="muted d-only mirror-note" style="font-size:13px;font-weight:400" title="These libraries hold the same films; each film is shown once">&middot; same films as ${esc(lib.mirrors.join(", "))}</span>` : "";
+        html += rowHead(esc(R.title), `#/library/${lib.id}/smart/${R.key}`, { sub: esc(lib.name), extra: (nMovieLibs > 1 || mir ? ` <span class="muted d-only" style="font-size:14px;font-weight:400">in ${esc(lib.name)}</span>` : "") + mir });
         if (R.key === "recommended" && R.note) html += `<div class="help row-note">${esc(R.note)}</div>`;
         html += R.items.length ? `<div class="strip hs">${R.items.map(i => cardItem(i, { reason: R.key === "recommended" })).join("")}</div>` : `<div class="empty">Nothing here yet -- scanning may still be running.</div>`;
       }
-    } else html += rowHead(`Recently added in ${esc(lib.name)}`, `#/library/${lib.id}`, { sub: nf(lib.item_count || 0) + " items" });
+    } else html += rowHead(`Recently added in ${esc(lib.name)}`, `#/library/${lib.id}`, { sub: nf(lib.item_count || 0) + " items", extra: (lib.mirrors || []).length ? ` <span class="muted d-only mirror-note" style="font-size:13px;font-weight:400" title="These libraries hold the same shows; each is shown once">&middot; same shows as ${esc(lib.mirrors.join(", "))}</span>` : "" });
     if (L.smart_rows) { /* rows above */ }
     else if (L.albums) html += L.albums.length ? `<div class="strip hs">${L.albums.map(a => cardAlbum(lib.id, a)).join("")}</div>` : `<div class="empty">Nothing here yet</div>`;
     else if (lib.kind === "tv") html += L.items.length ? `<div class="strip hs wide">${L.items.map(i => cardItem(i, { landscape: true })).join("")}</div>` : `<div class="empty">Nothing here yet</div>`;
@@ -1056,7 +1126,8 @@ async function viewLibrary(id, sub, collId) {
     if (d1.view === "shows") return nf((d1.shows || []).length);
     if (d1.view === "albums") return nf((d1.albums || []).length);
     const n = d1.total != null ? d1.total : (d1.items || []).length;
-    return !collId && lib.kind !== "music" && (q || filt || (isMov && catActive(cat))) ? nf(n) + " of " + nf(d1.library.item_count) : nf(collId || lib.kind === "music" ? n : d1.library.item_count);
+    const all = d1.library.film_count != null ? d1.library.film_count : d1.library.item_count;   // 1.7: films, not files
+    return !collId && lib.kind !== "music" && (q || filt || (isMov && catActive(cat))) ? nf(n) + " of " + nf(all) : nf(collId || lib.kind === "music" ? n : all);
   };
   ML = { id, kind: lib.kind, sub, collId, sort: collId && sort === "poster" ? "title" : sort, defSort, filt, cat, d, lib };
   const mlMore = () => {   // admin "..." menu: the same Select / Scan buttons as the desktop toolbar
@@ -1066,11 +1137,11 @@ async function viewLibrary(id, sub, collId) {
     return m;
   };
   let html = mlHead({ id, name: lib.name, count: mlCount(d), search: "filter", q, filter: isMov || lib.kind === "music", badge: isMov ? mlBadge(collId ? null : cat, filt) : 0, sort: true, more: ME.is_admin })
-    + `<div class="row-head lib-head"><h2>${KIND_ICON[lib.kind] || ""} ${esc(lib.name)} <span class="muted" style="font-size:14px;font-weight:400" id="lib-count">${nf(lib.item_count)} items</span></h2>
+    + `<div class="row-head lib-head"><h2>${KIND_ICON[lib.kind] || ""} ${esc(lib.name)} <span class="muted" style="font-size:14px;font-weight:400" id="lib-count"${libCountTitle(lib)}>${libCountText(lib)}</span></h2>
     <div class="tools"><input type="search" id="libfilter" placeholder="Filter..." value="${esc(q)}" style="width:180px">
     <select id="libsort" title="Sort">${lib.kind !== "music" ? `<option value="poster">${collId ? "Release order" : "Posters first"}</option>` : ""}<option value="title">${collId ? "Release order" : "Title (A-Z)"}</option><option value="added">Recently added</option>${lib.kind !== "music" ? `<option value="year">Year</option>` : ""}${lib.kind === "movies" ? `<option value="rating">TMDB score</option>` : ""}</select>
     ${lib.kind === "movies" ? `<select id="libfilt" title="Show"><option value="">All movies</option><option value="review">Needs review${lib.meta_counts && lib.meta_counts.review ? " (" + nf(lib.meta_counts.review) + ")" : ""}</option><option value="nomatch">No TMDB match${lib.meta_counts && lib.meta_counts.nomatch ? " (" + nf(lib.meta_counts.nomatch) + ")" : ""}</option><option value="edition">Special editions</option></select>` : ""}
-    ${lib.kind === "music" ? `<select id="libview"><option value="">Albums</option><option value="tracks">Tracks</option></select>` : ""}
+    ${lib.kind === "music" ? `<select id="libview"><option value="">Albums</option><option value="tracks">Tracks</option><option value="playlists">Playlists</option></select>` : ""}
     ${ME.is_admin && lib.kind === "movies" ? `<button class="btn ghost small${SEL.on ? " on" : ""}" id="libselect" title="Select movies to tag them">${SEL.on ? "Selecting" : "Select"}</button>` : ""}
     ${ME.is_admin ? `<button class="btn ghost small" id="libscan">${scanning ? "Scanning..." : "Scan"}</button>` : ""}</div></div>`;
   if (lib.kind === "movies") {
@@ -1104,7 +1175,7 @@ async function viewLibrary(id, sub, collId) {
     const body = libBody(id, d2.library, d2, true, bodySort, filt);
     if (lastBody !== body) { lastBody = body; const top = $("#view").scrollTop; $("#lib-body").innerHTML = body; $("#view").scrollTop = top; if (d2.view === "items" && d2.library.kind === "music") bindTrackList(d2.items); markSel(); }
     if (isMov && !collId && $(".catbar") && !$(".catbar select:focus")) { const cb = catBar(id, d2, cat); if ($(".catbar").outerHTML !== cb) { $(".catbar").outerHTML = cb; bindCatBar(id); } }
-    $("#lib-count").textContent = nf(d2.library.item_count) + " items";
+    $("#lib-count").textContent = libCountText(d2.library);
     if (ML && ML.id === id) { ML.d = d2; ML.lib = d2.library; }
     if ($("#ml-count")) $("#ml-count").textContent = mlCount(d2);
   } };
@@ -1154,12 +1225,36 @@ function bindLibTools(id, sub, sort, d, lib) {
 
 function trackList(tracks, showAlbum) {
   if (!tracks.length) return `<div class="empty">No tracks.</div>`;
-  return `<div class="list">${tracks.map((t, n) => `<div class="li" data-track="${n}">
+  const plus = ico(`<path d="M12 6.5v11M6.5 12h11"/>`);
+  return `<div class="list">${tracks.map((t, n) => `<div class="li" data-track="${n}" data-item="${t.id}">
     <div class="num">${t.track || n + 1}</div><div class="ttl"><div>${esc(t.title)}</div><div class="muted" style="font-size:12.5px">${esc(t.artist || "")}${showAlbum && t.album ? " · " + esc(t.album) : ""}</div></div>
-    <div class="dur">${fmtDur(t.duration)}</div></div>`).join("")}</div>`;
+    <div class="dur">${fmtDur(t.duration)}</div>
+    <button type="button" class="iconbtn ab-tool tadd" data-add-pl="${t.id}" title="Add to playlist" aria-label="Add to playlist">${plus}</button></div>`).join("")}</div>`;
 }
 function bindTrackList(tracks) {
-  $$("[data-track]").forEach(el => el.onclick = () => playQueue(tracks, +el.dataset.track));
+  $$("[data-track]").forEach(el => {
+    el.onclick = (e) => {
+      if (e.target.closest("[data-add-pl]")) return;
+      if (el.dataset.suppressClick) { delete el.dataset.suppressClick; return; }
+      playQueue(tracks, +el.dataset.track);
+    };
+    let hold;
+    const start = (e) => {
+      if (e.target.closest("[data-add-pl]")) return;
+      clearTimeout(hold);
+      hold = setTimeout(() => {
+        el.dataset.suppressClick = "1";
+        const id = +el.dataset.item || (tracks[+el.dataset.track] && tracks[+el.dataset.track].id);
+        if (id) openPlaylistSheet([id]);
+      }, 500);
+    };
+    const cancel = () => clearTimeout(hold);
+    el.addEventListener("pointerdown", start);
+    el.addEventListener("pointerup", cancel);
+    el.addEventListener("pointercancel", cancel);
+    el.addEventListener("pointerleave", cancel);
+  });
+  $$("[data-add-pl]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openPlaylistSheet([+b.dataset.addPl]); });
 }
 
 async function viewShow(libId, show) {
@@ -1204,11 +1299,211 @@ async function viewAlbum(libId, artist, album) {
     ${trackList(d.tracks, false)}</div></div>`;
   bindTrackList(d.tracks);
   $("#playall").onclick = () => playQueue(d.tracks, 0);
-  $("#shuffle").onclick = () => { const t = d.tracks.slice(); for (let i = t.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [t[i], t[j]] = [t[j], t[i]]; } playQueue(t, 0); };
+  $("#shuffle").onclick = () => playQueue(shuffled(d.tracks), 0);
+}
+function shuffled(list) {
+  const t = (list || []).slice();
+  for (let i = t.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [t[i], t[j]] = [t[j], t[i]]; }
+  return t;
+}
+const LOGO_MARK = "/static/logo-mark.png";
+function playlistArt(poster, cls) {
+  const logo = poster ? "" : " logo";
+  const src = poster ? thumbUrl(poster) : LOGO_MARK;
+  return `<div class="${cls || "pli-art"}${logo}"><img src="${src}" alt=""></div>`;
+}
+function playlistCard(libId, p) {
+  return `<a class="pli-card" href="#/library/${libId}/playlist/${p.id}">
+    ${playlistArt(p.poster)}
+    <div class="pli-meta"><b>${esc(p.name)}</b><div class="muted">${p.track_count} track${p.track_count === 1 ? "" : "s"}${p.duration ? " · " + fmtLen(p.duration) : ""}</div></div>
+  </a>`;
+}
+async function viewPlaylists(libId) {
+  const lib = LIBS.find(l => l.id === libId) || { id: libId, name: "Music", kind: "music" };
+  const rows = await api("/api/playlists");
+  ML = { id: libId, kind: "music", sub: "playlists", sort: "title", defSort: "title", filt: "", cat: { genres: [], decade: "", cert: "", tag: 0 }, d: { facets: {} }, lib, collId: null };
+  $("#view").innerHTML = mlHead({ id: libId, name: lib.name, count: nf(rows.length), search: false, q: "", filter: true, badge: 0, sort: false, more: false })
+    + `<div class="row-head lib-head"><h2>${KIND_ICON.music || ""} ${esc(lib.name)} <span class="muted" style="font-size:14px;font-weight:400">Playlists</span></h2>
+    <div class="tools"><select id="libview"><option value="">Albums</option><option value="tracks">Tracks</option><option value="playlists">Playlists</option></select></div></div>`
+    + `<div class="pli-actions"><button class="btn" id="pl-new" type="button">New playlist</button></div>`
+    + (rows.length ? `<div class="pli-grid">${rows.map(p => playlistCard(libId, p)).join("")}</div>`
+                  : `<div class="playlist-empty">No playlists yet. Create one to collect tracks you want to hear later.</div>`);
+  $("#libview").value = "playlists";
+  $("#libview").onchange = () => { location.hash = `#/library/${libId}/${$("#libview").value}`; };
+  $("#pl-new").onclick = () => openPlaylistSheet([], () => { location.hash = `#/library/${libId}/playlists`; route(); });
+  mlBind({ id: libId, key: "filter", menu: [] });
+}
+async function viewPlaylist(pid, libId) {
+  const d = await api("/api/playlists/" + pid);
+  const lib = libId || (d.tracks[0] && d.tracks[0].library_id);
+  const back = lib ? `#/library/${lib}/playlists` : "#/libraries";
+  const tracks = d.tracks;
+  $("#view").innerHTML = `<div class="detail">${d.poster ? `<div class="poster square" style="background-image:url('${thumbUrl(d.poster)}')"></div>` : `<div class="poster square" style="background-image:url('${LOGO_MARK}');background-size:contain;background-color:#16131c"></div>`}<div class="info">
+    <p class="muted"><a href="${back}">&lsaquo; Playlists</a></p>
+    <h1 id="pl-name">${esc(d.name)}</h1>
+    <div class="meta"><span>${d.track_count} track${d.track_count === 1 ? "" : "s"}</span>${d.duration ? `<span>${fmtLen(d.duration)}</span>` : ""}</div>
+    <div class="pli-actions">
+      <button class="btn" id="pl-play" type="button"${tracks.length ? "" : " disabled"}>Play</button>
+      <button class="btn ghost" id="pl-shuffle" type="button"${tracks.length ? "" : " disabled"}>Shuffle</button>
+      <button class="btn ghost" id="pl-rename" type="button">Rename</button>
+      <button class="btn ghost" id="pl-delete" type="button">Delete</button>
+    </div>
+    <div id="pl-tracks">${playlistTrackRows(tracks)}</div>
+  </div></div>`;
+  bindPlaylistDetail(d, lib);
+}
+function playlistTrackRows(tracks) {
+  if (!tracks.length) return `<div class="empty">This playlist is empty.</div>`;
+  const up = ico(`<path d="M7 14l5-5 5 5"/>`);
+  const down = ico(`<path d="M7 10l5 5 5-5"/>`);
+  const x = ico(`<path d="M7 7l10 10M17 7L7 17"/>`);
+  return `<div class="list" id="pl-tracklist">${tracks.map((t, n) => `<div class="pli-row" data-entry="${t.entry_id}" data-track="${n}" draggable="true">
+    <button type="button" class="pli-handle" title="Drag to reorder" aria-label="Reorder">&#8942;</button>
+    <div class="li" data-track="${n}" data-item="${t.id}">
+      <div class="num">${n + 1}</div>
+      <div class="ttl"><div>${esc(t.title)}</div><div class="muted" style="font-size:12.5px">${esc([t.artist, t.album].filter(Boolean).join(" · "))}</div></div>
+      <div class="dur">${fmtDur(t.duration)}</div>
+    </div>
+    <button type="button" class="iconbtn ab-tool pli-move" data-dir="-1" title="Move up" aria-label="Move up"${n === 0 ? " disabled" : ""}>${up}</button>
+    <button type="button" class="iconbtn ab-tool pli-move" data-dir="1" title="Move down" aria-label="Move down"${n === tracks.length - 1 ? " disabled" : ""}>${down}</button>
+    <button type="button" class="iconbtn ab-tool" data-rm="${t.entry_id}" title="Remove" aria-label="Remove from playlist">${x}</button>
+  </div>`).join("")}</div>`;
+}
+function bindPlaylistDetail(d, lib) {
+  const tracks = d.tracks;
+  bindTrackList(tracks);
+  if ($("#pl-play")) $("#pl-play").onclick = () => playQueue(tracks, 0);
+  if ($("#pl-shuffle")) $("#pl-shuffle").onclick = () => playQueue(shuffled(tracks), 0);
+  $("#pl-rename").onclick = () => modal(`<h2>Rename playlist</h2><label>Name</label><input id="pl-ren" maxlength="80" value="${esc(d.name)}"><div class="modal-actions"><button class="btn ghost" type="button" id="pl-ren-c">Cancel</button><button class="btn" type="button" id="pl-ren-ok">Save</button></div>`, () => {
+    $("#pl-ren-c").onclick = closeModal;
+    $("#pl-ren").focus(); $("#pl-ren").select();
+    const save = async () => {
+      try { await api("/api/playlists/" + d.id, { method: "PUT", body: { name: $("#pl-ren").value } }); closeModal(); route(); }
+      catch (e) { toast(e.message, true); }
+    };
+    $("#pl-ren-ok").onclick = save;
+    $("#pl-ren").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } };
+  });
+  $("#pl-delete").onclick = () => modal(`<h2>Delete playlist?</h2><p>Delete <b>${esc(d.name)}</b>? This cannot be undone.</p><div class="modal-actions"><button class="btn ghost" type="button" id="pl-del-c">Cancel</button><button class="btn" type="button" id="pl-del-ok">Delete</button></div>`, () => {
+    $("#pl-del-c").onclick = closeModal;
+    $("#pl-del-ok").onclick = async () => {
+      try { await api("/api/playlists/" + d.id, { method: "DELETE" }); closeModal(); location.hash = lib ? `#/library/${lib}/playlists` : "#/libraries"; }
+      catch (e) { toast(e.message, true); }
+    };
+  });
+  $$("[data-rm]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    try { await api(`/api/playlists/${d.id}/tracks/${b.dataset.rm}`, { method: "DELETE" }); route._keepScroll = true; route(); }
+    catch (err) { toast(err.message, true); }
+  });
+  $$(".pli-move").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    const row = b.closest(".pli-row");
+    const ids = $$(".pli-row").map(r => +r.dataset.entry);
+    const i = ids.indexOf(+row.dataset.entry);
+    const j = i + (+b.dataset.dir);
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    try { await api(`/api/playlists/${d.id}/order`, { method: "PUT", body: { ids } }); route._keepScroll = true; route(); }
+    catch (err) { toast(err.message, true); }
+  });
+  const list = $("#pl-tracklist");
+  if (list) {
+    let dragEl = null;
+    list.addEventListener("dragstart", (e) => {
+      dragEl = e.target.closest(".pli-row");
+      if (!dragEl) return;
+      dragEl.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", dragEl.dataset.entry); } catch (err) {}
+    });
+    list.addEventListener("dragend", () => { if (dragEl) dragEl.classList.remove("dragging"); dragEl = null; });
+    list.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      const over = e.target.closest(".pli-row");
+      if (!dragEl || !over || over === dragEl) return;
+      const mid = over.getBoundingClientRect().top + over.offsetHeight / 2;
+      if (e.clientY < mid) list.insertBefore(dragEl, over); else list.insertBefore(dragEl, over.nextSibling);
+    });
+    list.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      const ids = $$(".pli-row").map(r => +r.dataset.entry);
+      try { await api(`/api/playlists/${d.id}/order`, { method: "PUT", body: { ids } }); route._keepScroll = true; route(); }
+      catch (err) { toast(err.message, true); }
+    });
+  }
 }
 
+let PLS = { ids: [], after: null };
+async function openPlaylistSheet(itemIds, after) {
+  PLS.ids = (itemIds || []).slice();
+  PLS.after = after || null;
+  const box = $("#plsheet");
+  box.classList.remove("hidden");
+  box.hidden = false;
+  $("#plsheet-title").textContent = PLS.ids.length ? "Add to playlist" : "New playlist";
+  $("#plsheet-name").value = "";
+  await renderPlaylistSheet();
+  afChromePoke();
+  const inp = $("#plsheet-name"); if (inp) setTimeout(() => inp.focus(), 30);
+}
+function closePlaylistSheet() {
+  const box = $("#plsheet");
+  if (!box) return;
+  box.classList.add("hidden");
+  box.hidden = true;
+  const after = PLS.after;
+  PLS = { ids: [], after: null };
+  if (after) after();
+  afChromePoke();
+}
+async function renderPlaylistSheet() {
+  const list = $("#plsheet-list");
+  if (!list) return;
+  let rows = [];
+  try { rows = await api("/api/playlists"); }
+  catch (e) { list.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (!rows.length) { list.innerHTML = `<div class="playlist-empty">No playlists yet. Create one above.</div>`; return; }
+  list.innerHTML = rows.map(p => `<button type="button" class="plsheet-item" data-pl="${p.id}">
+    ${playlistArt(p.poster)}
+    <span class="pli-meta"><b>${esc(p.name)}</b><span class="muted">${p.track_count} track${p.track_count === 1 ? "" : "s"}</span></span>
+  </button>`).join("");
+  $$("#plsheet-list [data-pl]").forEach(b => b.onclick = async () => {
+    if (!PLS.ids.length) { toast("Enter a name to create a playlist, or open it from the Music library."); return; }
+    try {
+      const r = await api(`/api/playlists/${b.dataset.pl}/tracks`, { method: "POST", body: { item_ids: PLS.ids } });
+      toast(r.added === 0 ? "Already in this playlist" : "Added to playlist");
+      const after = PLS.after; PLS.after = null;
+      closePlaylistSheet();
+      if (after) after();
+    } catch (e) { toast(e.message, true); }
+  });
+}
+function bindPlaylistSheet() {
+  if (bindPlaylistSheet.ready) return;
+  bindPlaylistSheet.ready = true;
+  const box = $("#plsheet"); if (!box) return;
+  $("#plsheet-close").onclick = () => closePlaylistSheet();
+  box.addEventListener("mousedown", (e) => { if (e.target.id === "plsheet") closePlaylistSheet(); });
+  const create = async () => {
+    const name = ($("#plsheet-name").value || "").trim();
+    if (!name) { toast("Enter a name for the playlist", true); return; }
+    try {
+      await api("/api/playlists", { method: "POST", body: { name, item_ids: PLS.ids } });
+      toast("Playlist created");
+      const after = PLS.after; PLS.after = null;
+      closePlaylistSheet();
+      if (after) after();
+      else if (/playlist/.test(location.hash)) route();
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#plsheet-create").onclick = create;
+  $("#plsheet-name").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); create(); } else if (e.key === "Escape") closePlaylistSheet(); });
+}
+
+
 // 1.4.5: resolution name from width as well as height (a 1920x800 scope film is 1080p, not 720p)
-function resName(w, h) { return w >= 3200 || h >= 2000 ? "4K" : w >= 1800 || h >= 1000 ? "1080p" : w >= 1200 || h >= 700 ? "720p" : h + "p"; }
+function resName(w, h) { return w >= 3200 || h >= 2000 ? "4K" : w >= 2400 || h >= 1300 ? "2K" : w >= 1800 || h >= 1000 ? "1080p" : w >= 1200 || h >= 700 ? "720p" : h + "p"; }   // 1.7: + 2K
 // 1.4.5: the "..." menu on the details page (click / Enter opens; Esc, outside click or picking an item closes)
 function bindMoreMenu() {
   const btn = $("#more"), menu = $("#more-menu"); if (!btn || !menu) return;
@@ -1241,6 +1536,11 @@ async function viewItem(id) {
   if (it.edition) sub.push(`<span class="ed">${esc(it.edition)}</span>`);
   if (it.duration) sub.push(fmtLen(it.duration));
   if (it.width) sub.push(resName(it.width, it.height));
+  // 1.7: other files of this title in the library (best first); a copy on another share when this one is offline
+  const vers = it.versions || [];
+  const fmtMbps = (b) => b ? (b / 1e6).toFixed(b >= 1e7 ? 0 : 1) + " Mbps" : "";
+  const verHtml = vers.length > 1 ? `<div class="vers"><label for="ver-sel">Version</label><select id="ver-sel">${vers.map((v, n) => `<option value="${v.id}"${v.id === it.id ? " selected" : ""}>${[v.res + (n === 0 ? " (best)" : ""), (v.vcodec || "").toUpperCase(), fmtMbps(v.bitrate), v.size ? fmtSize(v.size) : ""].filter(Boolean).join(" · ")}</option>`).join("")}</select><span class="help">${vers.length} files of this ${it.kind === "episode" ? "episode" : "film"} -- highest resolution first</span></div>` : "";
+  const offHtml = it.offline ? `<div class="vers off"><span class="ldot off"></span> ${it.fallback ? `This library's share is offline -- Play uses the copy in <b>${esc(it.fallback_library || "another library")}</b>.` : "This library's share is offline, and no other library has this title."}</div>` : "";
   const playChip = pb.direct ? `<span class="chip ok">Direct play</span>` : pb.direct_maybe ? `<span class="chip warn">Direct play if your browser supports it, else ${pb.remux ? "remux" : "transcode"}</span>`
     : pb.remux ? `<span class="chip ok" title="The video is copied as-is; only the container${it.acodec && !["aac", "mp3"].includes(it.acodec) ? " and audio" : ""} are converted">Remux (no video re-encode)</span>` : `<span class="chip warn">Will transcode</span>`;
   const canMatch = ME.is_admin && (it.kind === "movie" || it.kind === "episode");
@@ -1299,6 +1599,7 @@ async function viewItem(id) {
     <div class="info"><h1>${esc(title)}</h1><div class="meta">${sub.map(s => `<span>${s}</span>`).join("")}</div>
     ${metaChips(chipsIt, isMovie ? it.library_id : 0)}
     ${it.tagline ? `<div class="tagline">${esc(it.tagline)}</div>` : ""}
+    ${verHtml}${offHtml}
     <div class="actions main-actions">
       ${it.position > 30 ? `<button class="btn big" id="resume">&#9654; Resume from ${fmtDur(it.position)}</button><button class="btn ghost big" id="play">Play from start</button>` : `<button class="btn big" id="play">&#9654; Play</button>`}
       <button class="btn ghost" id="watched">${it.watched ? "Mark unwatched" : "Mark watched"}</button>
@@ -1313,7 +1614,11 @@ async function viewItem(id) {
     ${isMovie ? `<section class="dsec"><div class="row-head"><h3>Cast</h3>${it.cast.length ? `<span class="muted">${it.cast.length} of the top-billed</span>` : ""}</div>${castHtml}</section>
     <section class="dsec"><div class="row-head"><h3>Similar movies</h3></div>${simHtml}</section>` : ""}
     ${it.tmdb ? TMDB_NOTE : ""}`;
-  $("#play").onclick = () => { SFX.play(); playItem(id, 0); };
+  // 1.7: the page's file is played as-is when the user picked it (not the best version); the best one may step
+  // down to a lighter version when this server can't transcode it well (see pickVersion)
+  const exact = vers.length > 1 && vers[0].id !== it.id;
+  $("#play").onclick = () => { SFX.play(); playItem(id, 0, { exact }); };
+  if ($("#ver-sel")) $("#ver-sel").onchange = (e) => { location.hash = "#/item/" + e.target.value; };
   bindMoreMenu();
   if ($("#fileinfo")) $("#fileinfo").onclick = fileInfoDlg;
   if ($("#fixmatch")) $("#fixmatch").onclick = () => {
@@ -1321,7 +1626,7 @@ async function viewItem(id) {
     if (it.kind === "episode") fixMatchDialog("tv", it.show.replace(/\s*\((19|20)\d\d\)\s*$/, ""), null, (b) => api("/api/show/match", { method: "POST", body: { library_id: it.library_id, show: it.show, ...b } }));
     else fixMatchDialog("movie", it.file_title || it.title, it.year, (b) => api(`/api/items/${id}/match`, { method: "POST", body: b }));
   };
-  if ($("#resume")) $("#resume").onclick = () => { SFX.play(); playItem(id, it.position); };
+  if ($("#resume")) $("#resume").onclick = () => { SFX.play(); playItem(id, it.position, { exact }); };
   if ($("#accept-cand")) $("#accept-cand").onclick = async () => { try { await api(`/api/items/${id}/match`, { method: "POST", body: { accept_candidate: true } }); toast("Match accepted"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } };
   if ($("#confirm-match")) $("#confirm-match").onclick = async () => { try { await api(`/api/items/${id}/match`, { method: "POST", body: { tmdb_id: it.tmdb_id } }); toast("Match confirmed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } };
   $("#watched").onclick = async () => { await api(`/api/items/${id}/watched`, { method: "POST", body: { watched: !it.watched } }); route._keepScroll = true; route(); };
@@ -1389,15 +1694,14 @@ async function viewSearch(q) {
   if (d.tracks.length) bindTrackList(d.tracks);
 }
 
-// 1.5.1: the Libraries tab -- every library, and for movie libraries their collections and categories
+// 1.5.1: the Libraries tab -- every library, grouped by share (1.7). 1.7.2: one card each, no Collections / Recommended chips
 async function viewLibraries() {
   await refreshLibs();
   const sub = { movies: "Movies", tv: "TV shows", music: "Music", other: "Videos" };
   let html = `<h2 class="pg-h">Libraries</h2>`;
   if (!LIBS.length) html += `<div class="empty">No libraries yet.${ME.is_admin ? ` <a href="#/settings/libraries">Add one in Settings</a>` : ""}</div>`;
-  else html += `<div class="lib-list">${LIBS.map(l => `<a class="lib-li" data-lib="${l.id}" href="#/library/${l.id}"><span class="lib-ic" aria-hidden="true">${KIND_ICON[l.kind] || "&#127902;"}</span>
-      <span class="lib-tx"><b>${esc(l.name)}<span class="ldot-slot">${shareDot(l)}</span></b><span class="muted">${sub[l.kind] || esc(l.kind)} · ${nf(l.item_count || 0)} items${l.health && l.health.state === "offline" ? ` · <span class="ldot-txt off">share offline</span>` : l.health && (l.health.state === "stuck" || l.health.state === "slow") ? ` · <span class="ldot-txt warn">share ${l.health.state === "slow" ? "slow" : "not responding"}</span>` : ""}</span></span><span class="chev" aria-hidden="true">&rsaquo;</span></a>
-      ${l.kind === "movies" ? `<div class="lib-subs"><a href="#/library/${l.id}/collections">Collections</a><a href="#/library/${l.id}/smart/recommended">Recommended</a><a href="#/library/${l.id}/smart/added">Recently added</a><a href="#/library/${l.id}/smart/top">Top movies</a></div>` : ""}`).join("")}</div>`;
+  else html += `<div class="lib-list">${libGroups().map(g => (libsGrouped() ? `<div class="lib-grp-h" data-grp="${g.key}"><span class="ng-ic" aria-hidden="true">${g.share ? ICO_SHARE : ICO_LOCAL}</span>${esc(g.name)}${g.share && groupHealthLib(g) ? shareDot(groupHealthLib(g)) : ""}</div>` : "") + g.libs.map(l => `<a class="lib-li" data-lib="${l.id}" href="#/library/${l.id}"><span class="lib-ic" aria-hidden="true">${KIND_ICON[l.kind] || KIND_ICON.other}</span>
+      <span class="lib-tx"><b>${esc(l.name)}<span class="ldot-slot">${shareDot(l)}</span></b><span class="muted">${sub[l.kind] || esc(l.kind)} · ${libCountText(l)}${l.health && l.health.state === "offline" ? ` · <span class="ldot-txt off">share offline</span>` : l.health && (l.health.state === "stuck" || l.health.state === "slow") ? ` · <span class="ldot-txt warn">share ${l.health.state === "slow" ? "slow" : "not responding"}</span>` : ""}</span></span><span class="chev" aria-hidden="true">&rsaquo;</span></a>`).join("")).join("")}</div>`;
   $("#view").innerHTML = html;
 }
 
@@ -1425,18 +1729,24 @@ async function viewSettings(tab) {
     await refreshLibs();
     html += `<div class="panel"><div class="row-head"><h3 style="margin:0">Libraries</h3>${ME.is_admin ? `<button class="btn" id="addlib">+ Add library</button>` : ""}</div>
       ${LIBS.length ? `<div class="tbl-wrap"><table class="lib-tbl"><tr>${ME.is_admin && LIBS.length > 1 ? `<th class="ord-h" title="Drag a row, or use the arrows, to change the order libraries are listed in everywhere">Order</th>` : ""}<th>Name</th><th>Type</th><th>Source</th><th>Items</th><th>Last scan</th><th>Auto scan</th><th></th></tr>
-      ${LIBS.map((l, li) => {
+      ${libGroups().map((g, gi, GS) => {
+        const cols = (ME.is_admin && LIBS.length > 1 ? 1 : 0) + 7;
+        const w = g.share ? groupHealthLib(g) : null;
+        const head = !libsGrouped() ? "" : `<tr class="grp-row" data-grp="${g.key}"><td colspan="${cols}"><div class="grp-h"><span class="ng-ic" aria-hidden="true">${g.share ? ICO_SHARE : ICO_LOCAL}</span><b>${esc(g.name)}</b>${w ? shareDot(w) : ""}<span class="muted grp-sub">${g.share ? "network share" : "folders on this server"} · ${g.libs.length} librar${g.libs.length > 1 ? "ies" : "y"}</span>
+          ${ME.is_admin && g.share ? `<button class="btn ghost small" data-renshare="${g.share.id}" title="Change the name shown for this share in the side menu">Rename</button>` : ""}
+          ${ME.is_admin && GS.length > 1 ? `<span class="grp-mv"><button class="iconbtn small" data-gup="${g.key}" title="Move this group up" aria-label="Move ${esc(g.name)} up" ${gi === 0 ? "disabled" : ""}>&#9650;</button><button class="iconbtn small" data-gdown="${g.key}" title="Move this group down" aria-label="Move ${esc(g.name)} down" ${gi === GS.length - 1 ? "disabled" : ""}>&#9660;</button></span>` : ""}</div></td></tr>`;
+        return head + g.libs.map((l, li) => {
         const sc = l.scan || {}; const busy = sc.state === "scanning" || sc.state === "queued";
         const src = l.share ? `<div class="src-share"><span class="src-kind">${l.share.kind.toUpperCase()}</span> <span class="path">${wbrPath(l.share.remote)}</span> ${l.share.mounted ? `<span class="chip ok pill">mounted &middot; ${l.share.mount_mode === "rw" ? "writable" : "read-only"}</span>` : `<span class="chip bad pill">not mounted</span>`}</div>${l.share.last_error ? `<div class="help" style="color:var(--bad)">${esc(l.share.last_error)}</div>` : ""}` : esc(l.path) + (l.online ? "" : ` <span class="chip bad">offline</span>`);
         const ord = ME.is_admin && LIBS.length > 1 ? `<td class="ord"><span class="drag" title="Drag to move" aria-hidden="true">&#8942;&#8942;</span>
-          <button class="iconbtn small" data-up="${l.id}" title="Move up" aria-label="Move ${esc(l.name)} up" ${li === 0 ? "disabled" : ""}>&#9650;</button><button class="iconbtn small" data-down="${l.id}" title="Move down" aria-label="Move ${esc(l.name)} down" ${li === LIBS.length - 1 ? "disabled" : ""}>&#9660;</button></td>` : "";
-        return `<tr data-lib="${l.id}"${ord ? ` draggable="true"` : ""}>${ord}<td><a href="#/library/${l.id}"><b>${esc(l.name)}</b></a></td><td>${l.kind}</td><td class="src">${src}<div class="help path">${wbrPath(l.path)}</div></td><td>${l.item_count}</td>
+          <button class="iconbtn small" data-up="${l.id}" title="Move up" aria-label="Move ${esc(l.name)} up" ${li === 0 ? "disabled" : ""}>&#9650;</button><button class="iconbtn small" data-down="${l.id}" title="Move down" aria-label="Move ${esc(l.name)} down" ${li === g.libs.length - 1 ? "disabled" : ""}>&#9660;</button></td>` : "";
+        return `<tr data-lib="${l.id}" data-grp="${g.key}"${ord ? ` draggable="true"` : ""}>${ord}<td><a href="#/library/${l.id}"><b>${esc(l.name)}</b></a></td><td>${l.kind}</td><td class="src">${src}<div class="help path">${wbrPath(l.path)}</div></td><td>${l.item_count}</td>
         <td>${busy ? `scanning ${sc.done || 0}/${sc.total || "?"}<div class="prog"><div style="width:${sc.total ? 100 * sc.done / sc.total : 5}%"></div></div>` : ago(l.last_scan) + `<div class="help">${esc(l.last_scan_result || "")}</div>`}</td>
         <td>${intervalName(l.scan_interval_h)}${l.next_scan && !busy ? `<div class="help">next ${inTime(l.next_scan)}</div>` : ""}</td>
         <td>${ME.is_admin ? `<div class="row-actions"><button class="btn ghost small" data-scan="${l.id}">Scan</button><button class="btn ghost small" data-full="${l.id}" title="Re-probe every file and regenerate thumbnails">Full rescan</button>
           <span class="sep"></span>${l.share ? `<button class="btn ghost small" data-remount="${l.share.id}">Remount</button><button class="btn ghost small" data-editshare="${l.share.id}">Credentials</button>` : ""}
           ${l.kind === "movies" || l.kind === "tv" ? `<button class="btn ghost small" data-artwork="${l.id}" title="Save posters / fanart / .nfo into the ${l.kind === "tv" ? "show" : "movie"} folders">Artwork${l.art_write ? " &#10003;" : ""}</button>` : ""}
-          <button class="btn ghost small" data-editlib="${l.id}">Edit</button><button class="btn danger small" data-dellib="${l.id}">Remove</button></div>` : ""}</td></tr>`; }).join("")}</table></div>` : `<div class="empty">No libraries yet.</div>`}</div>`;
+          <button class="btn ghost small" data-editlib="${l.id}">Edit</button><button class="btn danger small" data-dellib="${l.id}">Remove</button></div>` : ""}</td></tr>`; }).join(""); }).join("")}</table></div>${libsGrouped() ? `<div class="help" style="margin-top:8px">Libraries are grouped by the share they are on. Use the arrows on a share's heading to move the whole group; a library moves within its group.</div>` : ""}` : `<div class="empty">No libraries yet.</div>`}</div>`;
     v.innerHTML = html;
     if ($("#addlib")) $("#addlib").onclick = () => addLibraryDialog();
     $$("[data-scan]").forEach(b => b.onclick = async () => { await api(`/api/libraries/${b.dataset.scan}/scan`, { method: "POST" }); toast("Scan queued"); pollActivity(); route._keepScroll = true; route(); });
@@ -1456,16 +1766,39 @@ async function viewSettings(tab) {
       catch (e) { toast(e.message, true); }
       route._keepScroll = true; route();
     };
-    const ids0 = () => LIBS.map(l => l.id);
-    const move = (id, d) => { const ids = ids0(), i = ids.indexOf(id), j = i + d; if (i < 0 || j < 0 || j >= ids.length) return; [ids[i], ids[j]] = [ids[j], ids[i]]; saveOrder(ids); };
+    // 1.7: the order is saved group by group (a share's libraries stay together)
+    const flat = (gs) => gs.flatMap(g => g.libs.map(l => l.id));
+    const ids0 = () => flat(libGroups());
+    const move = (id, d) => {
+      const gs = libGroups(), g = gs.find(x => x.libs.some(l => l.id === id)); if (!g) return;
+      const i = g.libs.findIndex(l => l.id === id), j = i + d; if (j < 0 || j >= g.libs.length) return;
+      [g.libs[i], g.libs[j]] = [g.libs[j], g.libs[i]]; saveOrder(flat(gs));
+    };
+    const gmove = (key, d) => { const gs = libGroups(), i = gs.findIndex(g => g.key === key), j = i + d; if (i < 0 || j < 0 || j >= gs.length) return; [gs[i], gs[j]] = [gs[j], gs[i]]; saveOrder(flat(gs)); };
     $$("[data-up]").forEach(b => b.onclick = () => move(+b.dataset.up, -1));
     $$("[data-down]").forEach(b => b.onclick = () => move(+b.dataset.down, 1));
+    $$("[data-gup]").forEach(b => b.onclick = () => gmove(b.dataset.gup, -1));
+    $$("[data-gdown]").forEach(b => b.onclick = () => gmove(b.dataset.gdown, 1));
+    $$("[data-renshare]").forEach(b => b.onclick = () => {
+      const s = (LIBS.find(l => l.share && l.share.id === +b.dataset.renshare) || {}).share; if (!s) return;
+      modal(`<h2>Rename share</h2><div class="form"><label for="rs-name">Name shown in the side menu</label><input type="text" id="rs-name" maxlength="60" value="${esc(s.name || "")}">
+        <div class="help">Only the label changes. The share's address, login and write setting stay as they are.</div></div>
+        <div class="err" id="rs-err"></div><div class="modal-actions"><button class="btn ghost" id="rs-cancel">Cancel</button><button class="btn" id="rs-save">Save</button></div>`,
+        () => { $("#rs-name").focus(); $("#rs-name").select(); });
+      $("#rs-cancel").onclick = closeModal;
+      $("#rs-save").onclick = async () => {
+        try { await api(`/api/shares/${s.id}/name`, { method: "PUT", body: { name: $("#rs-name").value } }); closeModal(); toast("Share renamed"); await refreshLibs(); route._keepScroll = true; route(); }
+        catch (e) { $("#rs-err").textContent = e.message; }
+      };
+    });
     let dragId = null;
     $$(".lib-tbl tr[draggable]").forEach(tr => {
       tr.addEventListener("dragstart", (e) => { dragId = +tr.dataset.lib; viewSettings._drag = true; tr.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(dragId)); } catch (_) {} });
       tr.addEventListener("dragend", () => { viewSettings._drag = false; tr.classList.remove("dragging"); $$(".lib-tbl tr.drop-before, .lib-tbl tr.drop-after").forEach(x => x.classList.remove("drop-before", "drop-after")); });
       tr.addEventListener("dragover", (e) => {
-        if (dragId == null) return; e.preventDefault();
+        if (dragId == null) return;
+        const src = $(`.lib-tbl tr[data-lib="${dragId}"]`); if (src && src.dataset.grp !== tr.dataset.grp) return;   // 1.7: stay in the share's group
+        e.preventDefault();
         const r = tr.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
         $$(".lib-tbl tr.drop-before, .lib-tbl tr.drop-after").forEach(x => x.classList.remove("drop-before", "drop-after"));
         tr.classList.add(after ? "drop-after" : "drop-before");
@@ -1474,6 +1807,7 @@ async function viewSettings(tab) {
         e.preventDefault(); const target = +tr.dataset.lib, after = tr.classList.contains("drop-after");
         viewSettings._drag = false;
         if (dragId == null || dragId === target) { dragId = null; return; }
+        const src = $(`.lib-tbl tr[data-lib="${dragId}"]`); if (src && src.dataset.grp !== tr.dataset.grp) { dragId = null; return; }
         const ids = ids0().filter(i => i !== dragId); let k = ids.indexOf(target); if (after) k++;
         ids.splice(k, 0, dragId); dragId = null; saveOrder(ids);
       });
@@ -1660,12 +1994,15 @@ async function viewTranscoding(v, head) {
     const streams = st.streams || [];
     v.innerHTML = head + `<div class="panel hw-panel"><h3 style="margin-top:0">Hardware transcoding</h3>
       <p class="help" style="margin-top:-4px">Let a video card convert videos that the browser or app cannot play directly. It uses far less CPU, so more people can watch at once.
-        If the card fails on a video, that stream switches to the CPU by itself.</p>
+        If the card fails on a video, that stream stays on the fallback (the reason is logged) and other streams keep using the card.</p>
       <div class="form hw-form">
         <label for="hw-mode">Hardware transcoding</label><select id="hw-mode">${["auto", "qsv", "vaapi", "nvenc", "off"].map(opt).join("")}</select>
         <label for="hw-dev">Video card</label><select id="hw-dev" ${usable.length ? "" : "disabled"}>${devOpts}</select>
         <label>In use now</label><div class="hw-now">${nowUse}</div>
+        <label for="hw-max">Max simultaneous transcodes</label>
+        <input id="hw-max" type="number" min="1" max="32" step="1" value="${st.max_transcodes || 4}">
       </div>
+      <p class="help">The same account can play on more than one device. This is the server-wide cap (hardware and software). The default is 4. A message is logged when a new stream would go over it.</p>
       <div class="help hw-modes">Auto picks the first method that passes a test: VAAPI, then Intel QSV, then NVIDIA NVENC. ${setBy}${userSet}</div>
       <div class="err" id="hw-err"></div>
       <div class="hw-acts"><button class="btn" id="hw-save">Save</button><button class="btn ghost" id="hw-scan">Scan for video cards again</button></div></div>
@@ -1677,7 +2014,7 @@ async function viewTranscoding(v, head) {
       ${(st.held || []).map(h => `<div class="help" style="color:var(--warn)">${HW_LABEL[h.method]} is paused until ${new Date((h.since + 600) * 1000).toLocaleTimeString()} after it failed. Save or a passing test turns it back on now.</div>`).join("")}</div>`;
     $("#hw-save").onclick = async () => {
       $("#hw-err").textContent = "";
-      try { st = await api("/api/hw", { method: "PUT", body: { mode: $("#hw-mode").value, device: $("#hw-dev").value } }); toast("Hardware transcoding: " + HW_LABEL[st.mode]); render(); }
+      try { st = await api("/api/hw", { method: "PUT", body: { mode: $("#hw-mode").value, device: $("#hw-dev").value, max_transcodes: $("#hw-max").value } }); toast("Hardware transcoding: " + HW_LABEL[st.mode]); render(); }
       catch (e) { $("#hw-err").textContent = e.message; }
     };
     $("#hw-scan").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "Scanning..."; try { st = await api("/api/hw/scan", { method: "POST" }); toast("Scan finished"); } catch (er) { toast(er.message, true); } render(); };
@@ -1703,14 +2040,14 @@ function addLibraryDialog() {
   let stype = "local";
   modal(`<h2>Add library</h2><div class="form">
     <label>Name</label><input type="text" id="al-name" placeholder="Movies">
-    <label>Type</label><div class="seg" id="al-kind"><button data-k="movies" class="on">Movies</button><button data-k="tv">TV shows</button><button data-k="music">Music</button><button data-k="other">Other videos</button></div>
+    <label>Type</label><div class="seg" id="al-kind"><button data-k="movies" class="on">${KIND_ICON.movies}<span>Movies</span></button><button data-k="tv">${KIND_ICON.tv}<span>TV shows</span></button><button data-k="music">${KIND_ICON.music}<span>Music</span></button><button data-k="other">${KIND_ICON.other}<span>Other videos</span></button></div>
     <label>Source</label><div class="seg" id="al-src"><button data-s="local" class="on">Folder on this server</button><button data-s="smb">SMB / Windows share</button><button data-s="nfs">NFS share</button></div>
     <div class="full" id="al-srcform"></div>
     <label>Automatic scan</label><select id="al-int">${intervalOpts(6)}</select>
   </div><div class="err" id="al-err"></div>
   <div class="modal-actions"><button class="btn ghost" id="al-cancel">Cancel</button><button class="btn" id="al-save">Add library</button></div>`, (box) => {
     let kind = "movies";
-    $$("#al-kind button").forEach(b => b.onclick = () => { kind = b.dataset.k; $$("#al-kind button").forEach(x => x.classList.toggle("on", x === b)); if (!$("#al-name").value || $("#al-name").dataset.auto) { $("#al-name").value = b.textContent; $("#al-name").dataset.auto = "1"; } });
+    $$("#al-kind button").forEach(b => b.onclick = () => { kind = b.dataset.k; $$("#al-kind button").forEach(x => x.classList.toggle("on", x === b)); if (!$("#al-name").value || $("#al-name").dataset.auto) { $("#al-name").value = (b.querySelector("span") || b).textContent.trim(); $("#al-name").dataset.auto = "1"; } });
     $("#al-name").oninput = () => delete $("#al-name").dataset.auto;
     const browseBtn = `<button class="btn ghost fp-open" type="button" id="al-browse"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 4l2 2h8a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg><span>Browse</span></button>`;
     // 1.5.3: "Existing connection" -- reuse a share that is already set up (its login stays on the server)
@@ -2070,6 +2407,55 @@ function editShareDialog(s) {
 // ---------------------------------------------------------------- video player
 const video = $("#video");
 let hls = null, P = null; // P = current playback state
+// 1.7.7: stable per-browser id so the same login on two devices can transcode at once
+function playerId() {
+  try {
+    let id = localStorage.getItem("player_id");
+    if (!id || !/^[a-zA-Z0-9_-]{8,64}$/.test(id)) {
+      id = (crypto.randomUUID && crypto.randomUUID() || (Date.now().toString(36) + Math.random().toString(36).slice(2))).replace(/-/g, "");
+      localStorage.setItem("player_id", id);
+    }
+    return id;
+  } catch (e) { return "anon" + String(Date.now()).slice(-10); }
+}
+function clientCaps() {
+  if (clientCaps._c) return clientCaps._c;
+  const v = document.createElement("video");
+  const tests = {
+    hvc1_l153: 'video/mp4; codecs="hvc1.1.6.L153.B0"',
+    hvc1_main10: 'video/mp4; codecs="hvc1.2.4.L153.B0"',
+    hev1_main10: 'video/mp4; codecs="hev1.2.4.L153.B0"',
+    hvc1_l120: 'video/mp4; codecs="hvc1.1.6.L120.90"',
+    mkv: "video/x-matroska",
+    ac3: 'audio/mp4; codecs="ac-3"',
+    eac3: 'audio/mp4; codecs="ec-3"'
+  };
+  const el = {}, mse = {};
+  Object.keys(tests).forEach(k => {
+    try { el[k] = v.canPlayType(tests[k]) || ""; } catch (e) { el[k] = ""; }
+    try { mse[k] = !!(window.MediaSource && MediaSource.isTypeSupported(tests[k])); } catch (e) { mse[k] = false; }
+  });
+  const hevc_mse = !!(mse.hvc1_l153 || mse.hvc1_main10 || mse.hev1_main10 || mse.hvc1_l120);
+  const hevc_el = el.hvc1_l153 || el.hvc1_main10 || el.hev1_main10 || el.hvc1_l120 || "";
+  return (clientCaps._c = { hevc_mse, hevc_el, el, mse, ua: navigator.userAgent || "", hlsjs: !!(window.Hls && Hls.isSupported()) });
+}
+function capsQuery() {
+  const c = clientCaps();
+  return ["player=" + encodeURIComponent(playerId()),
+    "hevc=" + ((c.hevc_mse || c.hevc_el) ? "1" : "0"),
+    "hevc_mse=" + (c.hevc_mse ? "1" : "0"),
+    "hevc_el=" + encodeURIComponent(c.hevc_el || "no"),
+    "mkv=" + (c.el.mkv ? "1" : "0"),
+    "ac3=" + (c.el.ac3 ? "1" : "0"),
+    "eac3=" + (c.el.eac3 ? "1" : "0"),
+    "hlsjs=" + (c.hlsjs ? "1" : "0")].join("&");
+}
+function canRemux(pb) {
+  if (!pb || !pb.remux) return false;
+  if (!pb.remux_codec || pb.remux_codec === "h264") return true;
+  if (pb.remux_codec === "hevc") return !!(clientCaps().hevc_mse || clientCaps().hevc_el);
+  return false;
+}
 function canDirect(it) {
   const pb = it.playback;
   if (pb.direct) {
@@ -2078,7 +2464,7 @@ function canDirect(it) {
     return t ? "yes" : "try";
   }
   if (pb.direct_maybe) {
-    if (it.vcodec === "hevc" && !video.canPlayType('video/mp4; codecs="hvc1.1.6.L120.90"')) return "no";
+    if (it.vcodec === "hevc" && !clientCaps().hevc_el && !clientCaps().hevc_mse) return "no";
     if (it.acodec === "ac3" && !video.canPlayType('audio/mp4; codecs="ac-3"')) return "no";
     if (it.acodec === "eac3" && !video.canPlayType('audio/mp4; codecs="ec-3"')) return "no";
     return "try";
@@ -2086,8 +2472,39 @@ function canDirect(it) {
   return "no";
 }
 
-async function playItem(id, startAt) {
-  const it = await api("/api/items/" + id);
+// 1.7: which file of the title to play.  Default: the one asked for (the best version when it came from a poster).
+//  - its share is offline -> the copy on a share that is up;
+//  - a saved transcode quality (e.g. 720p) -> the smallest version still at least that big (less work, same result);
+//  - no GPU 2K/4K transcoding and the big file can't be played as-is here -> a smaller version that can.
+const Q_RANK = { "2160p": 4, "1440p": 3, "1080p": 2, "720p": 1 };
+function vRank(v) { const r = resName(v.width, v.height); return r === "4K" ? 4 : r === "2K" ? 3 : r === "1080p" ? 2 : r === "720p" ? 1 : 0; }
+function pickVersion(it, opts) {
+  const vs = it.versions || [];
+  if (opts.exact || vs.length < 2 || vs[0].id !== it.id) return null;
+  const saved = String(localStorage.getItem("quality") || "auto").split(".")[0];
+  if (Q_RANK[saved] != null || /^\d+p$/.test(saved)) {
+    const want = Q_RANK[saved] != null ? Q_RANK[saved] : 0;
+    const ok = vs.filter(v => vRank(v) >= want);
+    const v = ok[ok.length - 1];
+    if (v && v.id !== it.id && want < vRank(vs[0])) return { id: v.id, why: `the ${v.res} version (your quality is set to ${saved})` };
+    return null;
+  }
+  const pb = it.playback;
+  if (vRank(vs[0]) >= 3 && canDirect(it) === "no" && !pb.remux && !(pb.hires || []).length) {
+    const v = vs.slice(1).find(x => x.playback.remux || canDirect({ playback: x.playback, vcodec: x.vcodec, acodec: x.acodec }) !== "no");
+    if (v) return { id: v.id, why: `the ${v.res} version (plays without transcoding the ${vs[0].res} file on this server)` };
+  }
+  return null;
+}
+
+async function playItem(id, startAt, opts) {
+  opts = opts || {};
+  let it = await api("/api/items/" + id);
+  if (it.offline && it.fallback) { toast(`Share offline -- playing the copy in ${it.fallback_library || "another library"}`); it = await api("/api/items/" + it.fallback); id = it.id; }
+  else if (it.media_type === "video") {
+    const pv = pickVersion(it, opts);
+    if (pv) { const it2 = await api("/api/items/" + pv.id).catch(() => null); if (it2) { it = it2; id = it.id; toast("Playing " + pv.why); } }
+  }
   if (it.media_type === "audio") { playQueue([it], 0); return; }
   if (startAt === undefined) startAt = it.position > 30 ? it.position : 0;
   stopAudio();
@@ -2100,18 +2517,21 @@ async function playItem(id, startAt) {
   const saved = localStorage.getItem("quality") || "auto";
   // 1.5.3: 2K / 4K (GPU servers, sources at least that big): HEVC when this device plays it, else H.264
   const hi = (pb.hires || []).map(p => hiresMode(p));
-  q.innerHTML = `${dmode !== "no" ? `<option value="direct">Original (direct play)</option>` : ""}${pb.remux ? `<option value="remux">Original (remux, no re-encode)</option>` : ""}`
+  const remuxOk = canRemux(pb);
+  q.innerHTML = `${dmode !== "no" ? `<option value="direct">Original (direct play)</option>` : ""}${remuxOk ? `<option value="remux">Original (remux, no re-encode)</option>` : ""}`
     + hi.map(m => `<option value="${m}">Transcode ${qualName(m)}</option>`).join("")
     + (pb.hires_off ? pb.hires_off.profiles.map(p => `<option value="" disabled data-note="${esc(pb.hires_off.note)}">${qualName(p)} &ndash; needs GPU transcoding</option>`).join("") : "")
     + pb.profiles.map(p => `<option value="${p}">Transcode ${p}</option>`).join("");
-  // preference order: direct play -> remux (copy the video, convert container/audio) -> transcode
+  // 1.7.7: like Plex, prefer direct play or remux when this device can play the original codec.
+  // A saved 720p/1080p choice is still honored (bandwidth). A saved 2K/4K transcode no longer
+  // skips remux/direct, which is what caused 4K-to-4K GPU transcodes of HEVC files.
   let mode;
   const savedHi = hi.find(m => m.split(".")[0] === String(saved).split(".")[0]);
   if (pb.profiles.includes(saved)) mode = saved;
-  else if (savedHi) mode = savedHi;
-  else if (saved === "remux" && pb.remux) mode = "remux";
   else if (dmode !== "no") mode = "direct";
-  else if (pb.remux) mode = "remux";
+  else if (remuxOk) mode = "remux";
+  else if (savedHi) mode = savedHi;
+  else if (saved === "remux" && remuxOk) mode = "remux";
   else mode = pb.profiles[0];
   const a = $("#pl-audio");
   a.innerHTML = pb.audio_streams.map((s, i) => `<option value="${i}">${esc((s.title || s.lang || "Audio " + (i + 1)) + " · " + s.codec + (s.channels ? " " + s.channels + "ch" : ""))}</option>`).join("");
@@ -2119,6 +2539,11 @@ async function playItem(id, startAt) {
   const sb = $("#pl-subs");
   sb.innerHTML = `<option value="">Subtitles off</option>` + pb.subtitles.map(s => `<option value="${s.key}">${esc(s.label)}</option>`).join("");
   sb.classList.toggle("hidden", !pb.subtitles.length);
+  try {
+    const want = localStorage.getItem("pl-subs");
+    if (want && [...sb.options].some(o => o.value === want)) sb.value = want;
+  } catch (e) {}
+  if (pb.subtitles.length) prefetchSubs(pb.subtitles.map(s => s.key));
   $("#pl-next").classList.toggle("hidden", !it.next);
   video.controls = false;          // 1.4.13: our own bar replaces the browser's controls
   BAR.closePop();
@@ -2134,13 +2559,8 @@ function modeLabel(m) { return (m === "direct" ? "Direct play" : m === "remux" ?
 function qualName(m) { const [b, vc] = String(m).split("."); return (b === "2160p" ? "4K (2160p)" : b === "1440p" ? "2K (1440p)" : b) + (vc === "hevc" ? " HEVC" : ""); }
 function hevcOK() {
   if (hevcOK.v !== undefined) return hevcOK.v;
-  let ok = false;
-  try {
-    const c = 'video/mp4; codecs="hvc1.1.6.L153.B0"';
-    if (window.Hls && Hls.isSupported()) ok = !!(window.MediaSource && MediaSource.isTypeSupported(c));
-    else ok = !!document.createElement("video").canPlayType(c);
-  } catch (e) { ok = false; }
-  return (hevcOK.v = ok);
+  const c = clientCaps();
+  return (hevcOK.v = !!(c.hevc_mse || c.hevc_el));
 }
 function hiresMode(p) { return hevcOK() ? p + ".hevc" : p; }
 function hdrNote() { return " · " + P.it.playback.hdr + " without tone-mapping (colors may look flat)"; }
@@ -2163,7 +2583,7 @@ function startStream(mode, at) {
     });
   } else {
     setStatus(modeLabel(mode));
-    const url = `/api/items/${it.id}/hls/${mode}/index.m3u8?audio=${P.audio}${mode.endsWith(".hevc") ? "&start=" + Math.floor((at || 0) / 6) : ""}`;
+    const url = `/api/items/${it.id}/hls/${mode}/index.m3u8?audio=${P.audio}&${capsQuery()}${mode.endsWith(".hevc") || mode === "remux" ? "&start=" + Math.floor((at || 0) / 6) : ""}`;
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({ startPosition: at || 0, maxBufferLength: 30, maxMaxBufferLength: 120, fragLoadingTimeOut: 90000, fragLoadingMaxRetry: 4, manifestLoadingTimeOut: 30000, xhrSetup: (xhr) => { xhr.withCredentials = true; } });
       hls.on(Hls.Events.ERROR, (ev, data) => {
@@ -2176,6 +2596,9 @@ function startStream(mode, at) {
         }
       });
       hls.loadSource(url); hls.attachMedia(video);
+      const reUp = () => { if (P && $("#pl-subs").value) addSubTrack($("#pl-subs").value, { keep: true }); };
+      hls.on(Hls.Events.MEDIA_ATTACHED, reUp);
+      hls.on(Hls.Events.MANIFEST_PARSED, reUp);
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = url;  // Safari native HLS
       video.addEventListener("loadedmetadata", function onMeta() { video.removeEventListener("loadedmetadata", onMeta); if (at) video.currentTime = at; });
@@ -2201,7 +2624,7 @@ function hiresDown(reason) {
 function fallback(reason) {
   if (!P || (P.mode !== "direct" && P.mode !== "remux")) return;
   const at = video.currentTime || P.start;
-  const next = P.mode === "direct" && P.it.playback.remux && !P.triedRemux ? "remux" : P.it.playback.profiles[0];
+  const next = P.mode === "direct" && canRemux(P.it.playback) && !P.triedRemux ? "remux" : P.it.playback.profiles[0];
   if (next === "remux") P.triedRemux = true;
   toast((next === "remux" ? "Switching to remux (" : "Switching to transcoding (") + reason + ")");
   startStream(next, at);
@@ -2212,16 +2635,85 @@ video.addEventListener("error", () => {
   else if (P) setStatus("Playback error");
 });
 
-function addSubTrack(key) {
-  $$("track", video).forEach(t => t.remove());
-  if (!key) return;
-  const tr = document.createElement("track");
-  tr.kind = "subtitles"; tr.label = "Subtitles"; tr.default = true;
-  tr.src = `/api/items/${P.it.id}/subs/${key}.vtt`;
-  video.appendChild(tr);
-  tr.addEventListener("load", () => { tr.track.mode = "showing"; });
-  setTimeout(() => { if (tr.track) tr.track.mode = "showing"; }, 50);
+// 1.7.5: fetch+cache WebVTT and paint a custom overlay. <track src> is slow to appear after
+// an HLS attachMedia / quality change (the element is often dropped) and first-time ffmpeg
+// conversion of embedded subs can take a while; caching + re-applying after MEDIA_ATTACHED
+// and on seek keeps captions prompt and visible. Native tracks stay mode=hidden so we don't
+// draw twice; the overlay is the WebView-safe fallback (::cue is often ignored there).
+const SUB = { key: "", cues: [], cache: {}, gen: 0, waiting: false };
+function parseTs(s) {
+  s = String(s || "").trim().replace(",", ".");
+  const p = s.split(":").map(Number);
+  if (p.some(n => !isFinite(n))) return 0;
+  if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
+  if (p.length === 2) return p[0] * 60 + p[1];
+  return p[0] || 0;
 }
+function parseVtt(text) {
+  const out = [];
+  const body = String(text || "").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const parts = body.split(/\n\n+/);
+  for (const part of parts) {
+    const lines = part.split("\n").filter((l, i) => i === 0 ? !/^WEBVTT/i.test(l) : true);
+    let i = 0;
+    if (lines[0] && !/-->/.test(lines[0])) i = 1;
+    const m = (lines[i] || "").match(/([\d:.]+)\s*-->\s*([\d:.]+)/);
+    if (!m) continue;
+    const textLines = lines.slice(i + 1).filter(l => l && !/^NOTE\b/.test(l) && !/^STYLE\b/.test(l));
+    if (!textLines.length) continue;
+    out.push({ start: parseTs(m[1]), end: parseTs(m[2]), text: textLines.join("\n") });
+  }
+  return out;
+}
+function subCacheKey(id, key) { return id + ":" + key; }
+function cueBox() { return document.getElementById("pl-cues"); }
+function paintCues() {
+  const el = cueBox(); if (!el) return;
+  if (!P || !SUB.key) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  if (SUB.waiting && !SUB.cues.length) {
+    el.innerHTML = `<span class="cue wait">Loading subtitles…</span>`;
+    el.classList.remove("hidden");
+    return;
+  }
+  const t = video.currentTime || 0;
+  const on = SUB.cues.filter(c => t >= c.start && t < c.end);
+  if (!on.length) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  el.innerHTML = on.map(c => `<span class="cue">${esc(c.text)}</span>`).join("");
+  el.classList.remove("hidden");
+}
+function prefetchSubs(keys) {
+  if (!P || !keys || !keys.length) return;
+  const id = P.it.id;
+  keys.slice(0, 2).forEach(key => {
+    const ck = subCacheKey(id, key);
+    if (SUB.cache[ck] || !key) return;
+    fetch(`/api/items/${id}/subs/${key}.vtt`, { credentials: "same-origin" }).then(r => r.ok ? r.text() : Promise.reject())
+      .then(t => { SUB.cache[ck] = parseVtt(t); if (SUB.key === key && P && P.it.id === id) { SUB.cues = SUB.cache[ck]; SUB.waiting = false; paintCues(); } })
+      .catch(() => {});
+  });
+}
+async function addSubTrack(key, opts) {
+  opts = opts || {};
+  $$("track", video).forEach(t => t.remove());
+  SUB.key = key || "";
+  try { if (key) localStorage.setItem("pl-subs", key); else if (!opts.keep) localStorage.setItem("pl-subs", ""); } catch (e) {}
+  if (!key || !P) { SUB.cues = []; SUB.waiting = false; paintCues(); return; }
+  const ck = subCacheKey(P.it.id, key);
+  if (SUB.cache[ck]) { SUB.cues = SUB.cache[ck]; SUB.waiting = false; paintCues(); return; }
+  if (!opts.keep) { SUB.cues = []; SUB.waiting = true; paintCues(); }
+  const gen = ++SUB.gen, id = P.it.id;
+  try {
+    const r = await fetch(`/api/items/${id}/subs/${key}.vtt`, { credentials: "same-origin" });
+    if (!r.ok) throw new Error("sub " + r.status);
+    const cues = parseVtt(await r.text());
+    SUB.cache[ck] = cues;
+    if (SUB.gen !== gen || !P || P.it.id !== id || SUB.key !== key) return;
+    SUB.cues = cues; SUB.waiting = false; paintCues();
+  } catch (e) {
+    if (SUB.gen === gen) { SUB.waiting = false; if (!SUB.cues.length) { const el = cueBox(); if (el) { el.innerHTML = ""; el.classList.add("hidden"); } } }
+  }
+}
+["timeupdate", "seeked", "seeking", "loadedmetadata"].forEach(ev => video.addEventListener(ev, paintCues));
 $("#pl-subs").onchange = () => addSubTrack($("#pl-subs").value);
 $("#pl-quality").onchange = () => {
   const m = $("#pl-quality").value; localStorage.setItem("quality", m === "direct" ? "auto" : m);
@@ -2250,12 +2742,13 @@ video.addEventListener("playing", () => { if (P) { P.played = true; setStatus(mo
 function teardownVideo(stopServer) {
   if (hls) { hls.destroy(); hls = null; }
   video.removeAttribute("src"); $$("track", video).forEach(t => t.remove()); video.load();
-  if (stopServer && P) api(`/api/items/${P.it.id}/stop`, { method: "POST" }).catch(() => {});
+  if (stopServer && P) api(`/api/items/${P.it.id}/stop?player=${encodeURIComponent(playerId())}`, { method: "POST" }).catch(() => {});
 }
 function closePlayer() {
   if (!P) return;
   PIP.leave(); saveProgress(); teardownVideo(true); P = null; PIP.tell();
   OV.reset();
+  SUB.key = ""; SUB.cues = []; SUB.waiting = false; paintCues();
   $("#player").classList.add("hidden"); ROT.close();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   route._keepScroll = true; route();
@@ -2278,6 +2771,17 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowLeft" || e.key === "j") { e.preventDefault(); skip(-10, "left"); }
   else if (e.key === "f") toggleFullscreen();
 });
+
+// 1.7.5: pinch out to fill the screen (object-fit: cover), pinch in to fit (contain).
+// Remembered per device. Also in the Quality/settings menu as Fit / Fill.
+function videoFit() { try { return localStorage.getItem("pl-videofit") === "fill" ? "fill" : "fit"; } catch (e) { return "fit"; } }
+function setVideoFit(mode) {
+  const fill = mode === "fill";
+  const pl = document.getElementById("player");
+  if (pl) pl.classList.toggle("fit-fill", fill);
+  try { localStorage.setItem("pl-videofit", fill ? "fill" : "fit"); } catch (e) {}
+  try { BAR.sync(); } catch (e) {}
+}
 
 // ---------------------------------------------------------------- 1.4.11: on-screen controls
 // Tap / click the picture: show or hide big Back 10 s / Play-Pause / Forward 10 s buttons and the see-through server status.
@@ -2372,6 +2876,7 @@ window.__msRot = { state: ROT.state };   // read-only: lets tests (and curious a
 const OV = (() => {
   const pl = $("#player"), tap = $("#pl-tap");
   let hideT = null, tapT = null, lastTap = 0, lastSide = "", lastMove = 0, moveShown = 0, rip = { left: null, right: null }, ripSum = { left: 0, right: 0 };
+  let pinch0 = 0, pinchedAt = 0;
   const isOn = () => pl.classList.contains("ov-on");
   const top = pl.querySelector(".pl-top");
   let overTop = false;
@@ -2407,6 +2912,7 @@ const OV = (() => {
   }
   tap.addEventListener("click", (e) => {
     if (!P) return;
+    if (Date.now() - pinchedAt < 450) return;   // a pinch just happened: don't toggle/skip
     if (BAR.popOpen()) { BAR.closePop(); return; }   // a tap beside an open menu just closes it
     const r = tap.getBoundingClientRect(), x = (e.clientX - r.left) / (r.width || 1);
     const side = x < 0.35 ? "left" : x > 0.65 ? "right" : "mid";
@@ -2424,6 +2930,27 @@ const OV = (() => {
     tapT = setTimeout(() => { tapT = null; toggle(); }, 300);   // wait: it may become a double-tap
   });
   tap.addEventListener("dblclick", (e) => e.preventDefault());
+  // 1.7.5: pinch-to-zoom (two fingers). touch-action:none lets this run in the Android WebView too.
+  const pinchDist = (ev) => {
+    const a = ev.touches[0], b = ev.touches[1];
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  };
+  tap.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) {
+      pinch0 = pinchDist(e) || 1; pinchedAt = Date.now();
+      clearTimeout(tapT); tapT = null; lastTap = 0;
+      e.preventDefault();
+    }
+  }, { passive: false });
+  tap.addEventListener("touchmove", (e) => {
+    if (!pinch0 || e.touches.length !== 2) return;
+    e.preventDefault();
+    const scale = pinchDist(e) / pinch0;
+    if (scale > 1.12) { setVideoFit("fill"); pinchedAt = Date.now(); }
+    else if (scale < 0.88) { setVideoFit("fit"); pinchedAt = Date.now(); }
+  }, { passive: false });
+  tap.addEventListener("touchend", (e) => { if (e.touches.length < 2) pinch0 = 0; });
+  tap.addEventListener("touchcancel", () => { pinch0 = 0; });
   // mouse: moving over the picture shows the controls (desktop)
   pl.addEventListener("pointermove", (e) => { if (e.pointerType !== "mouse" || !P) return; const n = Date.now(); if (n - lastMove < 250) return; lastMove = n; if (!isOn()) moveShown = n; show(); });
   const btn = (id, fn) => $(id).addEventListener("click", (e) => { e.stopPropagation(); fn(); });
@@ -2537,6 +3064,9 @@ const BAR = (() => {
         if (o.disabled) { const b = item(o.textContent, false, () => toast(o.dataset.note || "Not available")); b.classList.add("off"); b.setAttribute("aria-disabled", "true"); b.title = o.dataset.note || ""; pop.appendChild(b); return; }
         pop.appendChild(item(o.textContent, o.value === q.value, () => { pick(q, o.value); closePop(); }));
       });
+      h("Picture");
+      pop.appendChild(item("Fit (whole picture)", videoFit() !== "fill", () => { setVideoFit("fit"); render("q"); }));
+      pop.appendChild(item("Fill (cover the screen)", videoFit() === "fill", () => { setVideoFit("fill"); render("q"); }));
       h("Speed");
       const sp = document.createElement("div"); sp.className = "sp";
       RATES.forEach(r => { const b = item(r === 1 ? "Normal" : r + "×", r === rate, () => { setRate(r); render("q"); }); b.querySelector(".ck").remove(); sp.appendChild(b); });
@@ -2586,6 +3116,7 @@ const BAR = (() => {
   video.addEventListener("loadstart", sync);
   return { sync, draw, closePop, popOpen: () => !!popFor || Date.now() - shutAt < 600, busy: () => drag || !!popFor, toggleMute, setRate, rate: () => rate };
 })();
+setVideoFit(videoFit());
 
 // ---------------------------------------------------------------- 1.4.12: picture in picture
 // Chrome / Edge / Safari / Android Chrome: the PiP button (or P) pops the film out into a small always-on-top window and
@@ -2656,9 +3187,11 @@ async function loadTrack() {
   const t = t0.playback ? t0 : await api("/api/items/" + t0.id);
   Q.list[Q.idx] = t;
   if (Q.hls) { Q.hls.destroy(); Q.hls = null; }
-  $("#audiobar").classList.remove("hidden");
+  $("#audiobar").classList.remove("hidden"); document.documentElement.classList.add("ab-open");
   $("#ab-title").textContent = t.title; $("#ab-sub").textContent = [t.artist, t.album].filter(Boolean).join(" · ");
-  $("#ab-art").src = t.poster ? thumbUrl(t.poster) : "/static/icon-192.png";
+  const hasArt = !!t.poster;
+  $("#ab-art").src = hasArt ? thumbUrl(t.poster) : LOGO_MARK;
+  const st = $("#ab-stage"); if (st) st.classList.toggle("logo", !hasArt);
   const direct = t.playback.direct && audio.canPlayType(t.playback.mime) !== "";
   Q.mode = direct ? "direct" : "hls";
   if (direct) audio.src = `/api/items/${t.id}/file`;
@@ -2667,11 +3200,13 @@ async function loadTrack() {
     if (window.Hls && Hls.isSupported()) { Q.hls = new Hls({ xhrSetup: (x) => { x.withCredentials = true; } }); Q.hls.loadSource(url); Q.hls.attachMedia(audio); }
     else audio.src = url;
   }
+  eqResume();
   audio.play().catch(() => {});
   $$(".li.playing").forEach(el => el.classList.remove("playing"));
   document.title = t.title + " · Movinite";
+  syncAbButtons();
   if ("mediaSession" in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist || "", album: t.album || "", artwork: t.poster ? [{ src: thumbUrl(t.poster) }] : [] });
+    navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist || "", album: t.album || "", artwork: [{ src: t.poster ? thumbUrl(t.poster) : LOGO_MARK }] });
     navigator.mediaSession.setActionHandler("nexttrack", nextTrack); navigator.mediaSession.setActionHandler("previoustrack", prevTrack);
   }
 }
@@ -2682,28 +3217,423 @@ audio.addEventListener("error", () => {
   if (Q.mode === "direct" && t) { Q.mode = "hls"; const url = `/api/items/${t.id}/hls/audio/index.m3u8`; if (window.Hls && Hls.isSupported()) { Q.hls = new Hls(); Q.hls.loadSource(url); Q.hls.attachMedia(audio); audio.play().catch(() => {}); } }
 });
 audio.addEventListener("ended", () => { const t = Q.list[Q.idx]; if (t) api(`/api/items/${t.id}/progress`, { method: "POST", body: { position: t.duration || 0, duration: t.duration || 0, ended: true } }).catch(() => {}); nextTrack(); });
-audio.addEventListener("play", () => $("#ab-play").innerHTML = "&#10074;&#10074;");
-audio.addEventListener("pause", () => $("#ab-play").innerHTML = "&#9654;");
+audio.addEventListener("play", () => { $("#ab-play").classList.add("playing"); $("#ab-play").setAttribute("aria-label", "Pause"); eqResume(); if (document.documentElement.classList.contains("af-open")) vizStart(); });
+audio.addEventListener("pause", () => { $("#ab-play").classList.remove("playing"); $("#ab-play").setAttribute("aria-label", "Play"); });
 audio.addEventListener("timeupdate", () => {
   const d = isFinite(audio.duration) ? audio.duration : (Q.list[Q.idx] || {}).duration || 0;
   $("#ab-cur").textContent = fmtDur(audio.currentTime); $("#ab-dur").textContent = fmtDur(d);
   if (!$("#ab-range").dragging) $("#ab-range").value = d ? Math.round(1000 * audio.currentTime / d) : 0;
+  syncAbButtons();
 });
 $("#ab-range").addEventListener("input", () => { $("#ab-range").dragging = true; });
 $("#ab-range").addEventListener("change", () => {
   const d = isFinite(audio.duration) ? audio.duration : (Q.list[Q.idx] || {}).duration || 0;
   audio.currentTime = d * $("#ab-range").value / 1000; $("#ab-range").dragging = false;
 });
-$("#ab-play").onclick = () => audio.paused ? audio.play() : audio.pause();
-$("#ab-next").onclick = nextTrack; $("#ab-prev").onclick = prevTrack;
+$("#ab-play").onclick = () => { eqResume(); audio.paused ? audio.play() : audio.pause(); };
+$("#ab-next").onclick = () => { eqResume(); nextTrack(); };
+$("#ab-prev").onclick = () => { eqResume(); prevTrack(); };
 $("#ab-vol").oninput = () => { audio.volume = $("#ab-vol").value / 100; };
 $("#ab-close").onclick = stopAudio;
+$("#ab-stage").onclick = openAudioFull;
+$("#ab-art").onclick = openAudioFull;
+$("#ab-meta").onclick = openAudioFull;
+$("#ab-back").onclick = closeAudioFull;
+$("#ab-eq").onclick = () => { if (window.matchMedia("(max-width:820px)").matches) openAudioFull(); eqResume(); toggleEqPanel(); afChromePoke(); };
+$("#ab-add").onclick = (e) => { e.stopPropagation(); const cur = Q.list[Q.idx]; if (cur && cur.id) openPlaylistSheet([cur.id]); };
+$("#ab-viz-toggle").onclick = (e) => { e.stopPropagation(); VIZ.on = !VIZ.on; vizSave(); vizStart(); afChromePoke(); };
+function syncAbButtons() {
+  const n = (Q.list || []).length, i = Q.idx;
+  $("#ab-prev").disabled = n === 0 || (i <= 0 && audio.currentTime <= 4);
+  $("#ab-next").disabled = n === 0 || i >= n - 1;
+}
+const AF_HIDE_MS = 3000;
+let afHideT = 0;
+function afChromePoke() {
+  const root = document.documentElement;
+  if (!root.classList.contains("af-open")) return;
+  root.classList.remove("af-chrome-off");
+  clearTimeout(afHideT);
+  const eqOpen = $("#eqpanel") && !$("#eqpanel").classList.contains("hidden");
+  const sheetOpen = $("#plsheet") && !$("#plsheet").classList.contains("hidden");
+  if (eqOpen || sheetOpen) return;
+  afHideT = setTimeout(() => {
+    if (!document.documentElement.classList.contains("af-open")) return;
+    const eq2 = $("#eqpanel") && !$("#eqpanel").classList.contains("hidden");
+    const sh2 = $("#plsheet") && !$("#plsheet").classList.contains("hidden");
+    if (eq2 || sh2) return;
+    document.documentElement.classList.add("af-chrome-off");
+  }, AF_HIDE_MS);
+}
+function openAudioFull() {
+  if ($("#audiobar").classList.contains("hidden")) return;
+  document.documentElement.classList.add("af-open");
+  afChromePoke();
+  vizStart();
+}
+function closeAudioFull() {
+  document.documentElement.classList.remove("af-open", "af-chrome-off", "viz-on");
+  clearTimeout(afHideT);
+  hideEqPanel();
+  vizStop();
+}
 function stopAudio() {
   audio.pause(); if (Q.hls) { Q.hls.destroy(); Q.hls = null; }
   audio.removeAttribute("src"); audio.load(); Q = { list: [], idx: -1, hls: null, mode: null };
-  $("#audiobar").classList.add("hidden"); document.title = "Movinite";
+  closeAudioFull();
+  $("#audiobar").classList.add("hidden"); document.documentElement.classList.remove("ab-open"); document.title = "Movinite";
+  $("#ab-play").classList.remove("playing");
+  vizStop();
 }
+
+/* 1.7.3: music equalizer via the Web Audio API. Only #audio is connected; the video element is left alone. */
+const EQ_FREQS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const EQ_LABELS = ["32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
+const EQ_PRESETS = {
+  Flat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "Bass Boost": [7, 5, 3, 1, 0, 0, 0, 0, 0, 0],
+  "Treble Boost": [0, 0, 0, 0, 0, 0, 2, 4, 6, 7],
+  Vocal: [-2, -1, 0, 2, 4, 4, 3, 1, 0, -1],
+  Rock: [5, 3, -2, -3, -1, 1, 3, 4, 4, 3],
+  Pop: [-1, 2, 4, 3, 0, -1, 1, 2, 3, 2],
+  Jazz: [3, 2, 1, 2, -2, -2, 0, 1, 2, 3],
+  Classical: [4, 3, 2, 0, 0, 0, -1, 2, 3, 4],
+  Dynamic: [6, 5, 3, 0, -2, -2, 0, 3, 5, 6]
+};
+const EQ_STORE = "movinite-eq-v1";
+const EQ = {
+  ctx: null, src: null, filters: [], wet: null, dry: null, comp: null, makeup: null,
+  compGain: null, directGain: null, on: true, preset: "Flat",
+  bands: EQ_PRESETS.Flat.slice(), ready: false,
+  ok: !!(window.AudioContext || window.webkitAudioContext)
+};
+function eqLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(EQ_STORE) || "null");
+    if (s && Array.isArray(s.bands) && s.bands.length === 10) {
+      EQ.bands = s.bands.map(n => Math.max(-12, Math.min(12, +n || 0)));
+      EQ.on = s.on !== false;
+      EQ.preset = typeof s.preset === "string" ? s.preset : "Custom";
+    }
+  } catch (e) {}
+}
+function eqSave() {
+  try { localStorage.setItem(EQ_STORE, JSON.stringify({ on: EQ.on, preset: EQ.preset, bands: EQ.bands })); } catch (e) {}
+}
+function eqResume() {
+  if (!EQ.ok) return;
+  eqEnsure();
+  if (EQ.ctx && EQ.ctx.state === "suspended") EQ.ctx.resume().catch(() => {});
+}
+function eqEnsure() {
+  if (!EQ.ok || EQ.ready) return EQ.ready;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    /* same-origin /api/ streams (and HLS on this host). Do not set crossOrigin: a
+       credentialed request without CORS would be silenced by createMediaElementSource. */
+    const src = ctx.createMediaElementSource(audio);
+    const filters = EQ_FREQS.map((f, i) => {
+      const b = ctx.createBiquadFilter();
+      if (i === 0) { b.type = "lowshelf"; b.frequency.value = f; }
+      else if (i === EQ_FREQS.length - 1) { b.type = "highshelf"; b.frequency.value = f; }
+      else { b.type = "peaking"; b.frequency.value = f; b.Q.value = 1; }
+      b.gain.value = 0;
+      return b;
+    });
+    for (let i = 0; i < filters.length - 1; i++) filters[i].connect(filters[i + 1]);
+    const directGain = ctx.createGain();
+    const compGain = ctx.createGain();
+    const makeup = ctx.createGain();
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -24; comp.knee.value = 12; comp.ratio.value = 2.5;
+    comp.attack.value = 0.02; comp.release.value = 0.25;
+    makeup.gain.value = 1;
+    const wet = ctx.createGain(), dry = ctx.createGain();
+    src.connect(filters[0]);
+    src.connect(dry);
+    filters[filters.length - 1].connect(directGain);
+    filters[filters.length - 1].connect(compGain);
+    compGain.connect(comp); comp.connect(makeup);
+    directGain.connect(wet); makeup.connect(wet);
+    wet.connect(ctx.destination); dry.connect(ctx.destination);
+    Object.assign(EQ, { ctx, src, filters, wet, dry, comp, makeup, compGain, directGain, ready: true });
+    eqApply(false);
+    return true;
+  } catch (e) {
+    console.warn("equalizer", e);
+    EQ.ok = false;
+    return false;
+  }
+}
+function eqNamedPreset() {
+  const keys = Object.keys(EQ_PRESETS);
+  for (let i = 0; i < keys.length; i++) {
+    const g = EQ_PRESETS[keys[i]];
+    if (g.every((v, j) => Math.abs(v - EQ.bands[j]) < 0.21)) return keys[i];
+  }
+  return "Custom";
+}
+function eqApply(save) {
+  if (EQ.ready) {
+    EQ.filters.forEach((f, i) => { f.gain.value = EQ.on ? EQ.bands[i] : 0; });
+    const dyn = EQ.on && EQ.preset === "Dynamic";
+    if (EQ.directGain) EQ.directGain.gain.value = (EQ.on && !dyn) ? 1 : 0;
+    if (EQ.compGain) EQ.compGain.gain.value = dyn ? 1 : 0;
+    if (EQ.makeup) EQ.makeup.gain.value = dyn ? 1.41 : 1; /* ~+3 dB makeup, modest so it doesn't clip */
+    if (EQ.wet) EQ.wet.gain.value = EQ.on ? 1 : 0;
+    if (EQ.dry) EQ.dry.gain.value = EQ.on ? 0 : 1;
+  }
+  if (save !== false) eqSave();
+  eqPaint();
+}
+function eqPaint() {
+  const pan = $("#eqpanel");
+  if (!pan) return;
+  pan.classList.toggle("off", !EQ.on);
+  const on = $("#eq-on"); if (on) on.checked = EQ.on;
+  $$("#eq-presets .eq-preset").forEach(b => b.classList.toggle("on", b.dataset.preset === EQ.preset));
+  $$("#eq-bands input[data-eq]").forEach(inp => {
+    const i = +inp.dataset.eq;
+    if (Math.abs(+inp.value - EQ.bands[i]) > 0.01) inp.value = EQ.bands[i];
+    const lab = inp.parentNode.querySelector(".eq-val");
+    if (lab) lab.textContent = (EQ.bands[i] > 0 ? "+" : "") + (+EQ.bands[i].toFixed(1)).toString().replace(/\.0$/, "");
+  });
+  const eqBtn = $("#ab-eq");
+  if (eqBtn) eqBtn.classList.toggle("on", EQ.on && !pan.classList.contains("hidden"));
+}
+function eqBuild() {
+  const host = $("#eq-bands"), presets = $("#eq-presets");
+  if (!host || host.dataset.ready) return;
+  host.dataset.ready = "1";
+  EQ_FREQS.forEach((f, i) => {
+    const lab = document.createElement("label");
+    lab.className = "eq-band";
+    lab.innerHTML = `<span class="eq-val" data-i="${i}">0</span>`
+      + `<input type="range" min="-12" max="12" step="0.5" value="0" orient="vertical" data-eq="${i}" aria-label="${EQ_LABELS[i]} hertz">`
+      + `<span class="eq-hz">${EQ_LABELS[i]}</span>`;
+    host.appendChild(lab);
+  });
+  Object.keys(EQ_PRESETS).concat(["Custom"]).forEach(name => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "eq-preset"; b.dataset.preset = name; b.textContent = name;
+    presets.appendChild(b);
+  });
+  presets.addEventListener("click", e => {
+    const b = e.target.closest(".eq-preset"); if (!b) return;
+    eqResume();
+    if (b.dataset.preset === "Custom") return;
+    EQ.preset = b.dataset.preset;
+    EQ.bands = EQ_PRESETS[EQ.preset].slice();
+    eqApply();
+  });
+  host.addEventListener("input", e => {
+    const inp = e.target.closest("input[data-eq]"); if (!inp) return;
+    eqResume();
+    EQ.bands[+inp.dataset.eq] = +inp.value;
+    EQ.preset = eqNamedPreset();
+    eqApply();
+  });
+  $("#eq-on").onchange = () => { eqResume(); EQ.on = $("#eq-on").checked; eqApply(); };
+  $("#eq-reset").onclick = () => { eqResume(); EQ.preset = "Flat"; EQ.bands = EQ_PRESETS.Flat.slice(); eqApply(); };
+  $("#eq-close").onclick = hideEqPanel;
+}
+function toggleEqPanel() {
+  const pan = $("#eqpanel");
+  if (pan.classList.contains("hidden")) {
+    eqBuild(); eqResume(); pan.classList.remove("hidden"); eqPaint();
+  } else hideEqPanel();
+}
+function hideEqPanel() {
+  $("#eqpanel").classList.add("hidden");
+  const eqBtn = $("#ab-eq"); if (eqBtn) eqBtn.classList.remove("on");
+}
+eqLoad();
+eqBuild();
+bindPlaylistSheet();
+
+/* 1.7.6: beat-reactive visualizer, tapped from the existing EQ graph (one AudioContext). */
+const VIZ_STORE = "movinite-viz-v1";
+const VIZ = { on: true, raf: 0, data: null, bassHist: [], lastBeat: 0, mock: null };
+function vizReduced() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+function vizLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(VIZ_STORE) || "null");
+    if (s && typeof s.on === "boolean") VIZ.on = s.on;
+  } catch (e) {}
+}
+function vizSave() {
+  try { localStorage.setItem(VIZ_STORE, JSON.stringify({ on: VIZ.on })); } catch (e) {}
+}
+function vizAttach() {
+  if (!EQ.ready) return false;
+  if (EQ.analyser) return true;
+  try {
+    const an = EQ.ctx.createAnalyser();
+    an.fftSize = 256;
+    an.smoothingTimeConstant = 0.72;
+    EQ.src.connect(an);
+    EQ.analyser = an;
+    VIZ.data = new Uint8Array(an.frequencyBinCount);
+    return true;
+  } catch (e) {
+    console.warn("visualizer", e);
+    return false;
+  }
+}
+function vizWanted() {
+  return VIZ.on && !vizReduced() && document.documentElement.classList.contains("af-open") && !document.hidden;
+}
+function vizPaintToggle() {
+  document.documentElement.classList.toggle("viz-on", !!(VIZ.on && !vizReduced() && document.documentElement.classList.contains("af-open")));
+  const btn = $("#ab-viz-toggle");
+  if (btn) { btn.classList.toggle("on", VIZ.on); btn.setAttribute("aria-pressed", VIZ.on ? "true" : "false"); }
+}
+function vizStart() {
+  vizPaintToggle();
+  if (!vizWanted()) { vizStop(); vizPaintToggle(); return; }
+  eqEnsure();
+  vizAttach();
+  if (VIZ.raf) return;
+  const tick = (now) => {
+    VIZ.raf = requestAnimationFrame(tick);
+    if (!vizWanted()) { vizStop(); vizPaintToggle(); return; }
+    vizDraw(now);
+  };
+  VIZ.raf = requestAnimationFrame(tick);
+}
+function vizStop() {
+  if (VIZ.raf) { cancelAnimationFrame(VIZ.raf); VIZ.raf = 0; }
+  const st = $("#ab-stage"); if (st) st.classList.remove("pulse");
+}
+/* theme hues for the beat ring: accent, deep purple, lavender, magenta, indigo */
+const VIZ_HUES = [
+  [150, 55, 250],   /* #9637FA */
+  [106, 22, 196],   /* #6A16C4 */
+  [212, 187, 255],  /* #D4BBFF */
+  [224, 48, 200],   /* magenta */
+  [79, 70, 229]     /* indigo */
+];
+function vizLerp(a, b, t) {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+function vizHue(t) {
+  const n = VIZ_HUES.length;
+  const x = (((t % 1) + 1) % 1) * n;
+  const i = Math.floor(x);
+  return vizLerp(VIZ_HUES[i], VIZ_HUES[(i + 1) % n], x - i);
+}
+function vizBarRgb(pos, freqT, energy, beat) {
+  let c = vizHue(pos);
+  if (freqT < 0.35) {
+    const w = ((0.35 - freqT) / 0.35) * (0.3 + energy * 0.45);
+    c = vizLerp(c, [232, 64, 200], w);
+    const b = 1 + energy * 0.4 + beat * 0.2;
+    c = [Math.min(255, c[0] * b), Math.min(255, c[1] * b), Math.min(255, c[2] * b)];
+  } else if (freqT > 0.55) {
+    const w = ((freqT - 0.55) / 0.45) * (0.35 + energy * 0.3);
+    c = vizLerp(c, [212, 187, 255], w);
+    const b = 1 + energy * 0.25;
+    c = [Math.min(255, c[0] * b), Math.min(255, c[1] * b), Math.min(255, c[2] * b)];
+  } else {
+    const b = 1 + energy * 0.28 + beat * 0.1;
+    c = [Math.min(255, c[0] * b), Math.min(255, c[1] * b), Math.min(255, c[2] * b)];
+  }
+  return c.map((x) => Math.round(x));
+}
+function vizRgba(c, a) {
+  return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")";
+}
+function vizDraw(now) {
+  const cv = $("#ab-viz"), st = $("#ab-stage");
+  if (!cv || !st) return;
+  const ctx = cv.getContext("2d");
+  if (!ctx) return;
+  const size = Math.min(st.clientWidth || 300, 640) * 2;
+  if (cv.width !== size) { cv.width = size; cv.height = size; }
+  const w = cv.width, h = cv.height, cx = w / 2, cy = h / 2;
+  ctx.clearRect(0, 0, w, h);
+  let bins = VIZ.mock;
+  if (!bins && EQ.analyser && VIZ.data) { EQ.analyser.getByteFrequencyData(VIZ.data); bins = VIZ.data; }
+  if (!bins) return;
+  const n = 48, inner = Math.min(w, h) * 0.33, maxLen = Math.min(w, h) * 0.16;
+  let bass = 0, nb = 0;
+  const top = Math.min(6, bins.length - 1);
+  for (let i = 1; i <= top; i++) { bass += bins[i] || 0; nb++; }
+  bass = nb ? bass / nb : 0;
+  VIZ.bassHist.push(bass);
+  if (VIZ.bassHist.length > 24) VIZ.bassHist.shift();
+  const avg = VIZ.bassHist.reduce((a, b) => a + b, 0) / VIZ.bassHist.length;
+  const beat = Math.max(0, Math.min(1, (bass / 255) * (bass > avg ? 1.15 : 0.85)));
+  const spin = (now || 0) / 14000; /* one slow turn around the palette ~14s */
+  /* faint ambient wash on the ring, not the whole page */
+  const wash = vizHue(spin);
+  const glow = ctx.createRadialGradient(cx, cy, inner * 0.35, cx, cy, inner + maxLen * 1.85);
+  glow.addColorStop(0, vizRgba(wash, (0.03 + beat * 0.07).toFixed(3)));
+  glow.addColorStop(0.55, vizRgba(wash, (0.07 + beat * 0.1).toFixed(3)));
+  glow.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+  ctx.lineCap = "round";
+  const lw = Math.max(3, w / 140);
+  for (let i = 0; i < n; i++) {
+    const idx = Math.min(bins.length - 1, 1 + Math.floor(i * (bins.length * 0.55) / n));
+    const v = (bins[idx] || 0) / 255;
+    const freqT = i / (n - 1);
+    const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const len = maxLen * (0.12 + v * 0.88);
+    const rgb = vizBarRgb(i / n + spin, freqT, v, beat);
+    const alpha = 0.42 + v * 0.58;
+    ctx.shadowColor = vizRgba(rgb, 0.75);
+    ctx.shadowBlur = 10 + v * 14 + beat * 8;
+    ctx.strokeStyle = vizRgba(rgb, alpha.toFixed(3));
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(ang) * inner, cy + Math.sin(ang) * inner);
+    ctx.lineTo(cx + Math.cos(ang) * (inner + len), cy + Math.sin(ang) * (inner + len));
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+  ctx.beginPath();
+  ctx.arc(cx, cy, inner - 6, 0, Math.PI * 2);
+  ctx.strokeStyle = vizRgba(vizHue(spin + 0.15), 0.28 + beat * 0.15);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  if (bass > 88 && bass > avg * 1.28 && now - VIZ.lastBeat > 180) {
+    VIZ.lastBeat = now;
+    st.classList.add("pulse");
+    setTimeout(() => st.classList.remove("pulse"), 140);
+  }
+}
+vizLoad();
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) vizStop();
+  else if (document.documentElement.classList.contains("af-open")) vizStart();
+});
+if ($("#audiobar")) {
+  const poke = () => { if (document.documentElement.classList.contains("af-open")) afChromePoke(); };
+  $("#audiobar").addEventListener("pointerdown", poke);
+  $("#audiobar").addEventListener("touchstart", poke, { passive: true });
+  $("#audiobar").addEventListener("mousemove", poke);
+  $("#audiobar").addEventListener("keydown", poke);
+}
+
 function stopAll() { if (P) { PIP.leave(); teardownVideo(true); P = null; OV.reset(); $("#player").classList.add("hidden"); } stopAudio(); }
+
+window.__msSetPlayerStat = function (d) { if (ME) ME.show_status = true; if (d) SYS.d = d; renderSysstat(); };
+window.setVideoFit = setVideoFit;
+window.paintCues = paintCues;
+window.__msSubReady = function () { return !!(SUB && SUB.key && SUB.cues && SUB.cues.length); };
+window.__msOpenAudioFull = openAudioFull;
+window.__msCloseAudioFull = closeAudioFull;
+window.__msAfChromePoke = afChromePoke;
+window.__msVizSet = function (on) { VIZ.on = !!on; vizSave(); vizStart(); };
+window.__msVizInject = function (arr, t) { VIZ.mock = arr ? new Uint8Array(arr) : null; if (arr) vizDraw(t != null ? t : performance.now()); };
+window.__msVizTick = function () { vizDraw(performance.now()); };
+window.openPlaylistSheet = openPlaylistSheet;
 
 boot();
 })();

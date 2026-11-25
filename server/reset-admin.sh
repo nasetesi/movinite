@@ -2,7 +2,7 @@
 # reset-admin.sh -- set a new random password for "admin" (or the user named as $1) and print it.
 # The account is made an administrator and must choose a new password at next sign-in.
 #     sudo bash reset-admin.sh            # resets "admin"
-#     sudo bash reset-admin.sh alice      # resets / creates "alice"
+#     sudo bash reset-admin.sh nase       # resets / creates "nase"
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"

@@ -26,6 +26,9 @@ IDLE_KILL_S = 90          # no segment requests for this long -> kill + delete s
 AHEAD_PAUSE = 25          # pause ffmpeg when it is this many segments ahead of the player
 AHEAD_RESUME = 12
 HW_STALL_S = 20          # 1.5.2: a GPU run that makes no segment in this long falls back
+HW_RETRY_MAX = 1          # 1.7.7: one extra hardware launch after an unexpected VAAPI/NVENC exit
+HW_RETRY_BACKOFF_S = 1.5  # wait before that retry so we never tight-loop
+LOG_TAIL_N = 50           # ffmpeg stderr lines to copy into the journal on a non-zero exit
 
 PROFILES = {
     # name: (max height, video kbps, audio kbps)
@@ -146,9 +149,14 @@ class Session:
         # 1.5.2: hardware encoding -- try full GPU, then CPU decode + GPU encode, then the CPU (libx264)
         self.hw = (None, None)
         self.base, self.vc = split_profile(profile)
-        self.hevc = self.vc == "hevc"
+        src_hevc = (item.get("vcodec") or "").lower() in ("hevc", "h265")
+        self.hevc = self.vc == "hevc" or (profile == "remux" and src_hevc)
         self.ext = "m4s" if self.hevc else "ts"
         self.failed = None
+        self.player_id = ""
+        self.hw_retries = {}      # stage -> number of unexpected hardware retries already used
+        self.last_rc = None
+        self._planned_stop = False
         if profile not in ("remux", "audio") and item.get("vcodec") and item.get("media_type") == "video":
             self.hw = hwaccel.active()
         if self.base in HIRES and not self.hw[0]:
@@ -170,23 +178,43 @@ class Session:
             self.nseg = max(1, math.ceil((item.get("duration") or SEG) / SEG))
 
     # --- ffmpeg -----------------------------------------------------------
+    def _audio_copy_or_aac(self, cmd):
+        auds = json.loads(self.item.get("audio_streams") or "[]")
+        a = auds[self.audio_idx] if self.audio_idx < len(auds) else (auds[0] if auds else {})
+        if a.get("codec") in ("aac", "mp3") and (a.get("channels") or 2) <= 2:
+            cmd += ["-c:a", "copy"]
+        else:
+            cmd += ["-c:a", "aac", "-ac", "2", "-b:a", "192k", "-ar", "48000"]
+        return cmd
+
     def _remux_cmd(self, start):
-        """Copy the H.264 video, convert only the audio if needed; cut exactly at the probed keyframes."""
+        """Copy the video, convert only the audio if needed; cut exactly at the probed keyframes.
+
+        H.264 is remuxed to MPEG-TS. HEVC is remuxed to fMP4 (hls.js cannot play HEVC in MPEG-TS).
+        """
         it = self.item
         b = self.bounds
-        cmd = [config.FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error"]
+        cmd = [config.FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "warning"]
         seek = 0.0
         if start > 0:
             # ffmpeg seeks a little before -ss for formats with B-frames; +0.2 s lands exactly on keyframe b[start]
             seek = b[start] + 0.2
             cmd += ["-ss", "%.3f" % seek]
         cmd += ["-i", it["path"], "-map", "0:v:0", "-map", "0:a:%d?" % self.audio_idx, "-sn", "-dn", "-c:v", "copy"]
-        auds = json.loads(it.get("audio_streams") or "[]")
-        a = auds[self.audio_idx] if self.audio_idx < len(auds) else (auds[0] if auds else {})
-        if a.get("codec") in ("aac", "mp3") and (a.get("channels") or 2) <= 2:
-            cmd += ["-c:a", "copy"]
-        else:
-            cmd += ["-c:a", "aac", "-ac", "2", "-b:a", "192k", "-ar", "48000"]
+        if self.hevc:
+            cmd += ["-tag:v", "hvc1"]
+        cmd = self._audio_copy_or_aac(cmd)
+        if self.hevc:
+            # HLS fMP4, split on keyframes near SEG; init + m4s, same layout as a HEVC transcode.
+            cmd += ["-max_muxing_queue_size", "4096", "-f", "hls", "-hls_time", str(int(SEG)),
+                    "-hls_list_size", "0", "-hls_segment_type", "fmp4",
+                    "-hls_fmp4_init_filename", "init%d.mp4" % start,
+                    "-hls_segment_options", "movflags=+frag_discont",
+                    "-hls_flags", "temp_file+independent_segments",
+                    "-start_number", str(start), "-output_ts_offset", "%.3f" % seek,
+                    "-hls_segment_filename", str(self.dir / "seg%d.m4s"),
+                    str(self.dir / "ffmpeg.m3u8")]
+            return cmd
         # split points relative to the first packet; -0.25 s so float rounding can never skip a keyframe
         times = ["%.3f" % max(0.05, t - b[start] - 0.25) for t in b[start + 1:]]
         cmd += ["-max_muxing_queue_size", "4096", "-f", "segment", "-segment_format", "mpegts"]
@@ -222,16 +250,52 @@ class Session:
             self.stop()
             return
         self.stage_i += 1
-        log.warning("transcode %s: %s stage %s failed (%s) -> %s", self.sid, method, old, reason[:200],
-                    "CPU" if self.stage == "cpu" else "CPU decode + %s encode" % method)
+        nxt = "CPU" if self.stage == "cpu" else "CPU decode + %s encode" % method
+        log.warning("transcode %s: %s stage %s failed (%s) -> %s (sticky for this stream)",
+                    self.sid, method, old, reason[:200], nxt)
+        remember_stage(self.sid, self.stage, reason, failed=old)
         self.start(seg)
 
-    def _log_tail(self):
+    def _log_tail(self, n=3, joiner=" | "):
         try:
             lines = [l for l in (self.dir / "ffmpeg.log").read_text(errors="replace").splitlines() if l.strip()]
-            return " | ".join(lines[-3:]) or "ffmpeg exited"
+            return joiner.join(lines[-n:]) or "ffmpeg exited"
         except OSError:
             return "ffmpeg exited"
+
+    def _start_with_backoff(self, n):
+        if self.last_rc not in (None, 0) and time.time() - (self.started_at or 0) < 8:
+            time.sleep(HW_RETRY_BACKOFF_S)
+        if getattr(self, "destroyed", False):
+            return
+        self.start(n)
+
+    def _handle_not_running(self, n):
+        """ffmpeg is not running and segment n is not ready: seek, one hardware retry, or sticky fallback."""
+        rc = self._reap(planned=False)
+        if self.failed or getattr(self, "destroyed", False):
+            return
+        died_empty = (self.started_at and self.profile != "remux" and not self._ready(self.start_seg))
+        unexpected = (self.started_at and not self._planned_stop
+                      and (died_empty or (rc not in (None, 0) and rc is not True)))
+        if self.profile == "remux" or self.stage == "cpu" or not self.hw[0]:
+            self._start_with_backoff(n)
+            return
+        if unexpected:
+            reason = self._log_tail(8) or "ffmpeg exited"
+            used = self.hw_retries.get(self.stage, 0)
+            if used < HW_RETRY_MAX:
+                self.hw_retries[self.stage] = used + 1
+                log.warning("transcode %s: %s stage %s exited (%s), retrying hardware once after %.1fs",
+                            self.sid, self.encoder, self.stage, reason[:200], HW_RETRY_BACKOFF_S)
+                time.sleep(HW_RETRY_BACKOFF_S)
+                if getattr(self, "destroyed", False) or self.failed:
+                    return
+                self.start(n)
+                return
+            self._fallback(n, reason)
+            return
+        self.start(n)
 
     def _cmd(self, start):
         if self.profile == "remux":
@@ -248,7 +312,7 @@ class Session:
             bw, bh = HIRES[self.base] if self.stage != "cpu" else CPU_FALLBACK_BOX
             box = fit_box(sw, sh, bw, bh)
         t0 = start * SEG
-        cmd = [config.FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error"]
+        cmd = [config.FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "warning"]
         hw = None
         if not audio_only and self.stage != "cpu":
             src_h = it.get("height") or maxh
@@ -259,7 +323,8 @@ class Session:
             if box:
                 h, hk = box[1], vk
             hw = hwaccel.stage_args(self.hw[0], self.hw[1], self.stage, h, hk, self.rot,
-                                    width=box[0] if box else None, codec="hevc" if self.hevc else "h264")
+                                    width=box[0] if box else None, codec="hevc" if self.hevc else "h264",
+                                    hdr=hdr_info(it))
             cmd += hw[0]
         elif config.HWACCEL and not audio_only:
             cmd += ["-hwaccel", config.HWACCEL]
@@ -315,12 +380,15 @@ class Session:
         cmd = self._cmd(seg)
         log.info("transcode %s start seg %d [%s/%s]: %s", self.sid, seg, self.encoder, self.stage, " ".join(cmd))
         errf = open(self.dir / "ffmpeg.log", "ab")
+        self._planned_stop = False
+        self.last_rc = None
         self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf, start_new_session=True)
         errf.close()
         self.paused = False
 
     def stop(self):
         p = self.proc
+        self._planned_stop = True
         if p and p.poll() is None:
             try:
                 if self.paused:
@@ -337,6 +405,27 @@ class Session:
         for f in self.dir.glob("*.tmp"):
             f.unlink(missing_ok=True)
 
+    def _journal_ffmpeg(self, rc):
+        """Copy the last lines of ffmpeg.log into the journal, then leave the file in place."""
+        tail = self._log_tail(LOG_TAIL_N, joiner="\n")
+        log.warning("transcode %s: ffmpeg exited rc=%s [%s/%s]\n%s",
+                    self.sid, rc, self.encoder, self.stage, tail or "(ffmpeg.log empty)")
+
+    def _reap(self, planned=False):
+        """If ffmpeg has exited, journal its stderr on an unexpected non-zero exit. Returns rc or None if running/absent."""
+        p = self.proc
+        if p is None:
+            return self.last_rc
+        rc = p.poll()
+        if rc is None:
+            return None
+        self.proc = None
+        self.paused = False
+        self.last_rc = rc
+        if not planned and not self._planned_stop and rc != 0:
+            self._journal_ffmpeg(rc)
+        return rc
+
     def running(self):
         return self.proc is not None and self.proc.poll() is None
 
@@ -352,8 +441,8 @@ class Session:
         return self.dir / ("seg%d.%s" % (n, self.ext))
 
     def _ready(self, n):
-        if self.profile != "remux":
-            # with hls temp_file the .ts appears only once complete
+        if self.profile != "remux" or self.hevc:
+            # with hls temp_file the .ts/.m4s appears only once complete (HEVC remux uses the same muxer)
             return self.seg_path(n).exists()
         # segment muxer: a segment is complete once it is listed in the csv of the run that made it
         name = "seg%d.ts," % n
@@ -375,7 +464,10 @@ class Session:
                 self._resume_if_needed()
                 return self.seg_path(n)
             hi = self.highest_done()
-            if not self.running() or n < self.start_seg or n > max(hi, self.start_seg) + 4:
+            if not self.running():
+                # Do not relaunch the same failing GPU stage in a loop (that flipped the badge).
+                self._handle_not_running(n)
+            elif n < self.start_seg or n > max(hi, self.start_seg) + 4:
                 self.start(n)
             self._resume_if_needed()
         deadline = time.time() + timeout
@@ -387,15 +479,11 @@ class Session:
             if not self.running():
                 if self._ready(n):
                     return self.seg_path(n)
-                if self.stage != "cpu" and self.profile != "remux" and not self._ready(self.start_seg):
-                    # 1.5.2: the GPU run died without making a single segment -> next stage, same segment
-                    with self.lock:
-                        if not self.running() and not self._ready(n) and self.stage != "cpu":
-                            self._fallback(n, self._log_tail())
-                    deadline = max(deadline, time.time() + timeout)
-                    continue
-                # ffmpeg ended without producing it
-                return None
+                with self.lock:
+                    if not self.running() and not self._ready(n) and not self.failed and not getattr(self, "destroyed", False):
+                        self._handle_not_running(n)
+                deadline = max(deadline, time.time() + timeout)
+                continue
             if (self.stage != "cpu" and self.profile != "remux" and time.time() - self.started_at > HW_STALL_S
                     and not self._ready(self.start_seg)):
                 with self.lock:
@@ -415,8 +503,8 @@ class Session:
             done = [f for f in self.dir.glob("init*.mp4") if f.stem[4:].isdigit() and self._ready(int(f.stem[4:]))]
             if done:
                 return max(done, key=lambda f: f.stat().st_mtime)
-            if not self.running() and not self.failed:
-                self.start(max(0, min(hint, self.nseg - 1)))
+            if not self.running() and not self.failed and not getattr(self, "destroyed", False):
+                self._handle_not_running(max(0, min(hint, self.nseg - 1)))
             first = self.start_seg
         if not self.get_segment(first, timeout):
             return None
@@ -453,22 +541,73 @@ class Session:
             if n < self.last_req - 40:
                 f.unlink(missing_ok=True)
 
-    def destroy(self):
+    def destroy(self, reason=""):
         self.destroyed = True      # 1.5.3: a request still waiting on this session must not restart ffmpeg
+        log.info("transcode %s destroy (%s)", self.sid, reason or "unspecified")
         self.stop()
+        # ffmpeg.log has already been copied into the journal on an unexpected exit; now the dir can go
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
 _sessions = {}
 _slock = threading.Lock()
+# Per-stream fallback, keyed by session id (item + quality + audio + user). Survives a
+# destroy/recreate (seek, idle retry, playlist reload) so the stream does not hop back to
+# a GPU stage that just failed. Expires so a later, quieter playback can try full GPU again.
+STICKY_S = 1800
+_sticky = {}
+_sticky_lock = threading.Lock()
 
 
-def session_id(item_id, profile, audio_idx, user_id):
-    return hashlib.sha1(("%s|%s|%s|%s" % (item_id, profile, audio_idx, user_id)).encode()).hexdigest()[:16]
+def remember_stage(sid, stage, reason, failed=""):
+    with _sticky_lock:
+        _sticky[sid] = {"stage": stage, "failed": failed, "reason": (reason or "")[:300], "at": time.time()}
+    log.info("transcode %s: sticky stage %s after %s failed (%s)", sid, stage, failed or "?", (reason or "")[:200])
 
 
-def get_session(item, profile, audio_idx, user_id):
-    sid = session_id(item["id"], profile, audio_idx, user_id)
+def apply_sticky(session):
+    with _sticky_lock:
+        st = _sticky.get(session.sid)
+    if not st:
+        return
+    if time.time() - st["at"] > STICKY_S:
+        with _sticky_lock:
+            _sticky.pop(session.sid, None)
+        return
+    if st["stage"] in session.stages:
+        session.stage_i = session.stages.index(st["stage"])
+        if st.get("reason"):
+            session.fallbacks.append({"stage": st.get("failed") or "full", "reason": st["reason"],
+                                      "at": int(st["at"]), "sticky": True})
+        log.info("transcode %s: staying on %s (%s)", session.sid, session.stage, st["reason"][:200])
+
+
+def normalize_player(player_id):
+    s = "".join(c for c in (player_id or "") if c.isalnum() or c in "-_")
+    return s[:64]
+
+
+def session_id(item_id, profile, audio_idx, user_id, player_id=""):
+    return hashlib.sha1(("%s|%s|%s|%s|%s" % (item_id, profile, audio_idx, user_id, normalize_player(player_id))).encode()).hexdigest()[:16]
+
+
+def max_transcodes():
+    """Server-wide cap (hardware and software). Setting overrides MS_MAX_TRANSCODES (default 4)."""
+    try:
+        from . import settings
+        raw = settings.get("max_transcodes")
+        if raw not in (None, ""):
+            n = int(raw)
+            if 1 <= n <= 32:
+                return n
+    except (ValueError, TypeError, Exception):
+        pass
+    return config.MAX_TRANSCODES
+
+
+def get_session(item, profile, audio_idx, user_id, player_id=""):
+    pid = normalize_player(player_id)
+    sid = session_id(item["id"], profile, audio_idx, user_id, pid)
     bounds = None
     if profile == "remux":
         bounds = remux_bounds(item)
@@ -477,26 +616,43 @@ def get_session(item, profile, audio_idx, user_id):
     with _slock:
         s = _sessions.get(sid)
         if s is None:
-            # one transcode per user: switching item/quality/audio track replaces the old session
+            # One transcode per player-session: the same login on two devices can stream at once.
+            # Switching title or quality on one device replaces only that device's session.
             for k, other in list(_sessions.items()):
-                if other.user_id == user_id:
-                    other.destroy()
+                if other.user_id == user_id and getattr(other, "player_id", "") == pid:
+                    other.destroy("replaced")
                     _sessions.pop(k, None)
-            if _sessions and len(_sessions) >= config.MAX_TRANSCODES:
+            cap = max_transcodes()
+            if _sessions and len(_sessions) >= cap:
                 oldest = min(_sessions.values(), key=lambda x: x.last_access)
-                oldest.destroy()
+                log.warning("transcode cap reached (%d of %d), evicting %s (%s, idle %ds)",
+                            len(_sessions), cap, oldest.sid, oldest.item.get("title") or "?",
+                            int(time.time() - oldest.last_access))
+                oldest.destroy("cap")
                 _sessions.pop(oldest.sid, None)
             s = Session(sid, item, profile, audio_idx, bounds)
             s.user_id = user_id
+            s.player_id = pid
+            apply_sticky(s)
             _sessions[sid] = s
         return s
 
 
-def stop_session(sid):
+def stop_session(sid, reason="client_close"):
     with _slock:
         s = _sessions.pop(sid, None)
     if s:
-        s.destroy()
+        s.destroy(reason)
+
+
+def note_client(player_id, user, request=None, caps=""):
+    """Log what this player advertised (once per playlist load)."""
+    ua = ""
+    if request is not None:
+        ua = request.headers.get("user-agent") or ""
+    uname = (user or {}).get("username") or (user or {}).get("id") or "?"
+    log.info("transcode client player=%s user=%s caps=%s ua=%s",
+             normalize_player(player_id) or "-", uname, caps or "-", ua[:400])
 
 
 def playlist(item, query="", bounds=None, fmp4_init=None):
@@ -542,8 +698,7 @@ def janitor_loop(stop_flag):
         with _slock:
             for sid, s in list(_sessions.items()):
                 if now - s.last_access > IDLE_KILL_S:
-                    log.info("transcode %s idle, removing", sid)
-                    s.destroy()
+                    s.destroy("idle")
                     _sessions.pop(sid, None)
                 else:
                     s.housekeep()
@@ -553,7 +708,7 @@ def janitor_loop(stop_flag):
 def shutdown():
     with _slock:
         for s in _sessions.values():
-            s.destroy()
+            s.destroy("shutdown")
         _sessions.clear()
 
 
@@ -563,12 +718,24 @@ def shutdown():
 REMUX_CONTAINERS = ("matroska", "mp4", "mov")   # demuxers with a keyframe index -> exact seeking
 
 
-def remux_eligible(item):
-    """H.264 8-bit video in a container we can seek precisely -> copy video instead of re-encoding."""
+def remux_codec(item):
+    """'h264' / 'hevc' if this file can be remuxed (video copied, no re-encode), else ''."""
+    if item.get("media_type") != "video" or (item.get("duration") or 0) <= 1:
+        return ""
     c = item.get("container") or ""
-    return (item.get("media_type") == "video" and item.get("vcodec") == "h264"
-            and (item.get("pix_fmt") or "yuv420p") in ("yuv420p", "yuvj420p")
-            and any(x in c for x in REMUX_CONTAINERS) and (item.get("duration") or 0) > 1)
+    if not any(x in c for x in REMUX_CONTAINERS):
+        return ""
+    v = (item.get("vcodec") or "").lower()
+    if v == "h264" and (item.get("pix_fmt") or "yuv420p") in ("yuv420p", "yuvj420p"):
+        return "h264"
+    if v in ("hevc", "h265"):
+        return "hevc"   # 10-bit is fine: we copy the bitstream into fMP4 (hls.js cannot play HEVC in MPEG-TS)
+    return ""
+
+
+def remux_eligible(item):
+    """H.264 8-bit or HEVC (any bit depth) in a container we can seek precisely -> copy video instead of re-encoding."""
+    return bool(remux_codec(item))
 
 
 def probe_bounds(path, duration, start_time=0.0):

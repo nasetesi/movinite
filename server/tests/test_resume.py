@@ -21,7 +21,7 @@ import mock_tmdb  # noqa: E402
 from app import db, scanner, server, settings, tmdb  # noqa: E402
 from app.version import __version__  # noqa: E402
 
-MEDIA = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("MOVINITE_TESTMEDIA", str(Path(__file__).resolve().parent / "testmedia")))
+MEDIA = Path(sys.argv[1] if len(sys.argv) > 1 else "/workspace/media-server/testmedia")
 n_ok = 0
 
 

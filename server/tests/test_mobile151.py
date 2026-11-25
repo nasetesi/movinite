@@ -27,7 +27,7 @@ check(".tabbar a.on{color:var(--acc-text)}" in mq, "active tab in Movinite purpl
 check("html.pl-open .tabbar{display:none}" in mq and 'classList.add("pl-open")' in js and 'classList.remove("pl-open")' in js, "tab bar hidden while the player is open")
 check("html.pl-open:has(#player.pip-min) .tabbar{display:grid}" in mq, "tab bar back while the player is minimised (PiP)")
 check(".audiobar{bottom:calc(62px" in mq and ".pip-chip{bottom:calc(" in mq and ".toast{bottom:calc(" in mq, "audio bar, PiP chip and toasts sit above the tab bar")
-check("#view{padding:8px 14px calc(92px + env(safe-area-inset-bottom))}" in mq, "page leaves room for the tab bar")
+check("#view{padding:8px 14px calc(92px + var(--abar-space, 0px) + env(safe-area-inset-bottom))}" in mq and "html.ab-open{--abar-space:108px}" in mq, "page leaves room for the tab bar, and for the mini player when it is open")
 # top bar
 check('id="m-search"' in html and '$("#m-search").onclick' in js, "top bar search icon opens the Search tab")
 check("#menubtn" in mq and ".top #search" in mq and ".top .snd-btn" in mq and "display:none!important" in mq, "menu button, search field and speaker hidden on phones")
@@ -46,7 +46,10 @@ vs = js[js.index("async function viewSearch"):js.index("async function viewLibra
 check('id="m-q"' in vs and 'id="s-res"' in vs and "out.innerHTML = html" in vs, "Search tab: own search box, results render below it (keeps focus)")
 check("if (!q) {" in vs and vs.index("if (!q) {") < vs.index('api("/api/search'), "empty search does not call the API")
 check("for (const l of" in js or "LIBS.map(l =>" in js[js.index("async function viewLibraries"):], "Libraries tab lists every library")
-check("/collections" in js[js.index("async function viewLibraries"):js.index("async function viewMyList")], "Libraries tab links categories / collections")
+vl = js[js.index("async function viewLibraries"):js.index("async function viewMyList")]
+check("libGroups()" in vl and "lib-grp-h" in vl and "libCountText(l)" in vl, "Libraries tab is grouped by share and uses film counts")
+check("lib-subs" not in vl and "/collections" not in vl and "Recommended" not in vl and "Top movies" not in vl,
+      "1.7.2: Libraries tab has no Collections / Recommended / Recently added / Top movies chips")
 mt = js[js.index("function tabFor"):js.index("function tab()")]
 check('"library"' in mt and '"show"' in mt and '"album"' in mt and 'return "libraries"' in mt, "library pages light the Libraries tab")
 # rows
@@ -65,12 +68,12 @@ check("@media (max-width:599px){ .hnav{display:none!important} }" in css, "< > a
 check(".hnav{width:34px;height:34px" in mq, "small, subtle arrows on tablets (600-820 px)")
 check("safe-area-inset-top" in mq, "top bar respects the notch")
 # Android app 1.5: native sign-in like the web page (if this copy ships the source)
-A = os.environ.get("ANDROID_SRC", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "android"))
+A = os.environ.get("ANDROID_SRC", "/workspace/media-server/android/src")
 if os.path.isdir(A):
     R = os.path.join(A, "app", "src", "main", "res"); rd = lambda *p: open(os.path.join(*p)).read()
-    g = rd(A, "app", "build.gradle"); lay = rd(R, "layout", "activity_login.xml"); la = rd(A, "app", "src", "main", "java", "org", "movinite", "app", "LoginActivity.java")
-    ma = rd(A, "app", "src", "main", "java", "org", "movinite", "app", "MainActivity.java")
-    check(re.search(r"versionCode (\d+)", g) and int(re.search(r"versionCode (\d+)", g).group(1)) >= 6 and 'VERSION = "%s"' % re.search(r"versionName '([^']+)'", g).group(1) in rd(A, "app", "src", "main", "java", "org", "movinite", "app", "BuildConfigInfo.java"), "app 1.5+ (code 6+), versions in step")
+    g = rd(A, "app", "build.gradle"); lay = rd(R, "layout", "activity_login.xml"); la = rd(A, "app", "src", "main", "java", "com", "tukuia", "mediaserver", "LoginActivity.java")
+    ma = rd(A, "app", "src", "main", "java", "com", "tukuia", "mediaserver", "MainActivity.java")
+    check("versionCode 6" in g and "versionName '1.5'" in g and 'VERSION = "1.5"' in rd(A, "app", "src", "main", "java", "com", "tukuia", "mediaserver", "BuildConfigInfo.java"), "app 1.5 (code 6)")
     check('android:src="@drawable/logo_full"' in lay and os.path.exists(os.path.join(R, "drawable-nodpi", "logo_full.png")) and 'android:maxWidth="300dp"' in lay, "app sign-in: the full logo with MOVINITE, 300 dp like the web")
     from PIL import Image
     check(Image.open(os.path.join(R, "drawable-nodpi", "logo_full.png")).width >= 1000, "app sign-in logo sharp at 3.5x")

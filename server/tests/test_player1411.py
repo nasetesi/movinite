@@ -25,7 +25,7 @@ check('e.stopPropagation(); fn();' in js, "button taps don't reach the tap layer
 check('now - lastTap < 320' in js and "tapT = setTimeout" in js, "double-tap left/right skips, single tap waits for it")
 check(".player.ov-on .pl-bar .pl-seek" in css and "pointer-events:auto" in css, "seek bar stays usable while shown (1.4.13: own bottom bar)")
 check(".pl-big{" in css and "width:64px;height:64px" in css and "rgba(0,0,0,.45)" in css, "big round see-through buttons, >= 56 px")
-check("background:rgba(0,0,0,.35);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)" in css and ".player.ov-on .pl-ss{opacity:1}" in css, "status pill: translucent, blurred, fades with the buttons")
+check((".pl-ss{" in css and "backdrop-filter:blur(" in css.split(".pl-ss{")[1][:500] and ".player.ov-on .pl-ss{opacity:1}" in css), "status panel: translucent/blurred, fades with the buttons")
 r = js.split("function renderPlayerStat()")[1].split("function renderSysPanel")[0]
 check("api(" not in r and "fetch(" not in r and "setTimeout" not in r and "setInterval" not in r, "player status makes no requests of its own (reuses the 4 s top-bar poll)")
 check("ME.show_status" in r and "!P" in r, "status only for people allowed to see it, only while a video is open")

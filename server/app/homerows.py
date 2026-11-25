@@ -10,7 +10,7 @@ import math
 import time
 from datetime import date, timedelta
 
-from . import db
+from . import db, titles
 
 ROWS = {
     "recommended": "Recommended for you",
@@ -26,12 +26,20 @@ SEED_MIN_S = 300       # a movie counts as "watched some of it" after 5 minutes
 
 
 def _movies(lib_id):
-    """One row per TMDB movie in the library (first file wins), with its cached metadata."""
-    return db.rows(
+    """One row per TMDB movie in the library, with its cached metadata.  1.7: the row's id is the film's best
+    version (highest resolution, then bitrate, then size) -- it used to be the first file found."""
+    best = {r["tmdb_id"]: r["id"] for r in db.rows(
+        "SELECT id, tmdb_id FROM (SELECT id, tmdb_id, ROW_NUMBER() OVER (PARTITION BY tmdb_id ORDER BY " + titles.order_sql() +
+        ") rn FROM items WHERE library_id=? AND kind='movie' AND tmdb_id IS NOT NULL AND meta_status IN ('matched','manual')) "
+        "WHERE rn=1", (lib_id,))}
+    rows = db.rows(
         "SELECT MIN(i.id) id, i.tmdb_id, MAX(i.added_at) added_at, md.title, md.year, md.release_date, md.rating, "
         "md.vote_count, md.collection_id, md.collection_name FROM items i JOIN metadata md ON md.kind='movie' "
         "AND md.tmdb_id=i.tmdb_id WHERE i.library_id=? AND i.kind='movie' AND i.meta_status IN ('matched','manual') "
         "GROUP BY i.tmdb_id", (lib_id,))
+    for r in rows:
+        r["id"] = best.get(r["tmdb_id"], r["id"])
+    return rows
 
 
 def _pins(row):
@@ -49,10 +57,30 @@ def _wr_fn(movies):
 
 
 def _apply_pins(row, ranked):
-    """ranked: [(item_id, reason)].  Admin pins go first, hidden ones are dropped."""
+    """ranked: [(item_id, reason)].  Admin pins go first, hidden ones are dropped.
+    1.7: a pin counts for the film, whichever of its files (versions) it was set on."""
     pins = _pins(row)
     if not pins:
         return ranked
+    ids = list({i for i, _ in ranked} | set(pins))
+    keys = {}
+    for chunk in range(0, len(ids), 500):
+        part = ids[chunk:chunk + 500]
+        for r in db.rows("SELECT id, " + titles.key_sql() + " k FROM items WHERE id IN (%s)" % ",".join("?" * len(part)), part):
+            keys[r["id"]] = r["k"]
+    by_key = {keys[i]: i for i, _ in ranked if i in keys}
+    pk = {}
+    for i, m in pins.items():
+        k = keys.get(i)
+        if k is not None:
+            pk[k] = m
+    pins = {}
+    for k, m in pk.items():
+        pins[by_key.get(k) or next((i for i, kk in keys.items() if kk == k), None)] = m
+    for i, _ in ranked:
+        if keys.get(i) in pk:
+            pins[i] = pk[keys[i]]
+    pins.pop(None, None)
     have = {i for i, _ in ranked}
     first = [(i, "Picked by an admin") for i, m in pins.items() if m == 1]
     first = [(i, r) for i, r in first if i in have or db.row("SELECT 1 x FROM items WHERE id=?", (i,))]
@@ -72,8 +100,11 @@ def recently_released(lib_id, today=None):
 
 
 def recently_added(lib_id):
-    return [(r["id"], None) for r in db.rows("SELECT id FROM items WHERE library_id=? AND kind='movie' "
-                                              "ORDER BY added_at DESC, id DESC", (lib_id,))]
+    """1.7: one entry per film (its best version), newest addition first."""
+    return [(r["id"], None) for r in db.rows(
+        "SELECT id FROM items WHERE library_id=? AND kind='movie' AND " + titles.best_in_lib_cond("id") + " "
+        "ORDER BY (SELECT MAX(i2.added_at) FROM items i2 WHERE i2.library_id=items.library_id AND " + titles.key_sql("i2") +
+        "=" + titles.key_sql("items") + ") DESC, id DESC", (lib_id, lib_id))]
 
 
 def top_movies(lib_id):
@@ -211,7 +242,7 @@ def recommended(user_id, lib_id):
     cat = db.row("SELECT COUNT(*) n FROM movie_recs")["n"]
     pins = db.row("SELECT COUNT(*) n, COALESCE(SUM(mode),0) s, COALESCE(MAX(created_at),0) t FROM home_pins "
                   "WHERE row='recommended'")
-    sig = "|".join(str(x) for x in (day, h["n"], h["w"], hashlib.md5((h["ids"] or "").encode()).hexdigest()[:10],
+    sig = "|".join(str(x) for x in ("v17", day, h["n"], h["w"], hashlib.md5((h["ids"] or "").encode()).hexdigest()[:10],
                                     lib["n"], lib["mx"], cat // 50, pins["n"], pins["s"], pins["t"]))
     row = db.row("SELECT sig, data FROM rec_cache WHERE user_id=? AND library_id=?", (user_id, lib_id))
     if row and row["sig"] == sig:

@@ -41,7 +41,7 @@ def main():
     mock_tmdb.serve(PORT)
     db.migrate()
     check(tuple(map(int, __version__.split("."))) >= (1, 4, 6), "version 1.4.6 or later")
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] == "6", "schema unchanged (6)")
+    check(int(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"]) >= 6, "schema 6 or later")
     now = int(time.time())
     with db.tx() as c:
         c.execute("INSERT INTO libraries(id,name,kind,path,scan_interval_h,created_at) VALUES(1,'Movies','movies','/m',0,?)", (now,))
@@ -52,7 +52,7 @@ def main():
     m = tmdb.fetch_details("movie", 1001)
     check(m and m["poster"] and m["poster_path"], "details cached with the w500 poster (%s)" % (m and m["poster_path"]))
     d = server.item_detail(1, u=U)
-    check(d.get("poster_large") == "/api/items/1/poster-large", "details page gets a high-res poster link")
+    check((d.get("poster_large") or "").startswith("/api/items/1/poster-large"), "details page gets a high-res poster link")
     big = tmdb._thumb_name(m["poster_path"], "w780")
     check(not (config.THUMB_DIR / big).exists(), "high-res poster not downloaded until someone views it")
     r = server.item_poster_large(1, u=U)
