@@ -1,11 +1,17 @@
 # Changelog
 
-The full server history (1.0 to 1.7.7) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
+The full server history (1.0 to 1.7.8) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
+
+## 1.7.8 -- 2026-11-25
+
+Server 1.7.3 through 1.7.8 were not published as separate GitHub releases. This update brings the repository to **server 1.7.8**. The Android app is unchanged. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.7.8 — cap quality to the device, and pause transcodes that are far ahead:** the player reports the screen size (and a decode check when the browser supports it). A 1920×1200 tablet is sent 1080p even if 4K was saved earlier. Direct play and remux are used only when the file fits that cap. The player shows "Auto-capped to 1080p", and Settings → My account can turn the cap off on this device. ffmpeg also pauses again once it is far enough ahead of the player (a bug after old segments were deleted had left it running at full speed).
 
 ## 1.7.7 -- 2026-11-25
 
-Server 1.7.3 through 1.7.7 were not published as separate GitHub releases. This update brings the repository to **server 1.7.7**. The Android app is unchanged. Details for each step are in [server/CHANGELOG.md](server/CHANGELOG.md).
+Server 1.7.7 added concurrent 4K on the GPU and same-account playback on two devices. The Android app is unchanged. Details for each step are in [server/CHANGELOG.md](server/CHANGELOG.md).
 
 - **1.7.7 — concurrent 4K and same-account devices:** two 4K HEVC transcodes can stay on an Intel Arc GPU (`-extra_hw_frames 64`, `-low_power 1`, `tonemap_vaapi` when available). A stream that cannot stay on the GPU falls back once, with the reason logged, and does not flip back and forth or park the card for everyone. The same login can play on two devices at once (a cap, default 4, is under Settings > Transcoding). ffmpeg warnings and the last 50 lines of a failed job are copied into the journal. Auto quality prefers direct play or remux, including HEVC remux to fMP4.
 - **1.7.6 — music player and playlists:** themed now-playing chrome, top controls that fade after a few seconds, a beat-reactive purple ring mixed with a smaller logo (no square tile), and per-user playlists (schema 8).

@@ -304,10 +304,12 @@ function renderPlayerStat() {
     ? `<span class="hw-badge" title="${d.hw.streams} stream${d.hw.streams > 1 ? "s" : ""} on the video card (${esc(d.hw.label || "")})">GPU</span>`
     : `<span class="k">Encoder</span><div class="row"><b>${d.hw && d.hw.method ? esc(d.hw.label || "GPU ready") : "CPU"}</b></div>`;
   el.className = "pl-ss";
+  const qCap = P && P.cappedTo ? `Auto-capped to ${qualName(P.cappedTo)}` : (P && P.mode ? (P.mode === "direct" ? "Direct play" : P.mode === "remux" ? "Remux" : qualName(P.mode)) : "");
   el.innerHTML = `<div class="pl-ss-cell"><span class="k">CPU</span><div class="row"><b class="${cl}">${cpuPct(d)}</b></div>${sysBar(d.cpu || 0, cl)}</div>
     <div class="pl-ss-cell"><span class="k">RAM</span><div class="row"><b class="${ml}">${fmtGB(d.mem.used)}/${fmtGB(d.mem.total, 0)} GB</b></div>${sysBar(memPct, ml)}</div>
     <div class="pl-ss-cell">${gpu ? enc : enc}</div>
-    <div class="pl-ss-cell">${fr ? fr.cell : `<span class="k">Dropped</span><div class="row"><b>—</b></div>`}</div>`;
+    <div class="pl-ss-cell">${fr ? fr.cell : `<span class="k">Dropped</span><div class="row"><b>—</b></div>`}</div>
+    ${qCap ? `<div class="pl-ss-cap">${qCap}</div>` : ""}`;
   el.title = `Server CPU ${cpuPct(d)}, RAM ${fmtGB(d.mem.used)} of ${fmtGB(d.mem.total)} GB${gpu ? ` -- ${d.hw.streams} on the GPU (${d.hw.label || ""})` : ""}`;
   el.classList.remove("hidden");
 }
@@ -1893,12 +1895,18 @@ async function viewSettings(tab) {
     if (mlibs.some(l => l.meta && (l.meta.state === "running" || l.meta.state === "queued")))
       route._poll = setInterval(() => { if (!document.activeElement || document.activeElement.tagName !== "INPUT") { route._keepScroll = true; route(); } }, 3000);
   } else if (tab === "account") {
+    const capOn = qualityCapOn(), capNow = capBaseFromPx(displayLongPx()) || "1080p";
+    const capHint = `This device is about ${displayLongPx() || "?"} pixels on the long side, so the cap is ${capNow}. A 1080p-class tablet will not be sent 4K, even if that quality was saved earlier. Turn this off to allow a higher quality here.`;
+    html += `<div class="panel" style="max-width:560px"><h3 style="margin-top:0">This device</h3>
+      <label class="aw-row" for="qcap-on"><span class="sw"><input type="checkbox" id="qcap-on" ${capOn ? "checked" : ""}><i></i></span><span class="aw-txt"><b>Cap quality to this screen</b><span class="aw-hint">${capHint}</span></span></label>
+      <div class="help">Saved for your account in this browser.</div></div>`;
     html += `<div class="panel" style="max-width:560px"><h3 style="margin-top:0">Change password</h3><div class="form">
       <label>Current password</label><input type="password" id="cp"><label>New password</label><input type="password" id="np" autocomplete="new-password">
       <label>Repeat</label><input type="password" id="np2" autocomplete="new-password"></div><div class="err" id="cperr"></div>
       <button class="btn" id="cpsave">Change password</button></div>`;
     html += `<p class="help" style="max-width:560px">Sounds for posters and buttons are in <a style="color:var(--acc-text)" href="#/settings/sounds">Poster Sounds</a>.</p>`;
     v.innerHTML = html;
+    $("#qcap-on").onchange = () => { setQualityCap($("#qcap-on").checked); toast($("#qcap-on").checked ? "Quality will be capped to this screen" : "Screen cap off on this device"); };
     $("#cpsave").onclick = async () => {
       if ($("#np").value !== $("#np2").value) { $("#cperr").textContent = "Passwords do not match"; return; }
       try { await api("/api/me/password", { method: "POST", body: { current_password: $("#cp").value, new_password: $("#np").value } }); toast("Password changed"); $("#cperr").textContent = ""; ["#cp", "#np", "#np2"].forEach(s => $(s).value = ""); }
@@ -2450,6 +2458,97 @@ function capsQuery() {
     "eac3=" + (c.el.eac3 ? "1" : "0"),
     "hlsjs=" + (c.hlsjs ? "1" : "0")].join("&");
 }
+// 1.7.8: cap quality to this screen (and a MediaCapabilities decode limit when available)
+const Q_LONG = { "360p": 640, "480p": 854, "720p": 1280, "1080p": 1920, "1440p": 2560, "2160p": 3840 };
+function qualityCapOn() { try { return localStorage.getItem("qualityCap") !== "off"; } catch (e) { return true; } }
+function setQualityCap(on) { try { localStorage.setItem("qualityCap", on ? "auto" : "off"); } catch (e) {} }
+function displayLongPx() {
+  const dpr = window.devicePixelRatio || 1;
+  const css = Math.max(screen.width || 0, screen.height || 0);
+  if (!css) return 0;
+  // Some WebViews already report physical panel pixels (1920x1200) and a dpr > 1; do not double them.
+  if (css >= 1920) return css;
+  return Math.round(css * dpr) || css;
+}
+function capBaseFromPx(px) {
+  if (!px) return null;
+  let cap = "360p";
+  ["360p", "480p", "720p", "1080p", "1440p", "2160p"].forEach(p => { if (Q_LONG[p] <= px + 16) cap = p; });
+  return cap;
+}
+async function probeDecoders() {
+  if (probeDecoders._d) return probeDecoders._d;
+  if (probeDecoders._p) return probeDecoders._p;
+  probeDecoders._p = (async () => {
+    const out = { maxHevc: 0, maxH264: 0 };
+    // The Android WebView bridge (window.MSAndroid) has no MediaCodec list; skip it if absent.
+    try {
+      if (window.MSAndroid && typeof MSAndroid.decoderCaps === "function") {
+        const raw = MSAndroid.decoderCaps();
+        const j = (typeof raw === "string") ? JSON.parse(raw) : raw;
+        if (j && (j.maxHevc || j.maxH264 || j.max)) {
+          out.maxHevc = +j.maxHevc || +j.max || 0;
+          out.maxH264 = +j.maxH264 || +j.max || 0;
+        }
+      }
+    } catch (e) {}
+    const mc = navigator.mediaCapabilities && navigator.mediaCapabilities.decodingInfo;
+    if (mc) {
+      const sizes = { 2160: [3840, 2160], 1440: [2560, 1440], 1080: [1920, 1080] };
+      const ok = async (codec, w, h, br) => {
+        try {
+          const r = await navigator.mediaCapabilities.decodingInfo({
+            type: "media-source",
+            video: { contentType: "video/mp4; codecs=\"" + codec + "\"", width: w, height: h, bitrate: br, framerate: 30 }
+          });
+          return !!(r && r.supported && r.smooth);
+        } catch (e) { return false; }
+      };
+      for (const h of [2160, 1440, 1080]) {
+        const wh = sizes[h], br = h >= 2160 ? 8000000 : h >= 1440 ? 5000000 : 4000000;
+        if (await ok("hvc1.1.6.L153.B0", wh[0], wh[1], br) || await ok("hvc1.2.4.L153.B0", wh[0], wh[1], br))
+          out.maxHevc = Math.max(out.maxHevc, h);
+        if (await ok("avc1.640028", wh[0], wh[1], br))
+          out.maxH264 = Math.max(out.maxH264, h);
+      }
+    }
+    probeDecoders._d = out;
+    return out;
+  })();
+  return probeDecoders._p;
+}
+try { probeDecoders(); } catch (e) {}
+function decMaxPx() {
+  const d = probeDecoders._d;
+  if (!d) return 0;
+  const hs = [d.maxHevc, d.maxH264].filter(Boolean);
+  if (!hs.length) return 0;
+  const h = Math.max.apply(null, hs);
+  return h >= 2160 ? 3840 : h >= 1440 ? 2560 : h >= 1080 ? 1920 : 1280;
+}
+function deviceLimitPx() {
+  if (!qualityCapOn()) return 0;
+  const a = displayLongPx() || 0, b = decMaxPx() || 0;
+  if (a && b) return Math.min(a, b);
+  return a || b;
+}
+function deviceCapBase() { return capBaseFromPx(deviceLimitPx()); }
+function capQuery() {
+  const parts = [capsQuery(), "disp=" + (displayLongPx() || 0)];
+  const dec = qualityCapOn() ? decMaxPx() : 0;
+  if (dec) parts.push("dec=" + dec);
+  if (!qualityCapOn()) parts.push("nocap=1");
+  return parts.join("&");
+}
+function itemCapQuery() {
+  const q = [];
+  const disp = displayLongPx();
+  if (disp) q.push("disp=" + disp);
+  const dec = qualityCapOn() ? decMaxPx() : 0;
+  if (dec) q.push("dec=" + dec);
+  if (!qualityCapOn()) q.push("nocap=1");
+  return q.length ? "?" + q.join("&") : "";
+}
 function canRemux(pb) {
   if (!pb || !pb.remux) return false;
   if (!pb.remux_codec || pb.remux_codec === "h264") return true;
@@ -2489,6 +2588,13 @@ function pickVersion(it, opts) {
     if (v && v.id !== it.id && want < vRank(vs[0])) return { id: v.id, why: `the ${v.res} version (your quality is set to ${saved})` };
     return null;
   }
+  const capB = deviceCapBase();
+  if (capB && Q_RANK[capB] != null && vRank(vs[0]) > Q_RANK[capB]) {
+    const want = Q_RANK[capB];
+    const ok = vs.filter(v => vRank(v) >= want);
+    const v = (ok.length ? ok[ok.length - 1] : vs[vs.length - 1]);
+    if (v && v.id !== it.id) return { id: v.id, why: `the ${v.res} version (this screen is capped at ${capB})` };
+  }
   const pb = it.playback;
   if (vRank(vs[0]) >= 3 && canDirect(it) === "no" && !pb.remux && !(pb.hires || []).length) {
     const v = vs.slice(1).find(x => x.playback.remux || canDirect({ playback: x.playback, vcodec: x.vcodec, acodec: x.acodec }) !== "no");
@@ -2499,11 +2605,13 @@ function pickVersion(it, opts) {
 
 async function playItem(id, startAt, opts) {
   opts = opts || {};
-  let it = await api("/api/items/" + id);
-  if (it.offline && it.fallback) { toast(`Share offline -- playing the copy in ${it.fallback_library || "another library"}`); it = await api("/api/items/" + it.fallback); id = it.id; }
+  try { await probeDecoders(); } catch (e) {}
+  const capQ = itemCapQuery();
+  let it = await api("/api/items/" + id + capQ);
+  if (it.offline && it.fallback) { toast(`Share offline -- playing the copy in ${it.fallback_library || "another library"}`); it = await api("/api/items/" + it.fallback + capQ); id = it.id; }
   else if (it.media_type === "video") {
     const pv = pickVersion(it, opts);
-    if (pv) { const it2 = await api("/api/items/" + pv.id).catch(() => null); if (it2) { it = it2; id = it.id; toast("Playing " + pv.why); } }
+    if (pv) { const it2 = await api("/api/items/" + pv.id + capQ).catch(() => null); if (it2) { it = it2; id = it.id; toast("Playing " + pv.why); } }
   }
   if (it.media_type === "audio") { playQueue([it], 0); return; }
   if (startAt === undefined) startAt = it.position > 30 ? it.position : 0;
@@ -2533,6 +2641,22 @@ async function playItem(id, startAt, opts) {
   else if (savedHi) mode = savedHi;
   else if (saved === "remux" && remuxOk) mode = "remux";
   else mode = pb.profiles[0];
+  const capB = pb.device_cap || deviceCapBase();
+  const modeBase = String(mode).split(".")[0];
+  if (capB && mode !== "direct" && mode !== "remux" && (Q_RANK[modeBase] || 0) > (Q_RANK[capB] || 0)) {
+    mode = (hi.find(m => m.split(".")[0] === capB) || (pb.profiles.includes(capB) ? capB : pb.profiles[0]));
+  }
+  const wantedBase = String(saved === "auto" ? (hi[0] || "2160p") : saved).split(".")[0];
+  P.cap = capB || null;
+  P.cappedTo = (capB && (mode === capB || String(mode).split(".")[0] === capB) &&
+    ((saved === "auto" && (Q_RANK[wantedBase] || 0) > (Q_RANK[capB] || 0)) ||
+     (Q_RANK[String(saved).split(".")[0]] || 0) > (Q_RANK[capB] || 0) ||
+     ((saved === "direct" || saved === "remux" || saved === "auto") && pb.source_fits_cap === false)))
+    ? capB : null;
+  if (P.cappedTo && capB) {
+    const capOpt = [...q.options].find(o => o.value === mode || o.value.split(".")[0] === capB);
+    if (capOpt && !/capped/i.test(capOpt.textContent)) capOpt.textContent = capOpt.textContent + " · Auto-capped to " + capB;
+  }
   const a = $("#pl-audio");
   a.innerHTML = pb.audio_streams.map((s, i) => `<option value="${i}">${esc((s.title || s.lang || "Audio " + (i + 1)) + " · " + s.codec + (s.channels ? " " + s.channels + "ch" : ""))}</option>`).join("");
   a.classList.toggle("hidden", pb.audio_streams.length < 2);
@@ -2554,7 +2678,11 @@ async function playItem(id, startAt, opts) {
 }
 
 function setStatus(t) { $("#pl-status").textContent = t || ""; }
-function modeLabel(m) { return (m === "direct" ? "Direct play" : m === "remux" ? "Remux (original video)" : `Transcoding ${qualName(m)}`) + (P && P.it.playback.hdr && m !== "direct" && m !== "remux" ? hdrNote() : ""); }
+function modeLabel(m) {
+  const cap = P && P.cappedTo ? ` · Auto-capped to ${qualName(P.cappedTo)}` : "";
+  return (m === "direct" ? "Direct play" : m === "remux" ? "Remux (original video)" : `Transcoding ${qualName(m)}`)
+    + cap + (P && P.it.playback.hdr && m !== "direct" && m !== "remux" ? hdrNote() : "");
+}
 // 1.5.3: 2K / 4K names, HEVC support, HDR note
 function qualName(m) { const [b, vc] = String(m).split("."); return (b === "2160p" ? "4K (2160p)" : b === "1440p" ? "2K (1440p)" : b) + (vc === "hevc" ? " HEVC" : ""); }
 function hevcOK() {
@@ -2583,7 +2711,7 @@ function startStream(mode, at) {
     });
   } else {
     setStatus(modeLabel(mode));
-    const url = `/api/items/${it.id}/hls/${mode}/index.m3u8?audio=${P.audio}&${capsQuery()}${mode.endsWith(".hevc") || mode === "remux" ? "&start=" + Math.floor((at || 0) / 6) : ""}`;
+    const url = `/api/items/${it.id}/hls/${mode}/index.m3u8?audio=${P.audio}&${capQuery()}${mode.endsWith(".hevc") || mode === "remux" ? "&start=" + Math.floor((at || 0) / 6) : ""}`;
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({ startPosition: at || 0, maxBufferLength: 30, maxMaxBufferLength: 120, fragLoadingTimeOut: 90000, fragLoadingMaxRetry: 4, manifestLoadingTimeOut: 30000, xhrSetup: (xhr) => { xhr.withCredentials = true; } });
       hls.on(Hls.Events.ERROR, (ev, data) => {

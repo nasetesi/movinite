@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import artwork, auth, browse, folderart, liborder, playlists, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
@@ -1417,7 +1417,7 @@ MIME = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".w
         ".avi": "video/x-msvideo", ".ts": "video/mp2t", ".wmv": "video/x-ms-wmv"}
 
 
-def playback_info(it):
+def playback_info(it, cap=None):
     ext = Path(it["path"]).suffix.lower()
     auds = json.loads(it["audio_streams"] or "[]")
     subs = json.loads(it["subtitle_streams"] or "[]")
@@ -1453,17 +1453,31 @@ def playback_info(it):
                                     "lang": s.get("lang")})
     remux = it["media_type"] == "video" and transcode.remux_eligible(it)
     remux_codec = transcode.remux_codec(it) if remux else ""
+    # 1.7.8: hide qualities (and remux/direct of a larger file) above this device's cap
+    src_fits = True
+    if cap:
+        profiles = [p for p in profiles if transcode.profile_rank(p) <= transcode.profile_rank(cap)] or ["360p"]
+        hires = [p for p in hires if transcode.profile_rank(p) <= transcode.profile_rank(cap)]
+        if hires_off:
+            kept = [p for p in hires_off.get("profiles") or [] if transcode.profile_rank(p) <= transcode.profile_rank(cap)]
+            hires_off = dict(hires_off, profiles=kept) if kept else None
+        src_fits = transcode.source_fits_cap(it, cap)
+        if not src_fits:
+            remux, remux_codec, direct, maybe = False, "", False, False
     return {"direct": direct, "direct_maybe": maybe, "remux": remux, "remux_codec": remux_codec,
             "mime": MIME.get(ext, "application/octet-stream"),
             "profiles": profiles, "hires": hires, "hires_off": hires_off, "hdr": hdr,
             "hires_kbps": {p: {"h264": transcode.video_kbps(it, p), "hevc": transcode.video_kbps(it, p, True)} for p in hires},   # 1.5.4: real maxrate
             "audio_streams": auds, "subtitles": subtitle_tracks,
-            "image_subs": [s for s in subs if not s.get("text")]}
+            "image_subs": [s for s in subs if not s.get("text")],
+            "device_cap": cap, "source_fits_cap": src_fits}
 
 
 @app.get("/api/items/{item_id}")
-def item_detail(item_id: int, u=Depends(auth.require_user)):
+def item_detail(item_id: int, disp: int = 0, dec: int = 0, nocap: int = 0, u=Depends(auth.require_user)):
     it = _get_item(item_id)
+    disp, dec, nocap_b = transcode.parse_cap_args(disp, dec, nocap)
+    cap = None if nocap_b else transcode.device_cap_base(disp, dec)
     out = {k: it[k] for k in it if k not in ("audio_streams", "subtitle_streams", "external_subs")}
     out["filename"] = os.path.basename(it["path"]) if u["is_admin"] else None   # 1.4.9: file details are admin-only
     out["tags"] = db.rows("SELECT t.id, t.name FROM item_tags x JOIN tags t ON t.id=x.tag_id WHERE x.item_id=? "
@@ -1472,7 +1486,7 @@ def item_detail(item_id: int, u=Depends(auth.require_user)):
     out["folder"] = os.path.dirname(it["path"]) if u["is_admin"] else None
     if not u["is_admin"]:
         out.pop("path", None)
-    out["playback"] = playback_info(it)
+    out["playback"] = playback_info(it, cap=cap)
     try:
         tmdb.enrich([out])
     except Exception:
@@ -1518,7 +1532,7 @@ def item_detail(item_id: int, u=Depends(auth.require_user)):
     lib = db.row("SELECT id, name, kind FROM libraries WHERE id=?", (it["library_id"],))
     out["library"] = lib
     try:
-        out.update(_versions(it))
+        out.update(_versions(it, cap=cap))
     except Exception:   # never break the details page
         log.exception("versions")
     if it["kind"] == "movie":
@@ -1531,7 +1545,7 @@ def item_detail(item_id: int, u=Depends(auth.require_user)):
     return out
 
 
-def _versions(it):
+def _versions(it, cap=None):
     """1.7: {"versions": [this library's files of the title, best first], "copies": n other libraries,
     "fallback": id of a copy on a share that is up (only when this item's share is down)}."""
     ids = titles.same_title_ids(it["id"]) if it["kind"] in ("movie", "episode") else [it["id"]]
@@ -1544,7 +1558,7 @@ def _versions(it):
     out["copies"] = len({r["library_id"] for r in rows if r["library_id"] != it["library_id"]})
     if len(mine) > 1:
         for r in mine:
-            pb = playback_info(r)
+            pb = playback_info(r, cap=cap)
             out["versions"].append({
                 "id": r["id"], "res": titles.RES_LABEL[titles.res_rank(r["width"], r["height"])],
                 "width": r["width"], "height": r["height"], "vcodec": r["vcodec"], "acodec": r["acodec"],
@@ -1811,13 +1825,22 @@ def _player_query(audio, player, start=None):
 def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, start: int = 0,
                  player: str = "", caps: str = "", hevc: str = "", hevc_mse: str = "",
                  hevc_el: str = "", mkv: str = "", ac3: str = "", eac3: str = "", hlsjs: str = "",
+                 disp: int = 0, dec: int = 0, nocap: int = 0,
                  u=Depends(auth.require_user)):
-    _profile_ok(profile)
     it = _get_item(item_id)
     if not os.path.exists(it["path"]):
         raise HTTPException(404, "File is not reachable (share offline?)")
-    cap = caps or ("hevc=%s hevc_mse=%s hevc_el=%s mkv=%s ac3=%s eac3=%s hlsjs=%s" %
-                   (hevc, hevc_mse, hevc_el, mkv, ac3, eac3, hlsjs)).strip()
+    dpx, kpx, no_cap = transcode.parse_cap_args(disp, dec, nocap)
+    new, device_cap, changed = transcode.clamp_profile(profile, it, dpx, kpx, no_cap)
+    if new is None:
+        raise HTTPException(409, "This file is larger than this device's quality cap; use a transcode quality")
+    if changed:
+        path = request.url.path.replace("/hls/%s/" % profile, "/hls/%s/" % new, 1)
+        q = str(request.url.query or "")
+        return RedirectResponse(path + (("?" + q) if q else ""), status_code=302)
+    _profile_ok(profile)
+    cap = caps or ("hevc=%s hevc_mse=%s hevc_el=%s mkv=%s ac3=%s eac3=%s hlsjs=%s disp=%s dec=%s" %
+                   (hevc, hevc_mse, hevc_el, mkv, ac3, eac3, hlsjs, dpx or "", kpx or "")).strip()
     transcode.note_client(player, u, request, cap)
     bounds = None
     if profile == "remux":
@@ -1830,9 +1853,14 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
                              headers={"Cache-Control": "no-cache"})
 
 
-def _hls_session(item_id, profile, audio, u, player=""):
-    _profile_ok(profile)
+def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0):
     it = _get_item(item_id)
+    dpx, kpx, no_cap = transcode.parse_cap_args(disp, dec, nocap)
+    new, device_cap, changed = transcode.clamp_profile(profile, it, dpx, kpx, no_cap)
+    if new is None:
+        raise HTTPException(409, "This file is larger than this device's quality cap; use a transcode quality")
+    profile = new
+    _profile_ok(profile)
     try:
         return transcode.get_session(it, profile, max(0, audio), u["id"], player)
     except ValueError as e:
@@ -1841,12 +1869,13 @@ def _hls_session(item_id, profile, audio, u, player=""):
 
 @app.get("/api/items/{item_id}/hls/{profile}/init.mp4")
 def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player: str = "",
+             disp: int = 0, dec: int = 0, nocap: int = 0,
              u=Depends(auth.require_user)):
     """1.5.3: init segment of an HEVC (fMP4) stream (transcode or HEVC remux)."""
     it = _get_item(item_id)
     if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    s = _hls_session(item_id, profile, audio, u, player)
+    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap)
     p = s.get_init(max(0, start))
     if not p:
         raise HTTPException(500, "Transcode failed" + (": " + s.failed if s.failed else ""))
@@ -1855,17 +1884,18 @@ def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player:
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.m4s")
 def hls_segment_m4s(item_id: int, profile: str, n: int, audio: int = 0, player: str = "",
+                    disp: int = 0, dec: int = 0, nocap: int = 0,
                     u=Depends(auth.require_user)):
     it = _get_item(item_id)
     if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    return hls_segment(item_id, profile, n, audio, u, player)
+    return hls_segment(item_id, profile, n, audio, u, player, disp, dec, nocap)
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.ts")
 def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(auth.require_user),
-                player: str = ""):
-    s = _hls_session(item_id, profile, audio, u, player)
+                player: str = "", disp: int = 0, dec: int = 0, nocap: int = 0):
+    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap)
     if n < 0 or n >= s.nseg:
         raise HTTPException(404)
     p = s.get_segment(n)
