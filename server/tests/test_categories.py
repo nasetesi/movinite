@@ -142,21 +142,21 @@ def main():
 
     print("filters")
     ids = lambda **kw: sorted(i["id"] for i in server.library_items(1, sort="title", u=U, **kw)["items"])  # noqa: E731
-    check(ids(genres="Drama") == [1, 6], "genre filter")
-    check(ids(genres="Drama|Science Fiction") == [1, 6], "two genres = movies with both")
+    check(ids(genres="Drama") == [1], "genre filter (1.7: the two files of item 1 are one card)")
+    check(ids(genres="Drama|Science Fiction") == [1], "two genres = movies with both")
     check(ids(genres="Drama|Thriller") == [], "AND across genres")
     check(ids(decade="2020") == [2, 3], "decade 2020s (uses the TMDB year)")
     check(ids(decade="1980") == [5], "decade 1980s")
-    check(ids(collection=9001) == [1, 3, 6], "collection filter")
+    check(ids(collection=9001) == [1, 3], "collection filter")
     order = [i["id"] for i in server.library_items(1, sort="poster", collection=9001, u=U)["items"]]
     check(order[-1] == 3, "collection in release order: %s" % order)
     check(ids(cert="G") == [3], "age rating filter")
-    check(ids(genres="Drama", q="big") == [1, 6], "combines with search")
+    check(ids(genres="Drama", q="big") == [1], "combines with search")
     check(ids(genres="Thriller", filter="nomatch") == [], "combines with Needs review / No match filters")
     r = server.library_items(1, sort="poster", genres="Drama", facets=1, u=U)
-    check(r["total"] == 2 and "facets" in r, "total + facets returned")
+    check(r["total"] == 1 and "facets" in r, "total + facets returned")
     fg = {x["name"]: x["n"] for x in r["facets"]["genres"]}
-    check(fg == {"Drama": 2, "Science Fiction": 2}, "facet counts follow the selection: %s" % fg)
+    check(fg == {"Drama": 1, "Science Fiction": 1}, "facet counts follow the selection: %s" % fg)
     check({x["decade"] for x in server.library_genres(1, u=U)["decades"]} == {1980, 2000, 2010, 2020}, "decade facets")
     rs = server.library_items(1, sort="rating", u=U)["items"]
     rv = [i.get("rating") or 0 for i in rs]
@@ -164,7 +164,7 @@ def main():
 
     print("collections view")
     cl = server.library_collections(1, u=U)
-    check(len(cl["collections"]) == 1 and cl["collections"][0]["n"] == 3, "one collection with 3 movies")
+    check(len(cl["collections"]) == 1 and cl["collections"][0]["n"] == 2, "one collection with 2 films (1.7: films, not files)")
     check(cl["collections"][0]["poster"] and cl["collections"][0]["year_from"] == 2019, "poster + years")
     check(server.library_collections(1, q="nothing", u=U)["collections"] == [], "collection search")
 
@@ -174,7 +174,8 @@ def main():
     check(d["certification"] == "PG-13" and d["tags"] == [], "detail: rating + tags")
     h = server.home(u=U)
     rows = h["libraries"][0]["genre_rows"]
-    check(rows and rows[0]["genre"] in ("Drama", "Science Fiction") and rows[0]["count"] == 2, "home genre rows: %s" %
+    check(rows and {"Drama", "Science Fiction"} <= {x["genre"] for x in rows} and all(x["count"] == 1 for x in rows),
+          "home genre rows count films, not files (1.7): %s" %
           [(x["genre"], x["count"]) for x in rows])
 
     print("tags")

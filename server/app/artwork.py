@@ -27,7 +27,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from . import config, db, media, settings, tmdb
+from . import config, db, folderart, media, settings, tmdb
 
 log = logging.getLogger("media-server.artwork")
 
@@ -92,6 +92,8 @@ def plan_item(item, lib, meta, siblings, nested_dirs):
     except OSError as e:
         return [{"path": d, "what": "folder", "action": "skip", "reason": "folder not readable: %s" % e.strerror}]
     out = []
+    # 1.7.3: poster/fanart/.nfo this app saved for an earlier, different match are replaced (own file names only)
+    stale = folderart.stale_own(item["path"], item.get("tmdb_id"), entries)
     want = [("poster", bool(meta and (meta.get("poster_path") or meta.get("poster"))))]
     if lib.get("art_fanart"):
         want.append(("fanart", bool(meta and (meta.get("backdrop_path") or meta.get("backdrop")))))
@@ -112,7 +114,7 @@ def plan_item(item, lib, meta, siblings, nested_dirs):
         path = os.path.join(d, target)
         if not available:
             out.append({"path": path, "what": what, "action": "skip", "reason": "no TMDB %s" % what})
-        elif existing and not (lib.get("art_overwrite") and existing.lower() == target.lower()):
+        elif existing and not ((lib.get("art_overwrite") or stale) and existing.lower() == target.lower()):
             out.append({"path": os.path.join(d, existing), "what": what, "action": "skip",
                         "reason": "already there" if existing.lower() == target.lower() else "existing %s" % existing})
         else:
@@ -535,6 +537,7 @@ def run_library(lib_id, item_ids=None, dry_run=False, auto=False):
         sib, nested = _siblings(lib_id)
         items = _library_items(lib_id, item_ids)
         st.update(phase="writing", total=len(items))
+        wrote = []
         for it in items:
             if lib_id in _cancel:
                 st.update(state="cancelled", finished_at=time.time())
@@ -568,7 +571,13 @@ def run_library(lib_id, item_ids=None, dry_run=False, auto=False):
                     st["skipped"] += 1
                 else:
                     st["written"] += 1
+                    wrote.append(it["id"])
             st["done"] += 1
+        if wrote:
+            try:     # 1.7.3: show the poster just saved without waiting for the file to be rescanned
+                folderart.refresh(sorted(set(wrote)), rethumb=True)
+            except Exception:
+                log.exception("folder art refresh")
         st.update(state="done", finished_at=time.time())
         log.info("artwork library %s: %s", lib_id, {k: st[k] for k in ("total", "written", "skipped", "errors")})
     except Exception as e:

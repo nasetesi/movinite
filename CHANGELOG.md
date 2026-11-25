@@ -1,7 +1,17 @@
 # Changelog
 
-The full server history (1.0 to 1.6) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
+The full server history (1.0 to 1.7.7) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
+
+## 1.7.7 -- 2026-11-25
+
+Server 1.7.3 through 1.7.7 were not published as separate GitHub releases. This update brings the repository to **server 1.7.7**. The Android app is unchanged. Details for each step are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.7.7 — concurrent 4K and same-account devices:** two 4K HEVC transcodes can stay on an Intel Arc GPU (`-extra_hw_frames 64`, `-low_power 1`, `tonemap_vaapi` when available). A stream that cannot stay on the GPU falls back once, with the reason logged, and does not flip back and forth or park the card for everyone. The same login can play on two devices at once (a cap, default 4, is under Settings > Transcoding). ffmpeg warnings and the last 50 lines of a failed job are copied into the journal. Auto quality prefers direct play or remux, including HEVC remux to fMP4.
+- **1.7.6 — music player and playlists:** themed now-playing chrome, top controls that fade after a few seconds, a beat-reactive purple ring mixed with a smaller logo (no square tile), and per-user playlists (schema 8).
+- **1.7.5 — player polish:** pinch to fit or fill on a phone, captions that load promptly and stay see-through, and a glass 2×2 stats panel at the top of the player (the GPU badge stays a solid purple pill).
+- **1.7.4 — outlined library icons** in the purple theme, on the Libraries tab, sidebar, headings, Settings, and the Add library type picker.
+- **1.7.3 — previous/next and the equalizer:** themed skip buttons in the video player, and a 10-band equalizer with a Dynamic preset in the music player.
 
 ## 1.6 -- 2026-11-24
 

@@ -8,7 +8,8 @@ test-encodes a few frames with each candidate and writes the first method that w
 no usable card).  A value chosen in Settings is never overwritten.
 
 Every hardware stream falls back on its own: full GPU (decode + scale + encode) -> CPU decode + GPU encode ->
-CPU (libx264).  A failure is logged and remembered for a while so new streams go straight to the CPU.
+CPU (libx264).  That fallback is sticky for the stream and is logged; it does not turn the card off for
+everyone else, and a later restart of the same stream will not hop back to a stage that just failed.
 """
 import json
 import logging
@@ -192,7 +193,40 @@ def _vaapi_turn(rot):
             180: "transpose_vaapi=dir=reversal,"}.get(rot % 360, "")
 
 
-def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h264"):
+
+_filters = None  # cached set of ffmpeg filter names; tests may assign this
+
+
+def ffmpeg_filters():
+    """Filter names this ffmpeg build actually has (cached)."""
+    global _filters
+    if _filters is None:
+        rc, out, _ = _run([config.FFMPEG, "-hide_banner", "-filters"], timeout=15)
+        found = set()
+        if rc == 0:
+            for line in out.splitlines():
+                parts = line.split()
+                # typical: " ... tonemap_vaapi   V->V    VAAPI VPP for tone-mapping"
+                for i, tok in enumerate(parts):
+                    if "->" in tok and i > 0:
+                        found.add(parts[i - 1])
+                        break
+        _filters = found
+    return _filters
+
+
+def has_filter(name):
+    return name in ffmpeg_filters()
+
+
+def _vaapi_scale(gw, height, hdr=""):
+    """Keep frames on the GPU: scale_vaapi, plus tonemap_vaapi for HDR when the filter exists."""
+    if hdr in ("HDR10", "HLG") and has_filter("tonemap_vaapi"):
+        return "scale_vaapi=w=%s:h=%d:format=p010,tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709" % (gw, height)
+    return "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
+
+
+def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h264", hdr=""):
     """ffmpeg arguments for one transcode stage.
 
     stage "full": decode, scale and encode on the GPU.  stage "enc": CPU decode + scale, GPU encode.
@@ -209,25 +243,28 @@ def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h2
         if stage == "full":
             # -threads 1: with frame-threaded decoding the last ~15 frames fail at end of file
             # ("Error while filtering: Cannot allocate memory", seen on the Arc A310, ffmpeg 6.1.1)
+            # -extra_hw_frames 64: two 4K HEVC 10-bit decodes otherwise run out of VAAPI surfaces
+            # ("ffmpeg exited", badge flipping CPU/GPU as the player restarts the same stage).
             pre = ["-threads", "1", "-noautorotate", "-hwaccel", "vaapi", "-hwaccel_device", device,
-                   "-hwaccel_output_format", "vaapi"]
-            vf = _vaapi_turn(rot) + "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
+                   "-hwaccel_output_format", "vaapi", "-extra_hw_frames", "64"]
+            vf = _vaapi_turn(rot) + _vaapi_scale(gw, height, hdr)
         else:
             pre = ["-init_hw_device", "vaapi=hw:%s" % device, "-filter_hw_device", "hw"]
-            vf = sw_scale + ",format=nv12,hwupload"
-        return pre, vf, (["-c:v", "hevc_vaapi", "-profile:v", "main"] if hevc else ["-c:v", "h264_vaapi", "-profile:v", "high"]) + ["-rc_mode", "VBR"] + rate + tag
+            vf = sw_scale + ",format=nv12,hwupload=extra_hw_frames=64"
+        # Arc (and other recent Intel) only exposes the low-power / VDENC entry (EncSliceLP).
+        return pre, vf, (["-c:v", "hevc_vaapi", "-profile:v", "main"] if hevc else ["-c:v", "h264_vaapi", "-profile:v", "high"]) + ["-rc_mode", "VBR", "-low_power", "1"] + rate + tag
     if method == "qsv":
         init = ["-init_hw_device", "vaapi=va:%s" % device, "-init_hw_device", "qsv=qs@va", "-filter_hw_device", "qs"]
         if stage == "full":
             pre = init + ["-threads", "1", "-noautorotate", "-hwaccel", "vaapi", "-hwaccel_device", "va",
-                          "-hwaccel_output_format", "vaapi"]
-            vf = _vaapi_turn(rot) + "scale_vaapi=w=%s:h=%d:format=nv12,hwmap=derive_device=qsv,format=qsv" % (gw, height)
+                          "-hwaccel_output_format", "vaapi", "-extra_hw_frames", "64"]
+            vf = _vaapi_turn(rot) + _vaapi_scale(gw, height, hdr) + ",hwmap=derive_device=qsv,format=qsv"
         else:
             pre = init
             vf = sw_scale + ",format=nv12,hwupload=extra_hw_frames=64,format=qsv"
         if hevc:
-            return pre, vf, ["-c:v", "hevc_qsv", "-preset", "veryfast", "-profile:v", "main", "-forced_idr", "1"] + rate + tag
-        return pre, vf, ["-c:v", "h264_qsv", "-preset", "veryfast", "-profile:v", "high", "-forced_idr", "1", "-look_ahead", "0"] + rate
+            return pre, vf, ["-c:v", "hevc_qsv", "-preset", "veryfast", "-profile:v", "main", "-low_power", "1", "-forced_idr", "1"] + rate + tag
+        return pre, vf, ["-c:v", "h264_qsv", "-preset", "veryfast", "-profile:v", "high", "-low_power", "1", "-forced_idr", "1", "-look_ahead", "0"] + rate
     if method == "nvenc":
         if stage == "full":
             pre = ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
@@ -381,19 +418,15 @@ def active():
         m = md if d else None
     if not m:
         return None, None
-    with _lock:
-        f = _failed.get((m, d))
-    if f and time.time() - f[0] < FAIL_HOLD_S:
-        return None, None
+    # A failed stream keeps its own sticky stage (see transcode.py). Do not take the
+    # card away from every other stream -- that is what made the GPU/CPU badge flip.
     return m, d
 
 
 def note_failure(method, device, stage, reason):
-    """A stream had to leave `stage`.  Falling past the last GPU stage holds the method off for FAIL_HOLD_S."""
+    """A stream had to leave `stage`. Recorded for Settings; it does not disable the card globally."""
     log.warning("hardware %s (%s) stage %s failed, falling back: %s", method, device, stage, reason)
     with _lock:
-        if stage == "enc":
-            _failed[(method, device)] = (time.time(), reason)
         _last_fail.update({"method": method, "device": device, "stage": stage, "reason": reason[:400], "at": int(time.time())})
 
 

@@ -74,6 +74,8 @@
   </div>
   <div class="pl-stage" id="pl-stage">
     <video id="video" playsinline controlslist="nofullscreen nodownload"></video>
+    <!-- 1.7.5: custom cue overlay (WebView often ignores ::cue; fetch+paint so captions stay after HLS/seek) -->
+    <div class="pl-cues hidden" id="pl-cues" aria-live="off"></div>
     <!-- 1.4.11: tap the picture to show / hide the big buttons; double-tap the left / right side to skip -->
     <div class="pl-tap" id="pl-tap" aria-hidden="true"></div>
     <div class="pl-ov" id="pl-ov">
@@ -118,19 +120,52 @@
 </div>
 
 <div id="audiobar" class="audiobar hidden">
-  <img id="ab-art" alt="">
-  <div class="ab-meta"><div id="ab-title"></div><div id="ab-sub" class="muted"></div></div>
+  <button class="iconbtn ab-tool" id="ab-back" type="button" title="Back" aria-label="Close now playing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.8 9.6L12 14.8l5.2-5.2"/></svg></button>
+  <div class="ab-stage" id="ab-stage">
+    <canvas id="ab-viz" width="640" height="640" aria-hidden="true"></canvas>
+    <img id="ab-art" alt="" title="Now playing">
+  </div>
+  <div class="ab-meta" id="ab-meta"><div id="ab-title"></div><div id="ab-sub" class="muted"></div></div>
   <div class="ab-ctl">
-    <button class="iconbtn" id="ab-prev" title="Previous">&#9198;</button>
-    <button class="iconbtn" id="ab-play" title="Play/Pause">&#9654;</button>
-    <button class="iconbtn" id="ab-next" title="Next">&#9197;</button>
+    <button class="iconbtn" id="ab-prev" type="button" title="Previous" aria-label="Previous"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5.5 5h2.25v14H5.5zm2.75 7L18.5 18.75V5.25z"/></svg></button>
+    <button class="iconbtn" id="ab-play" type="button" title="Play/Pause" aria-label="Play"><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg></button>
+    <button class="iconbtn" id="ab-next" type="button" title="Next" aria-label="Next"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.25 5H18.5v14h-2.25zm-2.75 7L5.5 18.75V5.25z"/></svg></button>
   </div>
   <div class="ab-seek"><span id="ab-cur">0:00</span><input type="range" id="ab-range" min="0" max="1000" value="0"><span id="ab-dur">0:00</span></div>
   <input type="range" id="ab-vol" min="0" max="100" value="100" title="Volume">
-  <button class="iconbtn" id="ab-close" title="Stop">&#10005;</button>
+  <button class="iconbtn ab-tool" id="ab-add" type="button" title="Add to playlist" aria-label="Add to playlist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 6.5v11M6.5 12h11"/></svg></button>
+  <button class="iconbtn ab-tool" id="ab-viz-toggle" type="button" title="Visualizer" aria-label="Toggle visualizer" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2.25"/><circle cx="12" cy="12" r="6.25"/><circle cx="12" cy="12" r="10.25"/></svg></button>
+  <button class="iconbtn ab-tool eq-btn" id="ab-eq" type="button" title="Equalizer" aria-label="Equalizer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M7 16.5V7.5"/><path d="M12 19.25V4.75"/><path d="M17 15V9"/></svg></button>
+  <button class="iconbtn ab-tool" id="ab-close" type="button" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
   <audio id="audio" preload="auto"></audio>
 </div>
 
+<div id="eqpanel" class="eq-panel hidden" role="dialog" aria-label="Equalizer">
+  <div class="eq-head">
+    <b>Equalizer</b>
+    <label class="eq-toggle"><input type="checkbox" id="eq-on"> On</label>
+    <button class="btn ghost small" type="button" id="eq-reset">Reset</button>
+    <button class="iconbtn" type="button" id="eq-close" title="Close" aria-label="Close equalizer">&#10005;</button>
+  </div>
+  <div class="eq-presets" id="eq-presets"></div>
+  <div class="eq-bands" id="eq-bands"></div>
+</div>
+
+
+<div id="plsheet" class="plsheet-back hidden" hidden>
+  <div class="plsheet" role="dialog" aria-labelledby="plsheet-title" aria-modal="true">
+    <div class="plsheet-grab" aria-hidden="true"></div>
+    <div class="plsheet-head">
+      <b id="plsheet-title">Add to playlist</b>
+      <button class="iconbtn ab-tool" type="button" id="plsheet-close" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+    </div>
+    <div class="plsheet-new">
+      <input type="text" id="plsheet-name" placeholder="New playlist name" maxlength="80" autocomplete="off">
+      <button class="btn small" type="button" id="plsheet-create">Create</button>
+    </div>
+    <div class="plsheet-list" id="plsheet-list"></div>
+  </div>
+</div>
 <div id="modal" class="modal hidden"><div class="modal-box" id="modal-box"></div></div>
 <div id="toast" class="toast hidden"></div>
 <script src="/static/hls.min.js"></script>

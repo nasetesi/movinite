@@ -22,7 +22,7 @@ os.environ.update({"MS_DATA_DIR": TMP, "MS_TMDB_API_BASE": "http://127.0.0.1:%d/
 import mock_tmdb  # noqa: E402
 from app import config, db, scanner, settings, tmdb  # noqa: E402
 
-MEDIA = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("MOVINITE_TESTMEDIA", str(Path(__file__).resolve().parent / "testmedia")))
+MEDIA = Path(sys.argv[1] if len(sys.argv) > 1 else "/workspace/media-server/testmedia")
 ok_count = 0
 
 
@@ -118,7 +118,7 @@ def main():
     check(not tmdb.test_key("BADKEY123456789012")[0], "bad key rejected")
 
     print("bad key / TMDB unreachable -> graceful")
-    settings.put("tmdb_key", "BADKEY123456789012")   # gitleaks:allow -- fake test key
+    settings.put("tmdb_key", "BADKEY123456789012")
     tmdb.queue_library(2, force=True)
     st = wait_meta(2)
     check(st["state"] == "error" and "rejected" in st["error"], "bad key: run stops with a clear error")

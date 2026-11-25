@@ -589,6 +589,19 @@ on rescans (it wins over TMDB). To go back to TMDB art, delete the file (or writ
 
 **Home rows.** Continue watching and Recently added list only Movies and TV Shows (web, phone and Android app).
 
+## Shares, versions and copies (1.7)
+
+- **Side menu:** libraries are grouped under their network share's name (status dot on the heading); local
+  folders are under "This server". Settings -> Libraries: the arrows on a share's heading move the group,
+  **Rename** changes the heading's name only.
+- **Versions:** files of the same film in one library are one poster, highest resolution first (4K > 2K > 1080p >
+  720p > SD, then bitrate, then size). The details page has a **Version** picker. The best version plays unless
+  your saved quality is a smaller transcode (then the smallest version at least that size) or the server has no
+  GPU 2K/4K transcoding and the browser can't play the big file directly (then a smaller version it can).
+- **Copies on two shares:** home page (one section per set of mirrored libraries), Continue watching, My List and
+  search show each title once, from a share that is online. Watch progress is saved on every copy and version.
+  When a share is offline, the copy on the other share is used.
+
 ## Library order, settings tabs, share status (1.6)
 
 From 1.6 versions have two parts (1.6, 1.7); a third digit means a quick fix (1.6.1). `update.sh` compares them as numbers.

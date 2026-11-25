@@ -11,11 +11,19 @@ On servers with a supported video card, transcoding can run on the GPU.
 | Home | Movie details |
 |---|---|
 | ![Home](docs/screenshots/web-home.png) | ![Details](docs/screenshots/web-details.png) |
-| **Player with 2K / 4K quality (GPU)** | **Add a library from an existing share** |
+| **Player with 2K / 4K quality** | **Add a library from an existing share** |
 | ![Player](docs/screenshots/web-player-quality-4k.png) | ![Add library](docs/screenshots/web-add-library-existing-connection.png) |
+| **Now playing** | **Music equalizer** |
+| ![Now playing](docs/screenshots/web-nowplaying.png) | ![Equalizer](docs/screenshots/web-equalizer.png) |
+| **Add to a playlist** | **Phone libraries** |
+| ![Playlists](docs/screenshots/web-playlists.png) | ![Phone libraries](docs/screenshots/phone-libraries.png) |
 
 <p>
 <img src="docs/screenshots/phone-home.png" width="200" alt="Phone home">
+<img src="docs/screenshots/phone-libraries-player.png" width="200" alt="Phone libraries with the music mini player">
+<img src="docs/screenshots/phone-nowplaying.png" width="200" alt="Phone now playing with the beat ring">
+<img src="docs/screenshots/phone-equalizer.png" width="200" alt="Phone music equalizer with the Dynamic preset">
+<img src="docs/screenshots/phone-playlists.png" width="200" alt="Phone playlists">
 <img src="docs/screenshots/phone-library-filters.png" width="200" alt="Phone library filters">
 <img src="docs/screenshots/android-01-first-run.png" width="200" alt="Android first run">
 <img src="docs/screenshots/android-03-sign-in.png" width="200" alt="Android sign in">
@@ -30,9 +38,8 @@ On servers with a supported video card, transcoding can run on the GPU.
 - **Scanning** with progress, resume and scheduled rescans. Names are parsed from files and folders (title, year,
   edition, `S01E02`).
 - **TMDB metadata (optional):** posters, backdrops, overviews, cast, collections, similar movies and episode titles.
-- **Playback in the browser:** direct play, remux or HLS transcode with quality choices (360p to 1080p, plus 2K/4K with a GPU),
-  subtitles (`.srt`, embedded), audio tracks, resume, picture-in-picture and keyboard shortcuts.
-- **Hardware transcoding:** Intel VAAPI/QSV (plus AMD VAAPI and NVIDIA NVENC, both untested). Video cards are detected on install, and each stream falls back to the CPU on its own if the card fails.
+- **Playback in the browser:** direct play, remux (including HEVC to fMP4) or HLS transcode with quality choices (360p to 1080p, plus 2K/4K with a GPU). Auto quality prefers direct play or remux over a transcode. Subtitles (`.srt`, embedded) are see-through and stay on after a seek or quality change; pinch to fit or fill the picture on a phone. The music player has a beat-reactive visualizer, playlists, and a 10-band equalizer with presets (including Dynamic).
+- **Hardware transcoding:** Intel VAAPI/QSV (plus AMD VAAPI and NVIDIA NVENC, both untested). Video cards are detected on install. Concurrent 4K streams use extra GPU surfaces and the card's low-power encoder; a stream that cannot stay on the GPU falls back once and stays there, with the reason logged. The same account can play on more than one device at a time.
 - **Home rows** (Continue watching, Recently added, Recommended), My List, search, genres, decades, tags and collections.
 - **Phone layout** with a bottom tab bar and filter sheets, plus an installable web app (PWA) and a native **Android app**.
 - **Multiple users** with admin and viewer roles, and a server status panel (CPU, RAM, streams).

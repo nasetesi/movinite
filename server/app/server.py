@@ -14,7 +14,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import artwork, auth, browse, liborder, sharehealth, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
+from . import artwork, auth, browse, folderart, liborder, playlists, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
 from .version import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -38,6 +38,7 @@ def _startup():
     threading.Thread(target=tmdb.resume_loop, args=(lambda: _stop,), daemon=True, name="tmdb-resume").start()
     # 1.5.2: video card scan (first start without a setting: scan, test, save; Auto: pick the card)
     threading.Thread(target=hwaccel.warm_up, daemon=True, name="hw-detect").start()
+    folderart.start_backfill(lambda: _stop)    # 1.7.3
     log.info("Movinite (media-server) v%s started; data in %s", __version__, config.DATA_DIR)
 
 
@@ -240,6 +241,9 @@ def _meta_counts(lib):
 def _lib_out(lib):
     lib = dict(lib)
     lib["item_count"] = db.row("SELECT COUNT(*) n FROM items WHERE library_id=?", (lib["id"],))["n"]
+    if lib["kind"] == "movies":   # 1.7: films (a 4K + a 1080p file of one film count once)
+        lib["film_count"] = db.row("SELECT COUNT(DISTINCT " + titles.key_sql() + ") n FROM items WHERE library_id=?",
+                                   (lib["id"],))["n"]
     lib["scan"] = _snap(scanner.status.get(lib["id"]))
     lib["meta"] = _snap(tmdb.status.get(lib["id"]))
     lib["meta_counts"] = _meta_counts(lib)
@@ -593,6 +597,18 @@ def edit_share(share_id: int, body: dict = Body(...), u=Depends(auth.require_adm
     return {"ok": True}
 
 
+@app.put("/api/shares/{share_id}/name")
+def rename_share(share_id: int, body: dict = Body(...), u=Depends(auth.require_admin)):
+    """1.7: the name shown as the share's heading in the side menu. Only the label changes (no remount)."""
+    name = (body.get("name") or "").strip()
+    if not name or len(name) > 60:
+        raise HTTPException(400, "Give the share a name (up to 60 characters)")
+    with db.tx() as c:
+        if not c.execute("UPDATE shares SET name=? WHERE id=?", (name, share_id)).rowcount:
+            raise HTTPException(404, "No such share")
+    return {"ok": True, "name": name}
+
+
 @app.post("/api/shares/{share_id}/access")
 def share_access(share_id: int, body: dict = Body(...), u=Depends(auth.require_admin)):
     """1.3: {"allow_write": true} remounts the share read-write so artwork can be saved; false = read-only again."""
@@ -787,7 +803,7 @@ def browse_fs(path: str = "/", u=Depends(auth.require_admin)):
 # ---------------------------------------------------------------------------
 ITEM_COLS = ("id, library_id, media_type, kind, title, year, show, season, episode, episode_title, artist, album, "
              "album_artist, track, disc, duration, thumb, poster, added_at, width, height, vcodec, acodec, tmdb_id, "
-             "edition, meta_status, meta_confidence")
+             "edition, meta_status, meta_confidence, bitrate, size")
 # 1.3: "Needs review" = flagged by the matcher, low-confidence automatic matches, or a year far from the file's
 REVIEW_COND = ("(kind='movie' AND (meta_status='review' OR (meta_status='matched' AND (COALESCE(meta_confidence,1) < %s "
                "OR EXISTS(SELECT 1 FROM metadata mr WHERE mr.kind='movie' AND mr.tmdb_id=items.tmdb_id AND "
@@ -868,7 +884,7 @@ def library_collections(lib_id: int, q: str = "", u=Depends(auth.require_user)):
     if not db.row("SELECT 1 x FROM libraries WHERE id=?", (lib_id,)):
         raise HTTPException(404, "No such library")
     rows = db.rows(
-        "SELECT c.id, c.name, c.poster, COUNT(DISTINCT i.id) n, MIN(md.year) year_from, MAX(md.year) year_to, "
+        "SELECT c.id, c.name, c.poster, COUNT(DISTINCT i.tmdb_id) n, MIN(md.year) year_from, MAX(md.year) year_to, "
         "(SELECT md2.poster FROM metadata md2 JOIN items i2 ON i2.tmdb_id=md2.tmdb_id AND i2.library_id=? "
         " WHERE md2.kind='movie' AND md2.collection_id=c.id AND md2.poster IS NOT NULL ORDER BY md2.year LIMIT 1) first_poster "
         "FROM collections c JOIN metadata md ON md.kind='movie' AND md.collection_id=c.id "
@@ -1038,6 +1054,10 @@ def library_items(lib_id: int, sort: str = "poster", q: str = "", offset: int = 
     elif filter == "edition":
         cond += " AND edition IS NOT NULL"
     args = [lib_id, like, like, like, like]
+    if lib["kind"] == "movies" and view != "files":
+        # 1.7: several files of one film (4K + 1080p ...) = one card, the highest resolution first
+        cond += " AND " + titles.best_in_lib_cond("id")
+        args.append(lib_id)
     csql, cargs = _cat_filters(genres, decade, collection, tag, cert)
     cond += csql
     args += cargs
@@ -1045,9 +1065,10 @@ def library_items(lib_id: int, sort: str = "poster", q: str = "", offset: int = 
         order = "COALESCE(" + (MOVIE_META % "md.release_date") + ", year), sort_title"   # a franchise in release order
     elif sort == "rating":
         order = "COALESCE(" + (MOVIE_META % "md.rating") + ", 0) DESC, sort_title COLLATE NOCASE"
-    rows = db.rows("SELECT " + ITEM_COLS + ", " + REVIEW_COND + " AS needs_review FROM items WHERE " + cond +
-                   " ORDER BY " + order + " LIMIT ? OFFSET ?", args + [limit, offset])
+    rows = db.rows("SELECT " + ITEM_COLS + ", " + REVIEW_COND + " AS needs_review, " + titles.key_sql() +
+                   " AS title_key FROM items WHERE " + cond + " ORDER BY " + order + " LIMIT ? OFFSET ?", args + [limit, offset])
     total = db.row("SELECT COUNT(*) n FROM items WHERE " + cond, args)["n"]
+    _mark_versions(lib_id, rows)
     out = {"library": _lib_out(lib), "view": "items", "items": _with_progress(rows, u["id"]), "total": total}
     if facets and lib["kind"] == "movies":
         out["facets"] = _facets(cond, args)
@@ -1056,6 +1077,19 @@ def library_items(lib_id: int, sort: str = "poster", q: str = "", offset: int = 
         if tag:
             out["tag"] = db.row("SELECT id, name FROM tags WHERE id=?", (tag,))
     return out
+
+
+def _mark_versions(lib_id, rows):
+    """1.7: rows that are the best of several files get versions = n and vres = ['4K', '1080p', ...] (best first)."""
+    if not rows:
+        return rows
+    vc = titles.version_counts(lib_id)
+    for r in rows:
+        k = r.pop("title_key", None)
+        if k in vc:
+            r["versions"] = len(vc[k])
+            r["vres"] = [titles.RES_LABEL[x] for x in vc[k]]
+    return rows
 
 
 def _enrich_shows(lib_id, rows):
@@ -1078,10 +1112,29 @@ def _enrich_shows(lib_id, rows):
 
 @app.get("/api/show")
 def show_detail(library_id: int, show: str, u=Depends(auth.require_user)):
-    eps = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE library_id=? AND show=? ORDER BY season, episode, sort_title",
-                  (library_id, show))
+    eps = db.rows("SELECT " + ITEM_COLS + ", " + titles.key_sql() + " AS title_key FROM items WHERE library_id=? AND show=? "
+                  "ORDER BY season, episode, sort_title", (library_id, show))
     if not eps:
         raise HTTPException(404, "No such show")
+    # 1.7: two files of one episode = one row (highest resolution), in the original order
+    groups = {}
+    for e in eps:
+        groups.setdefault(e["title_key"], []).append(e)
+    keep = []
+    for e in eps:
+        g = groups.get(e["title_key"])
+        if g is None:
+            continue
+        g.sort(key=titles.version_sort_key)
+        best = g[0]
+        if len(g) > 1:
+            best["versions"] = len(g)
+            best["vres"] = [titles.RES_LABEL[titles.res_rank(x["width"], x["height"])] for x in g]
+        keep.append(best)
+        groups.pop(e["title_key"])
+    eps = keep
+    for e in eps:
+        e.pop("title_key", None)
     eps = _with_progress(eps, u["id"])
     seasons = {}
     for e in eps:
@@ -1115,10 +1168,90 @@ def album_detail(library_id: int, artist: str, album: str, u=Depends(auth.requir
             "duration": sum(t["duration"] or 0 for t in tracks), "tracks": tracks}
 
 
+# 1.7.6: per-user playlists
+def _playlist_item_cols():
+    return ", ".join("i." + c.strip() for c in ITEM_COLS.split(","))
+
+
+@app.get("/api/playlists")
+def list_playlists(u=Depends(auth.require_user)):
+    return playlists.list_for(u["id"])
+
+
+@app.post("/api/playlists")
+def create_playlist(body: dict = Body(...), u=Depends(auth.require_user)):
+    ids = body.get("item_ids") or ([] if body.get("item_id") is None else [body.get("item_id")])
+    return playlists.create(u["id"], body.get("name"), ids or None)
+
+
+@app.get("/api/playlists/{pid}")
+def playlist_detail(pid: int, u=Depends(auth.require_user)):
+    return playlists.get(pid, u["id"], _playlist_item_cols())
+
+
+@app.put("/api/playlists/{pid}")
+def rename_playlist(pid: int, body: dict = Body(...), u=Depends(auth.require_user)):
+    return playlists.rename(pid, u["id"], body.get("name"))
+
+
+@app.delete("/api/playlists/{pid}")
+def delete_playlist(pid: int, u=Depends(auth.require_user)):
+    return playlists.delete(pid, u["id"])
+
+
+@app.post("/api/playlists/{pid}/tracks")
+def add_playlist_tracks(pid: int, body: dict = Body(...), u=Depends(auth.require_user)):
+    ids = body.get("item_ids") or ([] if body.get("item_id") is None else [body.get("item_id")])
+    return playlists.add_tracks(pid, u["id"], ids)
+
+
+@app.delete("/api/playlists/{pid}/tracks/{entry_id}")
+def remove_playlist_track(pid: int, entry_id: int, u=Depends(auth.require_user)):
+    return playlists.remove_entry(pid, u["id"], entry_id)
+
+
+@app.put("/api/playlists/{pid}/order")
+def reorder_playlist(pid: int, body: dict = Body(...), u=Depends(auth.require_user)):
+    return playlists.reorder(pid, u["id"], body.get("ids") or body.get("entry_ids") or [])
+
+
 # 1.5.5: the home page (and so the Android app, which shows the same page) lists only Movies and TV Shows libraries in
 # Continue watching and the Recently added rows -- music, home videos and "other" libraries stay in their own pages
 HOME_KINDS = ("movies", "tv")
 HOME_KINDS_SQL = "('movies','tv')"
+
+
+def _dedupe(items, key_field=None):
+    """1.7: one entry per title (versions and copies on other libraries), keeping the order; the entry shown is the
+    best version from a library whose share is up (first in admin order)."""
+    if not items:
+        return items
+    ids = [i["id"] for i in items]
+    keys = {}
+    for chunk in range(0, len(ids), 500):
+        part = ids[chunk:chunk + 500]
+        for r in db.rows("SELECT id, %s k FROM items WHERE id IN (%s)" % (titles.key_sql(), ",".join("?" * len(part))), part):
+            keys[r["id"]] = r["k"]
+    for i in items:
+        i["title_key"] = keys.get(i["id"])
+    # swap in a copy when the first one found is on a share that is down
+    down = titles.lib_down()
+    out = titles.collapse(items, down=down)
+    if down:
+        for n, i in enumerate(out):
+            if down.get(i["library_id"]):
+                tw = titles.online_twin(i["id"])
+                if tw:
+                    r = db.row("SELECT " + ITEM_COLS + " FROM items WHERE id=?", (tw,))
+                    if r:
+                        for k in ("position", "updated_at", "duration"):
+                            if i.get(k) is not None and k != "duration":
+                                r[k] = i[k]
+                        out[n] = r
+    for i in out:
+        i.pop("title_key", None)
+        i.pop("copies", None)
+    return out
 
 
 def _continue(u):
@@ -1127,7 +1260,8 @@ def _continue(u):
         "FROM progress p JOIN items i ON i.id=p.item_id JOIN libraries l ON l.id=i.library_id "
         "WHERE p.user_id=? AND p.watched=0 AND p.position>30 "
         "AND i.media_type='video' AND l.kind IN " + HOME_KINDS_SQL + " AND (COALESCE(p.duration, i.duration, 0) <= 0 OR "
-        "p.position < 0.95 * COALESCE(p.duration, i.duration)) ORDER BY p.updated_at DESC LIMIT 20", (u["id"],))
+        "p.position < 0.95 * COALESCE(p.duration, i.duration)) ORDER BY p.updated_at DESC LIMIT 80", (u["id"],))
+    cont = _dedupe(cont)[:20]      # 1.7: progress is kept on every copy -- show each title once
     cont = _with_progress(cont, u["id"])
     for i in cont:   # the progress bar needs a length even when ffprobe could not read one
         i["duration"] = i.get("duration") or i.pop("pduration", None)
@@ -1139,9 +1273,22 @@ def _continue(u):
 def home(u=Depends(auth.require_user)):
     cont = _continue(u)
     libs = []
+    # 1.7: libraries that hold the same titles (e.g. the same movies on two redundant shares) get ONE section,
+    # from the first of them (admin order) whose share is up; the others are named under "mirrors"
+    down = titles.lib_down()
+    show_lib, mirrors = {}, {}
+    for kind in HOME_KINDS:
+        for g in titles.mirror_groups(kind):
+            up = [l for l in g if not down.get(l)] or g
+            show_lib[up[0]] = True
+            mirrors[up[0]] = [l for l in g if l != up[0]]
+    names = {r["id"]: r["name"] for r in db.rows("SELECT id, name FROM libraries")}
     for lib in db.rows("SELECT * FROM libraries " + liborder.ORDER_SQL):
         if lib["kind"] not in HOME_KINDS:      # 1.5.5: only movies and TV on the home page
             continue
+        if not show_lib.get(lib["id"]):
+            continue
+        lib["mirrors"] = [names[m] for m in mirrors.get(lib["id"], [])]
         if lib["kind"] == "music":
             recent = db.rows(
                 "SELECT COALESCE(album_artist, artist, 'Unknown artist') artist, COALESCE(album,'Unknown album') album, "
@@ -1149,15 +1296,16 @@ def home(u=Depends(auth.require_user)):
                 "ORDER BY MAX(added_at) DESC, 2 LIMIT 20", (lib["id"],))
             libs.append({"library": lib, "albums": recent})
         elif lib["kind"] == "tv":
-            recent = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE library_id=? ORDER BY added_at DESC, show, season DESC, "
-                             "episode DESC LIMIT 20", (lib["id"],))
+            recent = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE library_id=? AND " + titles.best_in_lib_cond("id") +
+                             " ORDER BY added_at DESC, show, season DESC, episode DESC LIMIT 20", (lib["id"], lib["id"]))
             libs.append({"library": lib, "items": _with_progress(recent, u["id"])})
         else:
             # 1.2.1: among recent additions (last 7 days of this library's activity), artwork first
             recent = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE library_id=? AND added_at >= "
-                             "(SELECT COALESCE(MAX(added_at),0) - 7*86400 FROM items WHERE library_id=?) "
+                             "(SELECT COALESCE(MAX(added_at),0) - 7*86400 FROM items WHERE library_id=?) AND "
+                             + titles.best_in_lib_cond("id") + " "
                              "ORDER BY " + HAS_ART + " DESC, added_at DESC, sort_title COLLATE NOCASE LIMIT 20",
-                             (lib["id"], lib["id"]))
+                             (lib["id"], lib["id"], lib["id"]))
             entry = {"library": lib, "items": _with_progress(recent, u["id"])}
             # 1.4.1: Recommended / Recently released / Recently added / Top movies, in that order
             entry["smart_rows"] = []
@@ -1171,12 +1319,13 @@ def home(u=Depends(auth.require_user)):
                 entry["smart_rows"].append(r)
             # 1.4: a row for each of the library's biggest genres (best rated first, artwork first)
             rows = []
-            for g in db.rows("SELECT g.genre, COUNT(DISTINCT i.id) n FROM items i JOIN movie_genres g ON g.tmdb_id=i.tmdb_id "
+            for g in db.rows("SELECT g.genre, COUNT(DISTINCT i.tmdb_id) n FROM items i JOIN movie_genres g ON g.tmdb_id=i.tmdb_id "
                              "WHERE i.library_id=? AND i.kind='movie' GROUP BY g.genre ORDER BY n DESC LIMIT 6", (lib["id"],)):
                 its = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE library_id=? AND kind='movie' AND tmdb_id IN "
-                              "(SELECT tmdb_id FROM movie_genres WHERE genre=?) ORDER BY " + HAS_ART + " DESC, COALESCE("
+                              "(SELECT tmdb_id FROM movie_genres WHERE genre=?) AND " + titles.best_in_lib_cond("id") +
+                              " ORDER BY " + HAS_ART + " DESC, COALESCE("
                               + (MOVIE_META % "md.rating") + ",0) DESC, sort_title COLLATE NOCASE LIMIT 20",
-                              (lib["id"], g["genre"]))
+                              (lib["id"], g["genre"], lib["id"]))
                 rows.append({"genre": g["genre"], "count": g["n"], "items": _with_progress(its, u["id"])})
             entry["genre_rows"] = rows
             libs.append(entry)
@@ -1189,8 +1338,8 @@ def mylist(u=Depends(auth.require_user)):
     cont = _continue(u)
     watched = db.rows("SELECT " + ", ".join("i." + c.strip() for c in ITEM_COLS.split(",")) + " FROM progress p JOIN items i "
                       "ON i.id=p.item_id WHERE p.user_id=? AND p.watched=1 AND i.media_type='video' "
-                      "ORDER BY p.updated_at DESC LIMIT 60", (u["id"],))
-    return {"continue": cont, "watched": _with_progress(watched, u["id"])}
+                      "ORDER BY p.updated_at DESC LIMIT 240", (u["id"],))
+    return {"continue": cont, "watched": _with_progress(_dedupe(watched)[:60], u["id"])}
 
 
 @app.get("/api/search")
@@ -1201,22 +1350,51 @@ def search(q: str, u=Depends(auth.require_user)):
     like = "%" + q + "%"
     items = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE kind IN ('movie','video') AND (title LIKE ? OR tmdb_id IN "
                     "(SELECT tmdb_id FROM metadata WHERE kind='movie' AND (title LIKE ? OR original_title LIKE ?))) "
-                    "ORDER BY sort_title LIMIT 60", (like, like, like))
+                    "ORDER BY sort_title LIMIT 400", (like, like, like))
+    items = _dedupe(items)[:60]          # 1.7: a film on two shares / in 4K and 1080p is one result
     eps = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE kind='episode' AND (title LIKE ? OR episode_title LIKE ?) "
-                  "ORDER BY show, season, episode LIMIT 40", (like, like))
+                  "ORDER BY show, season, episode LIMIT 200", (like, like))
+    eps = _dedupe(eps)[:40]
     shows = db.rows("SELECT library_id, show, COUNT(*) episodes, MAX(poster) poster, MIN(year) year FROM items "
                     "WHERE kind='episode' AND (show LIKE ? OR (library_id, show) IN (SELECT sm.library_id, sm.show FROM show_matches sm "
                     "JOIN metadata m ON m.kind='tv' AND m.tmdb_id=sm.tmdb_id WHERE m.title LIKE ?)) "
-                    "GROUP BY library_id, show ORDER BY show LIMIT 40", (like, like))
+                    "GROUP BY library_id, show ORDER BY show LIMIT 200", (like, like))
+    shows = _dedupe_shows(shows)[:40]
     _enrich_shows(None, shows)
     albums = db.rows("SELECT library_id, COALESCE(album_artist, artist, 'Unknown artist') artist, "
                      "COALESCE(album,'Unknown album') album, MAX(poster) poster, MAX(year) year, COUNT(*) tracks FROM items "
                      "WHERE media_type='audio' AND (album LIKE ? OR artist LIKE ? OR album_artist LIKE ?) "
-                     "GROUP BY 1,2,3 ORDER BY 2,3 LIMIT 40", (like, like, like))
+                     "GROUP BY 1,2,3 ORDER BY 2,3 LIMIT 200", (like, like, like))
+    seen_al, al2 = set(), []
+    for a in albums:                     # 1.7: the same album in two music libraries = one result
+        k = (a["artist"].lower(), a["album"].lower())
+        if k not in seen_al:
+            seen_al.add(k)
+            al2.append(a)
+    albums = al2[:40]
     tracks = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE media_type='audio' AND title LIKE ? ORDER BY sort_title LIMIT 40",
                      (like,))
     return {"items": _with_progress(items, u["id"]), "episodes": _with_progress(eps, u["id"]), "shows": shows,
             "albums": albums, "tracks": tracks}
+
+
+def _dedupe_shows(shows):
+    """1.7: a show in two TV libraries (e.g. on two shares) once, from the first library (admin order) that is up."""
+    down, order = titles.lib_down(), titles.lib_rank()
+    best = {}
+    for s in shows:
+        k = (s["show"] or "").lower()
+        cur = best.get(k)
+        rank = (1 if down.get(s["library_id"]) else 0, order.get(s["library_id"], 999))
+        if cur is None or rank < cur[0]:
+            best[k] = (rank, s)
+    seen, out = set(), []
+    for s in shows:
+        k = (s["show"] or "").lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(best[k][1])
+    return out
 
 
 def _get_item(item_id):
@@ -1274,7 +1452,9 @@ def playback_info(it):
                                     "label": s.get("title") or s.get("lang") or "Track %d" % s["index"],
                                     "lang": s.get("lang")})
     remux = it["media_type"] == "video" and transcode.remux_eligible(it)
-    return {"direct": direct, "direct_maybe": maybe, "remux": remux, "mime": MIME.get(ext, "application/octet-stream"),
+    remux_codec = transcode.remux_codec(it) if remux else ""
+    return {"direct": direct, "direct_maybe": maybe, "remux": remux, "remux_codec": remux_codec,
+            "mime": MIME.get(ext, "application/octet-stream"),
             "profiles": profiles, "hires": hires, "hires_off": hires_off, "hdr": hdr,
             "hires_kbps": {p: {"h264": transcode.video_kbps(it, p), "hevc": transcode.video_kbps(it, p, True)} for p in hires},   # 1.5.4: real maxrate
             "audio_streams": auds, "subtitles": subtitle_tracks,
@@ -1316,7 +1496,9 @@ def item_detail(item_id: int, u=Depends(auth.require_user)):
                 out["runtime"] = m["runtime"]
                 # 1.4.6: sharper poster for the big details-page poster (only when the poster shown is TMDB's)
                 if m["poster_path"] and m["poster"] and out.get("poster") == m["poster"]:
-                    out["poster_large"] = "/api/items/%d/poster-large" % item_id
+                    # 1.7.1: ?v= the poster file so a new match is not hidden by the week-long
+                    # browser cache of /api/items/{id}/poster-large (the path itself never changed).
+                    out["poster_large"] = "/api/items/%d/poster-large?v=%s" % (item_id, m["poster"])
     elif it["kind"] == "episode":
         _m, out["match_status"] = tmdb.show_meta(it["library_id"], it["show"])
         if out.get("show_tmdb_id"):
@@ -1335,6 +1517,10 @@ def item_detail(item_id: int, u=Depends(auth.require_user)):
     out["next"] = nxt
     lib = db.row("SELECT id, name, kind FROM libraries WHERE id=?", (it["library_id"],))
     out["library"] = lib
+    try:
+        out.update(_versions(it))
+    except Exception:   # never break the details page
+        log.exception("versions")
     if it["kind"] == "movie":
         out.update(_movie_people(it))
         try:
@@ -1342,6 +1528,34 @@ def item_detail(item_id: int, u=Depends(auth.require_user)):
         except Exception:   # similar movies are a nice-to-have
             log.exception("similar")
             out["similar"] = []
+    return out
+
+
+def _versions(it):
+    """1.7: {"versions": [this library's files of the title, best first], "copies": n other libraries,
+    "fallback": id of a copy on a share that is up (only when this item's share is down)}."""
+    ids = titles.same_title_ids(it["id"]) if it["kind"] in ("movie", "episode") else [it["id"]]
+    down = titles.lib_down()
+    out = {"versions": [], "copies": 0, "offline": bool(down.get(it["library_id"])), "fallback": None}
+    if len(ids) <= 1:
+        return out
+    rows = db.rows("SELECT * FROM items WHERE id IN (%s)" % ",".join("?" * len(ids)), ids)
+    mine = sorted([r for r in rows if r["library_id"] == it["library_id"]], key=titles.version_sort_key)
+    out["copies"] = len({r["library_id"] for r in rows if r["library_id"] != it["library_id"]})
+    if len(mine) > 1:
+        for r in mine:
+            pb = playback_info(r)
+            out["versions"].append({
+                "id": r["id"], "res": titles.RES_LABEL[titles.res_rank(r["width"], r["height"])],
+                "width": r["width"], "height": r["height"], "vcodec": r["vcodec"], "acodec": r["acodec"],
+                "bitrate": r["bitrate"], "size": r["size"], "container": r["container"],
+                "playback": {"direct": pb["direct"], "direct_maybe": pb["direct_maybe"], "remux": pb["remux"],
+                             "mime": pb["mime"], "hires": pb["hires"]}})
+    if out["offline"]:
+        out["fallback"] = titles.online_twin(it["id"])
+        if out["fallback"]:
+            fl = db.row("SELECT l.name FROM items i JOIN libraries l ON l.id=i.library_id WHERE i.id=?", (out["fallback"],))
+            out["fallback_library"] = fl and fl["name"]
     return out
 
 
@@ -1372,7 +1586,7 @@ def _similar(it, user_id):
     tid, lib = it.get("tmdb_id"), it["library_id"]
     lib_movies = {}
     for r in db.rows("SELECT id, tmdb_id FROM items WHERE library_id=? AND kind='movie' AND tmdb_id IS NOT NULL "
-                     "AND meta_status IN ('matched','manual','review') ORDER BY id", (lib,)):
+                     "AND meta_status IN ('matched','manual','review') ORDER BY " + titles.order_sql(), (lib,)):
         lib_movies.setdefault(r["tmdb_id"], r["id"])
     picked, reasons = [], {}
 
@@ -1451,7 +1665,10 @@ def person_detail(person_id: int, library_id: int = 0, u=Depends(auth.require_us
         q += " AND library_id=?"
         args.append(library_id)
     items, seen = [], set()
-    for x in db.rows(q + " ORDER BY id", args):
+    order, down = titles.lib_rank(), titles.lib_down()
+    allx = db.rows(q, args)
+    allx.sort(key=lambda x: (1 if down.get(x["library_id"]) else 0, order.get(x["library_id"], 999)) + titles.version_sort_key(x))
+    for x in allx:      # 1.7: one card per film -- the best version, from a library that is up
         if x["tmdb_id"] in seen:
             continue
         seen.add(x["tmdb_id"])
@@ -1471,13 +1688,16 @@ def save_progress(item_id: int, body: dict = Body(...), u=Depends(auth.require_u
     watched = 1 if (dur and pos / dur > 0.92) or body.get("ended") else 0
     if watched:
         pos = 0
+    now = int(time.time())
     with db.tx() as c:
-        c.execute("INSERT INTO progress(user_id,item_id,position,duration,watched,updated_at) VALUES(?,?,?,?,?,?) "
-                  "ON CONFLICT(user_id,item_id) DO UPDATE SET position=excluded.position, duration=excluded.duration, "
-                  "watched=MAX(watched, excluded.watched), updated_at=excluded.updated_at",
-                  (u["id"], item_id, pos, dur, watched, int(time.time())))
-        if watched:
-            c.execute("UPDATE progress SET position=0 WHERE user_id=? AND item_id=?", (u["id"], item_id))
+        # 1.7: the same position for every version and copy of the title (4K / 1080p, the other share)
+        for iid in (titles.same_title_ids(item_id) or [item_id]):
+            c.execute("INSERT INTO progress(user_id,item_id,position,duration,watched,updated_at) VALUES(?,?,?,?,?,?) "
+                      "ON CONFLICT(user_id,item_id) DO UPDATE SET position=excluded.position, duration=excluded.duration, "
+                      "watched=MAX(watched, excluded.watched), updated_at=excluded.updated_at",
+                      (u["id"], iid, pos, dur, watched, now))
+            if watched:
+                c.execute("UPDATE progress SET position=0 WHERE user_id=? AND item_id=?", (u["id"], iid))
     return {"ok": True, "watched": bool(watched)}
 
 
@@ -1485,10 +1705,12 @@ def save_progress(item_id: int, body: dict = Body(...), u=Depends(auth.require_u
 def set_watched(item_id: int, body: dict = Body(...), u=Depends(auth.require_user)):
     _get_item(item_id)
     w = 1 if body.get("watched") else 0
+    now = int(time.time())
     with db.tx() as c:
-        c.execute("INSERT INTO progress(user_id,item_id,position,watched,updated_at) VALUES(?,?,0,?,?) "
-                  "ON CONFLICT(user_id,item_id) DO UPDATE SET watched=excluded.watched, position=0, updated_at=excluded.updated_at",
-                  (u["id"], item_id, w, int(time.time())))
+        for iid in (titles.same_title_ids(item_id) or [item_id]):     # 1.7: every version and copy
+            c.execute("INSERT INTO progress(user_id,item_id,position,watched,updated_at) VALUES(?,?,0,?,?) "
+                      "ON CONFLICT(user_id,item_id) DO UPDATE SET watched=excluded.watched, position=0, updated_at=excluded.updated_at",
+                      (u["id"], iid, w, now))
     return {"ok": True}
 
 
@@ -1576,37 +1798,55 @@ def _profile_ok(profile):
         raise HTTPException(409, "2K and 4K need hardware transcoding")
 
 
+def _player_query(audio, player, start=None):
+    q = "?audio=%d" % audio
+    if player:
+        q += "&player=%s" % transcode.normalize_player(player)
+    if start is not None:
+        q += "&start=%d" % start
+    return q
+
+
 @app.get("/api/items/{item_id}/hls/{profile}/index.m3u8")
-def hls_playlist(item_id: int, profile: str, audio: int = 0, start: int = 0, u=Depends(auth.require_user)):
+def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, start: int = 0,
+                 player: str = "", caps: str = "", hevc: str = "", hevc_mse: str = "",
+                 hevc_el: str = "", mkv: str = "", ac3: str = "", eac3: str = "", hlsjs: str = "",
+                 u=Depends(auth.require_user)):
     _profile_ok(profile)
     it = _get_item(item_id)
     if not os.path.exists(it["path"]):
         raise HTTPException(404, "File is not reachable (share offline?)")
+    cap = caps or ("hevc=%s hevc_mse=%s hevc_el=%s mkv=%s ac3=%s eac3=%s hlsjs=%s" %
+                   (hevc, hevc_mse, hevc_el, mkv, ac3, eac3, hlsjs)).strip()
+    transcode.note_client(player, u, request, cap)
     bounds = None
     if profile == "remux":
         bounds = transcode.remux_bounds(it)
         if not bounds:
             raise HTTPException(409, "This file cannot be remuxed; use a transcode quality")
-    init = "init.mp4?audio=%d&start=%d" % (audio, max(0, start)) if transcode.split_profile(profile)[1] == "hevc" else None
-    return PlainTextResponse(transcode.playlist(it, "?audio=%d" % audio, bounds, init), media_type="application/vnd.apple.mpegurl",
+    need_init = transcode.split_profile(profile)[1] == "hevc" or (profile == "remux" and transcode.remux_codec(it) == "hevc")
+    init = ("init.mp4" + _player_query(audio, player, max(0, start))) if need_init else None
+    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player), bounds, init), media_type="application/vnd.apple.mpegurl",
                              headers={"Cache-Control": "no-cache"})
 
 
-def _hls_session(item_id, profile, audio, u):
+def _hls_session(item_id, profile, audio, u, player=""):
     _profile_ok(profile)
     it = _get_item(item_id)
     try:
-        return transcode.get_session(it, profile, max(0, audio), u["id"])
+        return transcode.get_session(it, profile, max(0, audio), u["id"], player)
     except ValueError as e:
         raise HTTPException(409, "This file cannot be remuxed" if profile == "remux" else str(e))
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/init.mp4")
-def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, u=Depends(auth.require_user)):
-    """1.5.3: init segment of an HEVC (fMP4) stream."""
-    if transcode.split_profile(profile)[1] != "hevc":
+def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player: str = "",
+             u=Depends(auth.require_user)):
+    """1.5.3: init segment of an HEVC (fMP4) stream (transcode or HEVC remux)."""
+    it = _get_item(item_id)
+    if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    s = _hls_session(item_id, profile, audio, u)
+    s = _hls_session(item_id, profile, audio, u, player)
     p = s.get_init(max(0, start))
     if not p:
         raise HTTPException(500, "Transcode failed" + (": " + s.failed if s.failed else ""))
@@ -1614,15 +1854,18 @@ def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, u=Depen
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.m4s")
-def hls_segment_m4s(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(auth.require_user)):
-    if transcode.split_profile(profile)[1] != "hevc":
+def hls_segment_m4s(item_id: int, profile: str, n: int, audio: int = 0, player: str = "",
+                    u=Depends(auth.require_user)):
+    it = _get_item(item_id)
+    if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    return hls_segment(item_id, profile, n, audio, u)
+    return hls_segment(item_id, profile, n, audio, u, player)
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.ts")
-def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(auth.require_user)):
-    s = _hls_session(item_id, profile, audio, u)
+def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(auth.require_user),
+                player: str = ""):
+    s = _hls_session(item_id, profile, audio, u, player)
     if n < 0 or n >= s.nseg:
         raise HTTPException(404)
     p = s.get_segment(n)
@@ -1636,10 +1879,13 @@ def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(au
 
 
 @app.post("/api/items/{item_id}/stop")
-def stop_stream(item_id: int, u=Depends(auth.require_user)):
+def stop_stream(item_id: int, player: str = "", u=Depends(auth.require_user)):
+    pid = transcode.normalize_player(player)
     for s in list(transcode._sessions.values()):
         if s.item["id"] == item_id and getattr(s, "user_id", None) == u["id"]:
-            transcode.stop_session(s.sid)
+            if pid and getattr(s, "player_id", "") != pid:
+                continue
+            transcode.stop_session(s.sid, "client_close")
     return {"ok": True}
 
 
@@ -1751,30 +1997,36 @@ def match_item(item_id: int, body: dict = Body(...), u=Depends(auth.require_admi
         return match_show({"library_id": it["library_id"], "show": it["show"], **body}, u)
     if it["kind"] != "movie":
         raise HTTPException(400, "Only movies and TV shows can be matched")
+    # 1.7.1: the 4K, the 1080p and the copy on the other share all follow this match
+    ids = titles.movie_match_ids(item_id)
+    try:      # 1.7.3: re-read the folder .nfo so a poster saved for an old match can be set aside
+        folderart.refresh(ids)
+    except Exception:
+        log.exception("folder art")
     try:
         if body.get("unmatch"):
-            tmdb.apply_movie_match([item_id], None, "unmatched")
+            tmdb.apply_movie_match(ids, None, "unmatched")
         elif body.get("auto"):
             _need_tmdb()
             r = tmdb.match_movie(it["title"], it["year"])
-            if not tmdb.apply_match_result([item_id], r):
+            if not tmdb.apply_match_result(ids, r):
                 return {"ok": True, "matched": False, "status": r["status"], "note": r["note"]}
-            tmdb._after_match(it["library_id"], [item_id])
+            tmdb.after_match_items(ids)
         elif body.get("accept_candidate"):
             _need_tmdb()
             if not it.get("meta_candidate"):
                 raise HTTPException(400, "No suggestion to accept")
             tmdb.fetch_details("movie", it["meta_candidate"], force=True)
-            tmdb.apply_movie_match([item_id], it["meta_candidate"], "manual")
-            tmdb._after_match(it["library_id"], [item_id])
+            tmdb.apply_movie_match(ids, it["meta_candidate"], "manual")
+            tmdb.after_match_items(ids)
         else:
             _need_tmdb()
             tid = int(body.get("tmdb_id") or 0)
             if tid <= 0:
                 raise HTTPException(400, "tmdb_id required")
             tmdb.fetch_details("movie", tid, force=True)
-            tmdb.apply_movie_match([item_id], tid, "manual")
-            tmdb._after_match(it["library_id"], [item_id])
+            tmdb.apply_movie_match(ids, tid, "manual")
+            tmdb.after_match_items(ids)
     except tmdb.TMDBError as e:
         raise HTTPException(502, str(e))
     return {"ok": True, "matched": not body.get("unmatch")}
@@ -1831,16 +2083,33 @@ def refresh_metadata(lib_id: int, u=Depends(auth.require_admin)):
 def hw_state(u=Depends(auth.require_admin)):
     st = hwaccel.state()
     st["streams"] = [t for t in transcode.list_sessions() if t.get("running")]
+    st["max_transcodes"] = transcode.max_transcodes()
     return st
+
+
+def _save_max_transcodes(raw):
+    if raw is None or raw == "":
+        return
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Max transcodes must be a number from 1 to 32")
+    if not 1 <= n <= 32:
+        raise HTTPException(400, "Max transcodes must be a number from 1 to 32")
+    settings.put("max_transcodes", str(n))
 
 
 @app.put("/api/hw")
 def hw_save(body: dict = Body(...), u=Depends(auth.require_admin)):
     try:
-        hwaccel.save((body.get("mode") or "").strip(), (body.get("device") or "").strip())
+        if body.get("mode") is not None or body.get("device") is not None:
+            hwaccel.save((body.get("mode") or "").strip(), (body.get("device") or "").strip())
+        if "max_transcodes" in body:
+            _save_max_transcodes(body.get("max_transcodes"))
     except ValueError as e:
         raise HTTPException(400, str(e))
-    log.info("hardware transcoding set to %s %s by %s", body.get("mode"), body.get("device") or "", u["username"])
+    log.info("hardware transcoding set to %s %s by %s (max_transcodes=%s)",
+             body.get("mode"), body.get("device") or "", u["username"], transcode.max_transcodes())
     return hw_state(u)
 
 
@@ -1886,15 +2155,62 @@ def system_info(u=Depends(auth.require_admin)):
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
+@app.middleware("http")
+async def _asset_cache_headers(request: Request, call_next):
+    """1.7.2: current app.js / style.css may be cached for a year (the URL already has ?v=the version).
+    A request with no version, or an old one, is never stored, so a phone that still asks for
+    app.js?v=1.6 will revalidate and receive this release's file."""
+    resp = await call_next(request)
+    path = request.url.path
+    if path.startswith("/static/") and path.endswith((".js", ".css", ".webmanifest")):
+        if request.query_params.get("v") == __version__:
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+    return resp
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
+NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"}
+
+
 def _index_response():
-    """index.html with every /static/...?v= stamped with the running version, so a browser can never keep
-    old JS/CSS after an update (the page itself is never cached)."""
+    """index.html with every /static/...?v= stamped with the running version, so a browser or the Android
+    WebView can never keep old JS/CSS after an update. The page itself is never stored (no-store), a
+    service worker (1.7.2) fetches this page and the JS/CSS from the network, and a meta tag + MS_VERSION
+    let a client see the running version."""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     html = re.sub(r'(/static/[A-Za-z0-9_./-]+\.(?:js|css))(\?v=[0-9A-Za-z._-]*)?"', r'\1?v=%s"' % __version__, html)
-    return HTMLResponse(html, headers={"Cache-Control": "no-cache, must-revalidate"})
+    boot = ('<meta name="movinite-version" content="%s">\n'
+            '<script>window.MS_VERSION=%r;'
+            'if("serviceWorker"in navigator){navigator.serviceWorker.register("/sw.js?v=%s")}</script>\n'
+            % (__version__, __version__, __version__))
+    html = html.replace("</head>", boot + "</head>", 1)
+    return HTMLResponse(html, headers=dict(NO_STORE))
+
+
+@app.get("/sw.js")
+def service_worker():
+    """1.7.2: a tiny worker that always takes HTML, app.js and style.css from the network, so a phone
+    or the Android WebView cannot keep an old Libraries tab after an update. no-store on this file so
+    the next version is picked up as soon as the page loads."""
+    body = (
+        "const V=%r;\n"
+        "self.addEventListener('install',e=>self.skipWaiting());\n"
+        "self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\n"
+        "self.addEventListener('fetch',e=>{\n"
+        "  const u=new URL(e.request.url);\n"
+        "  if(e.request.mode==='navigate'||u.pathname==='/'||"
+        "/\\/static\\/(app\\.js|style\\.css)$/.test(u.pathname)||u.pathname==='/sw.js'){\n"
+        "    e.respondWith(fetch(e.request,{cache:'no-store'}));\n"
+        "  }\n"
+        "});\n"
+    ) % __version__
+    return Response(body, media_type="text/javascript",
+                    headers={**NO_STORE, "Service-Worker-Allowed": "/"})
 
 
 @app.get("/")
