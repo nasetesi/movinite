@@ -32,9 +32,9 @@ def check(cond, msg):
 
 
 def main():
-    check(__version__ == "1.8", "version is 1.8")
+    check(__version__.startswith("1.8"), "version is 1.8 or a 1.8.x fix (%s)" % __version__)
     ver = (ROOT / "app/version.py").read_text()
-    check('__version__ = "1.8"' in ver, "version.py is 1.8")
+    check(__version__.startswith("1.8") and ('__version__ = "%s"' % __version__) in ver, "version.py matches %s" % __version__)
     ch = (ROOT / "CHANGELOG.md").read_text()
     check(ch.find("## 1.8") < ch.find("## 1.7.9"), "CHANGELOG 1.8 is above 1.7.9")
     check("Idle · GPU" in ch and "yield" in ch.lower() and "used space is not reported" in ch.lower()

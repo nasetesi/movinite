@@ -126,7 +126,8 @@ def main():
     check('option value="playlists">Playlists' in js
           and 'chip("view", "playlists", "Playlists"' in js,
           "Playlists is a Music library view on desktop and phone")
-    check("data-add-pl" in js and "pointerdown" in js[js.index("function bindTrackList"):js.index("function bindTrackList")+800],
+    bt = js[js.index("function bindTrackList"):js.index("async function viewShow")]
+    check("data-add-pl" in js and "pointerdown" in bt and "openPlaylistSheet" in bt,
           "tracks have a + button and a long-press")
     check('method: "PUT", body: { ids }' in js and "data-rm=" in js
           and "id=\"pl-shuffle\"" in js and "id=\"pl-play\"" in js,
