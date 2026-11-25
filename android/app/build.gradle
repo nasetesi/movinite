@@ -25,7 +25,7 @@ android {
         release {
             if (ksProps['storeFile']) {
                 def sf = new File(ksProps['storeFile'])
-                storeFile (sf.isAbsolute() || !ksPropsPath) ? sf : new File(file(ksPropsPath).parentFile, ksProps['storeFile'])
+                storeFile((sf.isAbsolute() || !ksPropsPath) ? sf : new File(file(ksPropsPath).parentFile, ksProps['storeFile']))
                 storePassword ksProps['storePassword']
                 keyAlias ksProps['keyAlias']
                 keyPassword ksProps['keyPassword']
