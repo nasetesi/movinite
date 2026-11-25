@@ -91,7 +91,13 @@ def _ffmpeg():
 def _disk(path):
     try:
         du = shutil.disk_usage(path)
-        return {"total": du.total, "used": du.total - du.free, "free": du.free}
+        # shutil.used is (f_blocks - f_bfree). total-free uses f_bavail and can
+        # disagree. Some CIFS/SMB shares report free ~= total (used not reported).
+        used = int(getattr(du, "used", du.total - du.free) or 0)
+        free = int(du.free)
+        total = int(du.total)
+        used_unknown = bool(total > 0 and used <= 0 and free >= total * 0.99)
+        return {"total": total, "used": used, "free": free, "used_unknown": used_unknown, "path": path}
     except OSError:
         return None
 
@@ -121,7 +127,8 @@ def _sample():
     except (OSError, ValueError):
         up = 0
     ff_n, ff_rss = _ffmpeg()
-    disks = [dict(name="Data (%s)" % config.DATA_DIR, **(_disk(str(config.DATA_DIR)) or {}))]
+    data_path = str(config.DATA_DIR)
+    disks = [dict(name="Data", detail=data_path, **(_disk(data_path) or {}))]
     try:
         from . import shares
         for s in db.rows("SELECT id, name FROM shares ORDER BY id"):
@@ -129,7 +136,7 @@ def _sample():
             if os.path.ismount(mp):
                 d = _disk(mp)
                 if d:
-                    disks.append(dict(name="Share %s" % s["name"], **d))
+                    disks.append(dict(name=s["name"], detail="Network share", **d))
     except Exception:
         pass
     try:
@@ -141,16 +148,40 @@ def _sample():
         streams, gpu = 0, []
     try:
         from . import hwaccel
-        hw = {"streams": len(gpu), "method": gpu[0]["encoder"] if gpu else None,
-              "label": hwaccel.LABEL.get(gpu[0]["encoder"], "") if gpu else "",
-              "name": hwaccel.card_name(gpu[0]["hw_device"]) if gpu else "", "mode": hwaccel.mode()}
+        if gpu:
+            method = gpu[0].get("encoder")
+            dev = gpu[0].get("hw_device")
+        else:
+            method, dev = hwaccel.active()
+        hw = {"streams": len(gpu), "method": method,
+              "label": hwaccel.LABEL.get(method, "") if method else "",
+              "name": hwaccel.card_name(dev) if method else "", "mode": hwaccel.mode()}
     except Exception:
         hw = {"streams": 0, "method": None, "label": "", "name": "", "mode": "off"}
+    bg = {"running": 0, "kind": None, "ffmpeg": 0}
+    try:
+        from . import preload
+        bg = dict(preload.jobs() or {})
+    except Exception:
+        pass
+    live_tc = 0
+    try:
+        for sess in list(getattr(transcode, "_sessions", {}).values()):
+            proc = getattr(sess, "proc", None)
+            if proc is not None and proc.poll() is None:
+                live_tc += 1
+    except Exception:
+        live_tc = 0
+    bg["ffmpeg"] = max(0, int(ff_n or 0) - live_tc)
+    bg["running"] = max(int(bg.get("running") or 0), 1 if bg["ffmpeg"] else 0)
+    if bg["ffmpeg"] and not bg.get("kind"):
+        bg["kind"] = "cache"
     snap = {"at": time.time(), "cpu": cpu, "cores": cores, "ncpu": len(cores) or os.cpu_count() or 1,
             "load": la, "mem": {"total": total, "used": total - avail, "available": avail},
             "swap": {"total": m.get("SwapTotal", 0), "used": m.get("SwapTotal", 0) - m.get("SwapFree", 0)},
             "disks": [d for d in disks if d.get("total")], "uptime_s": int(up),
-            "app_rss": _rss("self"), "ffmpeg": {"count": ff_n, "rss": ff_rss}, "streams": streams, "hw": hw}
+            "app_rss": _rss("self"), "ffmpeg": {"count": ff_n, "rss": ff_rss},
+            "streams": streams, "hw": hw, "background": bg}
     _hist.append([round(snap["at"]), cpu or 0, round(100.0 * snap["mem"]["used"] / total, 1) if total else 0])
     return snap
 

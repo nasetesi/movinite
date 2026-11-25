@@ -34,9 +34,10 @@ def film(w=1920, h=1080, codec="h264", **extra):
 
 
 def main():
-    check(__version__ == "1.7.9", "version is 1.7.9")
+    vt = tuple(int(x) for x in __version__.split("."))
+    check(vt >= (1, 7, 9), "version is 1.7.9 or later (%s)" % __version__)
     ver = (HERE.parent / "app/version.py").read_text()
-    check('__version__ = "1.7.9"' in ver, "version.py is 1.7.9")
+    check("__version__" in ver, "version.py defines __version__")
     ch = (HERE.parent / "CHANGELOG.md").read_text()
     check("## 1.7.9" in ch and "2-second" in ch and "Opening-clip" in ch, "CHANGELOG has a 1.7.9 entry")
     js = (HERE.parent / "app/static/app.js").read_text()

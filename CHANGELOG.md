@@ -1,7 +1,13 @@
 # Changelog
 
-The full server history (1.0 to 1.7.9) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
+The full server history (1.0 to 1.8) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
+
+## 1.8 -- 2026-11-25
+
+Server 1.7.3 through 1.8 were not published as separate GitHub releases. This update brings the repository to **server 1.8**. The Android app is unchanged. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.8 — themed server status, and background jobs that yield to play:** the header shows compact CPU and RAM icons with percentages (the full RAM size is in the tooltip and the dropdown). The status panel uses the purple theme, with ring gauges, wrapping disk names, a clear note when a share does not report used space, "Idle · GPU" when the card is ready, and a separate line for background cache work. Pressing play immediately stops an in-flight subtitle extract, remux probe, or opening-clip prefetch so it no longer delays the first picture.
 
 ## 1.7.9 -- 2026-11-25
 

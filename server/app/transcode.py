@@ -473,6 +473,11 @@ class Session:
         self.stop()
         if getattr(self, "destroyed", False):
             return
+        try:
+            from . import preload
+            preload.yield_to_playback()
+        except Exception:
+            pass
         if self.profile == "remux":
             # a partly written segment from the killed run must not be served
             for f in self.dir.glob("seg*.ts"):
@@ -768,6 +773,11 @@ def kickoff(session, start_seg=0):
     """1.7.9: start ffmpeg at start_seg (after copying any opening-clip cache) without waiting for output."""
     if session is None or session.failed or getattr(session, "destroyed", False):
         return
+    try:
+        from . import preload
+        preload.yield_to_playback()
+    except Exception:
+        pass
     start_seg = max(0, min(int(start_seg or 0), max(0, session.nseg - 1)))
     try:
         from . import preload
@@ -897,15 +907,19 @@ def probe_bounds(path, duration, start_time=0.0):
     for off in range(0, n, chunk):
         intervals = ",".join("%.3f%%+#1" % ((off + i) * SEG) for i in range(min(chunk, n - off)))
         try:
-            out = subprocess.run([config.FFPROBE, "-v", "error", "-select_streams", "v:0",
-                                  "-read_intervals", intervals, "-show_entries", "packet=pts_time,flags",
-                                  "-of", "csv=p=0", path],
-                                 capture_output=True, timeout=60, check=False)
-        except (subprocess.TimeoutExpired, OSError):
+            from . import preload
+            if preload.busy():
+                break
+            code, stdout, _err = preload.run_cmd(
+                [config.FFPROBE, "-v", "error", "-select_streams", "v:0",
+                 "-read_intervals", intervals, "-show_entries", "packet=pts_time,flags",
+                 "-of", "csv=p=0", path],
+                timeout=60, kind="remux")
+        except (subprocess.TimeoutExpired, OSError, Exception):
             break
-        if out.returncode != 0:
+        if code != 0:
             break
-        for line in out.stdout.decode(errors="replace").splitlines():
+        for line in (stdout or b"").decode(errors="replace").splitlines():
             parts = line.strip().split(",")
             if len(parts) < 2 or parts[0] in ("", "N/A"):
                 continue
@@ -957,10 +971,13 @@ def remux_bounds(item, probe=False):
         return None
     start_time = 0.0
     try:
-        import subprocess
-        o = subprocess.run([config.FFPROBE, "-v", "error", "-show_entries", "format=start_time", "-of", "csv=p=0",
-                            item["path"]], capture_output=True, timeout=30)
-        start_time = float(o.stdout.decode().strip() or 0)
+        from . import preload
+        if preload.busy():
+            return None
+        code, stdout, _err = preload.run_cmd(
+            [config.FFPROBE, "-v", "error", "-show_entries", "format=start_time", "-of", "csv=p=0",
+             item["path"]], timeout=30, kind="remux")
+        start_time = float((stdout or b"").decode().strip() or 0) if code == 0 else 0.0
     except (ValueError, OSError, Exception):
         start_time = 0.0
     bounds = probe_bounds(item["path"], item["duration"] or 0, start_time)
