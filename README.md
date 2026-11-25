@@ -12,11 +12,12 @@ On servers with a supported video card, transcoding can run on the GPU.
 |---|---|
 | ![Home](docs/screenshots/web-home.png) | ![Details](docs/screenshots/web-details.png) |
 | **Player with 2K / 4K quality** | **Add a library from an existing share** |
-| ![Player](docs/screenshots/web-player-quality-4k.png) | ![Add library](docs/screenshots/web-add-library-existing-connection.png) |
+| ![Player quality menu with 4K options, screen cap turned off](docs/screenshots/web-player-quality-4k.png) | ![Add library](docs/screenshots/web-add-library-existing-connection.png) |
 | **Now playing** | **Music equalizer** |
 | ![Now playing](docs/screenshots/web-nowplaying.png) | ![Equalizer](docs/screenshots/web-equalizer.png) |
 | **Add to a playlist** | **Phone libraries** |
 | ![Playlists](docs/screenshots/web-playlists.png) | ![Phone libraries](docs/screenshots/phone-libraries.png) |
+| ![Quality auto-capped to 1080p on a 1920×1200 tablet](docs/screenshots/tablet-player-quality-capped-1080p.png) | ![Settings: cap quality to this screen](docs/screenshots/web-settings-quality-cap.png) |
 
 <p>
 <img src="docs/screenshots/phone-home.png" width="200" alt="Phone home">
@@ -29,7 +30,7 @@ On servers with a supported video card, transcoding can run on the GPU.
 <img src="docs/screenshots/android-03-sign-in.png" width="200" alt="Android sign in">
 </p>
 
-*The screenshots use generated test media and placeholder posters.*
+*The screenshots use generated test media and placeholder posters. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p.*
 
 ## Features
 

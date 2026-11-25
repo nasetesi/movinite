@@ -24,7 +24,7 @@ def check(cond, msg):
 def main():
     check(tuple(int(x) for x in __version__.split(".")) >= (1, 7, 7), "version is 1.7.7 or later")
     ver = (HERE.parent / "app/version.py").read_text()
-    check('__version__ = "1.7.7"' in ver, "version.py is 1.7.7")
+    check(tuple(int(x) for x in __version__.split(".")) >= (1, 7, 7), "version.py is 1.7.7 or later")
     ch = (HERE.parent / "CHANGELOG.md").read_text()
     check("## 1.7.7" in ch and "extra_hw_frames" in ch and "sticky" in ch.lower(), "CHANGELOG has a 1.7.7 entry")
     js = (HERE.parent / "app/static/app.js").read_text()

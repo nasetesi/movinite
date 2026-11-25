@@ -98,6 +98,89 @@ def fit_box(w, h, bw, bh):
     return max(2, int(w * sc) // 2 * 2), max(2, int(h * sc) // 2 * 2)
 
 
+
+# 1.7.8: cap quality to the device's screen (and decoder, when the player reports one).
+# Longer side of each profile's 16:9 box. A 1920x1200 tablet caps at 1080p (1920), not 1440p (2560).
+PROFILE_LONG = {"360p": 640, "480p": 854, "720p": 1280, "1080p": 1920, "1440p": 2560, "2160p": 3840}
+QUALITY_LADDER = ("360p", "480p", "720p", "1080p", "1440p", "2160p")
+
+
+def profile_rank(base):
+    try:
+        return QUALITY_LADDER.index(base)
+    except ValueError:
+        return -1
+
+
+def device_cap_base(disp_px=0, dec_px=0):
+    """Highest profile whose box longer side fits the tightest of the display and decoder limits.
+
+    disp_px / dec_px are 0 or missing when unknown (no cap from that source).
+    A few pixels of slack cover odd sizes like 1918.
+    """
+    limit = 0
+    for v in (disp_px, dec_px):
+        try:
+            v = int(v or 0)
+        except (TypeError, ValueError):
+            v = 0
+        if v > 0:
+            limit = v if limit <= 0 else min(limit, v)
+    if limit <= 0:
+        return None
+    cap = "360p"
+    for p in QUALITY_LADDER:
+        if PROFILE_LONG[p] <= limit + 16:
+            cap = p
+        else:
+            break
+    return cap
+
+
+def source_long_px(item):
+    return max(int(item.get("width") or 0), int(item.get("height") or 0))
+
+
+def source_fits_cap(item, cap_base):
+    """True when the file's longer side fits the cap profile's box (or there is no cap)."""
+    if not cap_base or cap_base not in PROFILE_LONG:
+        return True
+    long = source_long_px(item)
+    if long <= 0:
+        return True
+    return long <= PROFILE_LONG[cap_base] + 16
+
+
+def parse_cap_args(disp=0, dec=0, nocap=0):
+    def n(v):
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError):
+            return 0
+    return n(disp), n(dec), bool(n(nocap))
+
+
+def clamp_profile(profile, item, disp_px=0, dec_px=0, nocap=False):
+    """Return (effective_profile, cap_base or None, changed).
+
+    remux/direct are refused (effective_profile is None) when the source is larger than the cap.
+    """
+    cap = None if nocap else device_cap_base(disp_px, dec_px)
+    if not cap:
+        return profile, None, False
+    if profile in ("remux", "direct"):
+        if source_fits_cap(item, cap):
+            return profile, cap, False
+        return None, cap, True
+    if profile == "audio" or not valid_profile(profile):
+        return profile, cap, False
+    base, vc = split_profile(profile)
+    if profile_rank(base) <= profile_rank(cap):
+        return profile, cap, False
+    new = cap + (".hevc" if vc == "hevc" and cap in HIRES else "")
+    return new, cap, True
+
+
 def hires_ok(item, base):
     """Is the source at least this big (by width or height)?  A 3840x1600 film counts as 4K."""
     w, h = item.get("width") or 0, item.get("height") or 0
@@ -430,8 +513,26 @@ class Session:
         return self.proc is not None and self.proc.poll() is None
 
     def highest_done(self):
+        """Highest contiguous finished segment of the current run.
+
+        housekeep deletes segments older than last_req-40, so a walk from
+        start_seg would stop immediately and return -1. That both disabled
+        AHEAD_PAUSE (ffmpeg kept running far ahead) and could restart ffmpeg
+        (live 4K test, 2026-11-25 ~8:50 AM MST).
+        """
+        nums = []
+        for f in self.dir.glob("seg*." + self.ext):
+            try:
+                nums.append(int(f.stem[3:]))
+            except ValueError:
+                continue
+        if not nums:
+            return -1
+        cand = [n for n in nums if n >= self.start_seg]
+        if not cand:
+            return -1
+        n = min(cand)
         hi = -1
-        n = self.start_seg
         while (self.dir / ("seg%d.%s" % (n, self.ext))).exists():
             hi = n
             n += 1
@@ -461,7 +562,8 @@ class Session:
         self.last_req = n
         with self.lock:
             if self._ready(n):
-                self._resume_if_needed()
+                # A ready segment must not SIGCONT a paused ffmpeg: players re-request
+                # already-buffered segments often enough to cancel AHEAD_PAUSE.
                 return self.seg_path(n)
             hi = self.highest_done()
             if not self.running():
@@ -528,9 +630,11 @@ class Session:
             if not self.paused and hi - self.last_req > AHEAD_PAUSE:
                 os.killpg(self.proc.pid, signal.SIGSTOP)
                 self.paused = True
+                log.info("transcode %s pause (ahead %d segs, last_req %d)", self.sid, hi - self.last_req, self.last_req)
             elif self.paused and hi - self.last_req < AHEAD_RESUME:
                 os.killpg(self.proc.pid, signal.SIGCONT)
                 self.paused = False
+                log.info("transcode %s resume (ahead %d segs, last_req %d)", self.sid, hi - self.last_req, self.last_req)
         except Exception:
             pass
         for f in self.dir.glob("seg*." + self.ext):
