@@ -265,13 +265,29 @@ function renderSysstat() {
   renderPlayerStat();
 }
 // 1.4.11: the same numbers, see-through, over the video (no extra requests: reuses the top-bar poll above)
+// 1.5.4: plus dropped / total video frames from this browser (getVideoPlaybackQuality), shown to everyone while the
+// controls are up -- the quickest way to tell a decoder or display that can't keep up from a slow network or server
+function frameStat() {
+  if (!P || !video.getVideoPlaybackQuality) return "";
+  let q; try { q = video.getVideoPlaybackQuality(); } catch (e) { return ""; }
+  const tot = (q && q.totalVideoFrames) || 0; if (!tot) return "";
+  const dr = q.droppedVideoFrames || 0, pct = 100 * dr / tot;
+  return `<span class="k" title="Video frames this browser dropped / showed since the stream started">Dropped</span> <b class="pl-fr ${pct >= 5 ? "bad" : pct >= 1 ? "warn" : ""}">${nf(dr)} / ${nf(tot)}</b>`;
+}
+// 1.5.4: refresh the frame counter once a second while the controls (and so the pill) are showing
+setInterval(() => { if (P && document.getElementById("player") && document.getElementById("player").classList.contains("ov-on")) renderPlayerStat(); }, 1000);
 function renderPlayerStat() {
   const el = document.getElementById("pl-ss"); if (!el) return;
-  const d = SYS.d;
-  if (!d || !ME || !ME.show_status || !P) { el.classList.add("hidden"); return; }
-  const memPct = d.mem.total ? 100 * d.mem.used / d.mem.total : 0;
-  el.innerHTML = `<span class="k">CPU</span> <b class="${sysLevel(d.cpu, 60, 85)}">${cpuPct(d)}</b><span class="sep">&middot;</span><span class="k">RAM</span> <b class="${sysLevel(memPct, 75, 90)}">${fmtGB(d.mem.used)}/${fmtGB(d.mem.total, 0)} GB</b>${d.hw && d.hw.streams ? `<span class="sep">&middot;</span><span class="hw-badge">GPU</span>` : ""}`;
-  el.title = `Server CPU ${cpuPct(d)}, RAM ${fmtGB(d.mem.used)} of ${fmtGB(d.mem.total)} GB`;
+  if (!P) { el.classList.add("hidden"); return; }
+  const d = SYS.d, parts = [];
+  if (d && ME && ME.show_status && P) {
+    const memPct = d.mem.total ? 100 * d.mem.used / d.mem.total : 0;
+    parts.push(`<span class="k">CPU</span> <b class="${sysLevel(d.cpu, 60, 85)}">${cpuPct(d)}</b><span class="sep">&middot;</span><span class="k">RAM</span> <b class="${sysLevel(memPct, 75, 90)}">${fmtGB(d.mem.used)}/${fmtGB(d.mem.total, 0)} GB</b>${d.hw && d.hw.streams ? `<span class="sep">&middot;</span><span class="hw-badge">GPU</span>` : ""}`);
+    el.title = `Server CPU ${cpuPct(d)}, RAM ${fmtGB(d.mem.used)} of ${fmtGB(d.mem.total)} GB`;
+  } else el.title = "";
+  const fr = frameStat(); if (fr) parts.push(fr);
+  if (!parts.length) { el.classList.add("hidden"); return; }
+  el.innerHTML = parts.join(`<span class="sep">&middot;</span>`);
   el.classList.remove("hidden");
 }
 function renderSysPanel() {
@@ -341,11 +357,31 @@ $("#logout").onclick = async (e) => { e.preventDefault(); await api("/api/logout
 $("#menubtn").onclick = () => $("#side").classList.toggle("open");
 $("#activity").onclick = () => { location.hash = ME && ME.is_admin ? "#/settings/scans" : "#/settings/libraries"; };
 
-async function refreshLibs() {
-  LIBS = await api("/api/libraries");
-  $("#navlibs").innerHTML = LIBS.length ? LIBS.map(l => `<a href="#/library/${l.id}" data-nav="lib${l.id}">${KIND_ICON[l.kind] || ""} ${esc(l.name)}</a>`).join("")
+// 1.6: a dot after each network-share library: green online, amber slow / not answering, red offline, grey checking.
+// Local-folder libraries get no dot.  The server checks the shares every ~45 s (cached; never remounts anything).
+function agoShort(s) { return s == null ? "" : s < 60 ? s + "s ago" : s < 3600 ? Math.round(s / 60) + " min ago" : Math.round(s / 3600) + " h ago"; }
+function shareDot(l) {
+  const h = l.health; if (!h) return "";
+  const cls = { online: "on", slow: "warn", stuck: "warn", offline: "off" }[h.state] || "chk";
+  const when = h.age_s != null ? " · checked " + agoShort(h.age_s) : "";
+  const t = h.state === "online" ? "Share online" + when
+    : h.state === "offline" ? "Share offline: " + (h.reason || "unreachable") + when
+    : h.state === "checking" ? "Checking the share…"
+    : "Share " + (h.state === "slow" ? "slow" : "not responding") + ": " + (h.reason || "") + when;
+  return `<span class="ldot ${cls}" role="img" title="${esc(t)}" aria-label="${esc(t)}"></span>`;
+}
+function navLibsHtml() {
+  return LIBS.length ? LIBS.map(l => `<a href="#/library/${l.id}" data-nav="lib${l.id}">${KIND_ICON[l.kind] || ""} ${esc(l.name)}${shareDot(l)}</a>`).join("")
     : `<div class="muted" style="padding:4px 10px;font-size:13px">No libraries yet</div>`;
 }
+async function refreshLibs() {
+  LIBS = await api("/api/libraries");
+  const nav = $("#navlibs"), html = navLibsHtml();
+  if (nav.innerHTML !== html) { const on = nav.querySelector("a.active"); nav.innerHTML = html; if (on) { const a = nav.querySelector(`[data-nav="${on.dataset.nav}"]`); if (a) a.classList.add("active"); } }
+  $$(".lib-li[data-lib]").forEach(a => { const l = LIBS.find(x => x.id === +a.dataset.lib); const d = a.querySelector(".ldot-slot"); if (l && d) d.innerHTML = shareDot(l); });
+}
+// keep the dots fresh while the app is open (every 30 s, only when the tab is visible and someone is signed in)
+setInterval(() => { if (ME && !document.hidden && LIBS.some(l => l.share_id)) refreshLibs().catch(() => {}); }, 30000);
 
 // ---------------------------------------------------------------- router
 window.addEventListener("hashchange", route);
@@ -371,7 +407,7 @@ const MOB = (() => {
     return "";
   }
   function tab() { const t = tabFor(); $$("#tabbar a").forEach(a => { const on = a.dataset.tab === t; a.classList.toggle("on", on); if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); }); }
-  function sound() { const on = SFX.get().on; $("#acct-sound").textContent = "Interface sounds: " + (on ? "on" : "off"); }
+  function sound() { const on = SFX.get().on; $("#acct-sound").textContent = "Poster sounds: " + (on ? "on" : "off"); }
   function open(v) {
     menu.classList.toggle("hidden", !v); av.setAttribute("aria-expanded", v ? "true" : "false");
     if (v) { sound(); const f = menu.querySelector("a,button"); if (f) f.focus({ preventScroll: true }); }
@@ -498,7 +534,7 @@ async function route() {
       case "search": setActive(""); await viewSearch(parts.slice(1).join("/")); break;
       case "libraries": setActive(""); await viewLibraries(); break;
       case "mylist": setActive(""); await viewMyList(); break;
-      case "settings": setActive("settings"); await viewSettings(parts[1] || "libraries"); break;
+      case "settings": setActive("settings"); await viewSettings(parts[1] || ""); break;
       default: setActive("home"); await viewHome();
     }
   } catch (e) {
@@ -618,7 +654,7 @@ const SFX = (() => {
   function drawToggle() {
     const b = document.getElementById("sndbtn"); if (!b) return;
     b.setAttribute("aria-pressed", S.on ? "true" : "false");
-    b.title = S.on ? "Interface sounds on (click to mute)" : "Interface sounds off (click to turn on)";
+    b.title = S.on ? "Poster sounds on (click to mute)" : "Poster sounds off (click to turn on)";
     b.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9H4z"/>${S.on
       ? `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 9.2a4 4 0 0 1 0 5.6M18.6 6.6a7.6 7.6 0 0 1 0 10.8"/>`
       : `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>`}</svg>`;
@@ -988,6 +1024,8 @@ async function viewHome(live) {
         <div class="strip hs">${G.items.map(i => cardItem(i)).join("")}</div>`;
     }
   }
+  // 1.5.5: the home page shows Movies and TV Shows only; say where everything else is when that leaves it empty
+  if (!html) html = `<div class="empty">Movies and TV shows appear here. Your other libraries are under <a href="#/libraries">Libraries</a>.</div>`;
   if (live) {
     if (viewHome._last === html) return;
     const xs = $$(".strip", v).map(e => e.scrollLeft), top = v.scrollTop;
@@ -1135,6 +1173,7 @@ async function viewShow(libId, show) {
     ${metaChips(tm)}${tm.overview ? `<p class="overview">${esc(tm.overview)}</p>` : ""}
     <div class="actions"><button class="btn" id="playnext">&#9654; ${d.next.position ? "Resume" : "Play"} ${epCode(d.next)}</button>
       ${ME.is_admin ? `<button class="btn ghost" id="fixmatch">Fix match</button>` : ""}
+      ${ME.is_admin ? `<button class="btn ghost" id="showart" title="Save posters, season posters, fanart and episode thumbnails into the show's folder">Artwork</button>` : ""}
       ${tm.url ? `<a class="btn ghost" href="${esc(tm.url)}" target="_blank" rel="noopener">TMDB &#8599;</a>` : ""}</div>
     ${tm.id && tm.title && tm.title !== d.show ? `<div class="help" style="margin-bottom:6px">Folder name: ${esc(d.show)}</div>` : ""}
     <div class="tabs">${d.seasons.map(s => `<button data-season="${s.season}" class="${s.season === season.season ? "on" : ""}">${s.season === 0 ? "Specials" : "Season " + s.season}</button>`).join("")}</div>
@@ -1150,6 +1189,11 @@ async function viewShow(libId, show) {
     fixMatchDialog("tv", d.show.replace(/\s*\((19|20)\d\d\)\s*$/, ""), null, (b) => api("/api/show/match", { method: "POST", body: { library_id: libId, show, ...b } }));
   };
   $$("[data-season]").forEach(b => b.onclick = () => { sessionStorage.setItem("season:" + libId + show, b.dataset.season); route._keepScroll = true; route(); });
+  // 1.5.5: artwork for TV shows (same dialog as the library's Artwork button, plus "Write for this show")
+  if ($("#showart")) $("#showart").onclick = async () => {
+    try { const libs = await api("/api/libraries"); const l = libs.find(x => x.id === +libId); if (l) artworkDialog(l, { show }); }
+    catch (e) { toast(e.message, true); }
+  };
 }
 
 async function viewAlbum(libId, artist, album) {
@@ -1351,8 +1395,8 @@ async function viewLibraries() {
   const sub = { movies: "Movies", tv: "TV shows", music: "Music", other: "Videos" };
   let html = `<h2 class="pg-h">Libraries</h2>`;
   if (!LIBS.length) html += `<div class="empty">No libraries yet.${ME.is_admin ? ` <a href="#/settings/libraries">Add one in Settings</a>` : ""}</div>`;
-  else html += `<div class="lib-list">${LIBS.map(l => `<a class="lib-li" href="#/library/${l.id}"><span class="lib-ic" aria-hidden="true">${KIND_ICON[l.kind] || "&#127902;"}</span>
-      <span class="lib-tx"><b>${esc(l.name)}</b><span class="muted">${sub[l.kind] || esc(l.kind)} · ${nf(l.item_count || 0)} items</span></span><span class="chev" aria-hidden="true">&rsaquo;</span></a>
+  else html += `<div class="lib-list">${LIBS.map(l => `<a class="lib-li" data-lib="${l.id}" href="#/library/${l.id}"><span class="lib-ic" aria-hidden="true">${KIND_ICON[l.kind] || "&#127902;"}</span>
+      <span class="lib-tx"><b>${esc(l.name)}<span class="ldot-slot">${shareDot(l)}</span></b><span class="muted">${sub[l.kind] || esc(l.kind)} · ${nf(l.item_count || 0)} items${l.health && l.health.state === "offline" ? ` · <span class="ldot-txt off">share offline</span>` : l.health && (l.health.state === "stuck" || l.health.state === "slow") ? ` · <span class="ldot-txt warn">share ${l.health.state === "slow" ? "slow" : "not responding"}</span>` : ""}</span></span><span class="chev" aria-hidden="true">&rsaquo;</span></a>
       ${l.kind === "movies" ? `<div class="lib-subs"><a href="#/library/${l.id}/collections">Collections</a><a href="#/library/${l.id}/smart/recommended">Recommended</a><a href="#/library/${l.id}/smart/added">Recently added</a><a href="#/library/${l.id}/smart/top">Top movies</a></div>` : ""}`).join("")}</div>`;
   $("#view").innerHTML = html;
 }
@@ -1369,25 +1413,29 @@ async function viewMyList() {
 
 // ---------------------------------------------------------------- settings
 async function viewSettings(tab) {
-  // 1.4.9: non-admins only ever see My account, so don't offer a Libraries tab that just lands there
-  const tabs = ME.is_admin ? [["libraries", "Libraries"], ["account", "My account"]] : [["account", "My account"]];
-  if (ME.is_admin) tabs.splice(1, 0, ["scans", "Scan activity"], ["metadata", "Metadata"]), tabs.push(["users", "Users"], ["transcoding", "Transcoding"], ["system", "System"]);
-  if (!ME.is_admin && tab !== "account") tab = "account";
+  // 1.4.9: non-admins only see their own tabs.  1.5.5: Poster Sounds has its own tab (for everyone).
+  // 1.6: fixed left-to-right order; viewers get the same relative order; an unknown / hidden tab opens the first one
+  const ALL_TABS = [["libraries", "Libraries", 1], ["scans", "Scan activity", 1], ["sounds", "Poster Sounds", 0], ["metadata", "Metadata", 1],
+    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["account", "My account", 0], ["system", "System", 1]];
+  const tabs = ALL_TABS.filter(t => ME.is_admin || !t[2]).map(t => [t[0], t[1]]);
+  if (!tabs.some(t => t[0] === tab)) tab = tabs[0][0];
   let html = `<h2>Settings</h2><div class="tabs set-tabs" role="tablist" aria-label="Settings sections">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? "on" : ""}" data-href="#/settings/${k}">${n}</button>`).join("")}</div>`;
   const v = $("#view");
   if (tab === "libraries") {
     await refreshLibs();
     html += `<div class="panel"><div class="row-head"><h3 style="margin:0">Libraries</h3>${ME.is_admin ? `<button class="btn" id="addlib">+ Add library</button>` : ""}</div>
-      ${LIBS.length ? `<div class="tbl-wrap"><table class="lib-tbl"><tr><th>Name</th><th>Type</th><th>Source</th><th>Items</th><th>Last scan</th><th>Auto scan</th><th></th></tr>
-      ${LIBS.map(l => {
+      ${LIBS.length ? `<div class="tbl-wrap"><table class="lib-tbl"><tr>${ME.is_admin && LIBS.length > 1 ? `<th class="ord-h" title="Drag a row, or use the arrows, to change the order libraries are listed in everywhere">Order</th>` : ""}<th>Name</th><th>Type</th><th>Source</th><th>Items</th><th>Last scan</th><th>Auto scan</th><th></th></tr>
+      ${LIBS.map((l, li) => {
         const sc = l.scan || {}; const busy = sc.state === "scanning" || sc.state === "queued";
         const src = l.share ? `<div class="src-share"><span class="src-kind">${l.share.kind.toUpperCase()}</span> <span class="path">${wbrPath(l.share.remote)}</span> ${l.share.mounted ? `<span class="chip ok pill">mounted &middot; ${l.share.mount_mode === "rw" ? "writable" : "read-only"}</span>` : `<span class="chip bad pill">not mounted</span>`}</div>${l.share.last_error ? `<div class="help" style="color:var(--bad)">${esc(l.share.last_error)}</div>` : ""}` : esc(l.path) + (l.online ? "" : ` <span class="chip bad">offline</span>`);
-        return `<tr><td><a href="#/library/${l.id}"><b>${esc(l.name)}</b></a></td><td>${l.kind}</td><td class="src">${src}<div class="help path">${wbrPath(l.path)}</div></td><td>${l.item_count}</td>
+        const ord = ME.is_admin && LIBS.length > 1 ? `<td class="ord"><span class="drag" title="Drag to move" aria-hidden="true">&#8942;&#8942;</span>
+          <button class="iconbtn small" data-up="${l.id}" title="Move up" aria-label="Move ${esc(l.name)} up" ${li === 0 ? "disabled" : ""}>&#9650;</button><button class="iconbtn small" data-down="${l.id}" title="Move down" aria-label="Move ${esc(l.name)} down" ${li === LIBS.length - 1 ? "disabled" : ""}>&#9660;</button></td>` : "";
+        return `<tr data-lib="${l.id}"${ord ? ` draggable="true"` : ""}>${ord}<td><a href="#/library/${l.id}"><b>${esc(l.name)}</b></a></td><td>${l.kind}</td><td class="src">${src}<div class="help path">${wbrPath(l.path)}</div></td><td>${l.item_count}</td>
         <td>${busy ? `scanning ${sc.done || 0}/${sc.total || "?"}<div class="prog"><div style="width:${sc.total ? 100 * sc.done / sc.total : 5}%"></div></div>` : ago(l.last_scan) + `<div class="help">${esc(l.last_scan_result || "")}</div>`}</td>
         <td>${intervalName(l.scan_interval_h)}${l.next_scan && !busy ? `<div class="help">next ${inTime(l.next_scan)}</div>` : ""}</td>
         <td>${ME.is_admin ? `<div class="row-actions"><button class="btn ghost small" data-scan="${l.id}">Scan</button><button class="btn ghost small" data-full="${l.id}" title="Re-probe every file and regenerate thumbnails">Full rescan</button>
           <span class="sep"></span>${l.share ? `<button class="btn ghost small" data-remount="${l.share.id}">Remount</button><button class="btn ghost small" data-editshare="${l.share.id}">Credentials</button>` : ""}
-          ${l.kind === "movies" ? `<button class="btn ghost small" data-artwork="${l.id}" title="Save posters / fanart / .nfo into the movie folders">Artwork${l.art_write ? " &#10003;" : ""}</button>` : ""}
+          ${l.kind === "movies" || l.kind === "tv" ? `<button class="btn ghost small" data-artwork="${l.id}" title="Save posters / fanart / .nfo into the ${l.kind === "tv" ? "show" : "movie"} folders">Artwork${l.art_write ? " &#10003;" : ""}</button>` : ""}
           <button class="btn ghost small" data-editlib="${l.id}">Edit</button><button class="btn danger small" data-dellib="${l.id}">Remove</button></div>` : ""}</td></tr>`; }).join("")}</table></div>` : `<div class="empty">No libraries yet.</div>`}</div>`;
     v.innerHTML = html;
     if ($("#addlib")) $("#addlib").onclick = () => addLibraryDialog();
@@ -1402,7 +1450,35 @@ async function viewSettings(tab) {
       if (!confirm(`Remove library "${l.name}"? Your media files are NOT deleted; only the library entry${l.share ? " and the share mount" : ""}.`)) return;
       await api("/api/libraries/" + l.id, { method: "DELETE" }); toast("Library removed"); await refreshLibs(); route();
     });
-    route._live = { every: 3000, fn: () => { if (!$(".modal:not(.hidden)")) { route._keepScroll = true; route(); } } };
+    // 1.6: library order -- drag a row (desktop) or the up / down arrows (touch, phone); one order for everyone
+    const saveOrder = async (ids) => {
+      try { LIBS = await api("/api/libraries/order", { method: "PUT", body: { ids } }); await refreshLibs(); toast("Library order saved"); }
+      catch (e) { toast(e.message, true); }
+      route._keepScroll = true; route();
+    };
+    const ids0 = () => LIBS.map(l => l.id);
+    const move = (id, d) => { const ids = ids0(), i = ids.indexOf(id), j = i + d; if (i < 0 || j < 0 || j >= ids.length) return; [ids[i], ids[j]] = [ids[j], ids[i]]; saveOrder(ids); };
+    $$("[data-up]").forEach(b => b.onclick = () => move(+b.dataset.up, -1));
+    $$("[data-down]").forEach(b => b.onclick = () => move(+b.dataset.down, 1));
+    let dragId = null;
+    $$(".lib-tbl tr[draggable]").forEach(tr => {
+      tr.addEventListener("dragstart", (e) => { dragId = +tr.dataset.lib; viewSettings._drag = true; tr.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(dragId)); } catch (_) {} });
+      tr.addEventListener("dragend", () => { viewSettings._drag = false; tr.classList.remove("dragging"); $$(".lib-tbl tr.drop-before, .lib-tbl tr.drop-after").forEach(x => x.classList.remove("drop-before", "drop-after")); });
+      tr.addEventListener("dragover", (e) => {
+        if (dragId == null) return; e.preventDefault();
+        const r = tr.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+        $$(".lib-tbl tr.drop-before, .lib-tbl tr.drop-after").forEach(x => x.classList.remove("drop-before", "drop-after"));
+        tr.classList.add(after ? "drop-after" : "drop-before");
+      });
+      tr.addEventListener("drop", (e) => {
+        e.preventDefault(); const target = +tr.dataset.lib, after = tr.classList.contains("drop-after");
+        viewSettings._drag = false;
+        if (dragId == null || dragId === target) { dragId = null; return; }
+        const ids = ids0().filter(i => i !== dragId); let k = ids.indexOf(target); if (after) k++;
+        ids.splice(k, 0, dragId); dragId = null; saveOrder(ids);
+      });
+    });
+    route._live = { every: 3000, fn: () => { if (!$(".modal:not(.hidden)") && !viewSettings._drag) { route._keepScroll = true; route(); } } };
   } else if (tab === "scans") {
     v.innerHTML = html + `<div id="scans-panel"><div class="muted">Loading...</div></div>`;
     const tok = route._token;
@@ -1487,10 +1563,19 @@ async function viewSettings(tab) {
       <label>Current password</label><input type="password" id="cp"><label>New password</label><input type="password" id="np" autocomplete="new-password">
       <label>Repeat</label><input type="password" id="np2" autocomplete="new-password"></div><div class="err" id="cperr"></div>
       <button class="btn" id="cpsave">Change password</button></div>`;
+    html += `<p class="help" style="max-width:560px">Sounds for posters and buttons are in <a style="color:var(--acc-text)" href="#/settings/sounds">Poster Sounds</a>.</p>`;
+    v.innerHTML = html;
+    $("#cpsave").onclick = async () => {
+      if ($("#np").value !== $("#np2").value) { $("#cperr").textContent = "Passwords do not match"; return; }
+      try { await api("/api/me/password", { method: "POST", body: { current_password: $("#cp").value, new_password: $("#np").value } }); toast("Password changed"); $("#cperr").textContent = ""; ["#cp", "#np", "#np2"].forEach(s => $(s).value = ""); }
+      catch (e) { $("#cperr").textContent = e.message; }
+    };
+  } else if (tab === "sounds") {
     const so = SFX.get();
     const swr = (id, on, title, hint) => `<label class="aw-row" for="${id}"><span class="sw"><input type="checkbox" id="${id}" ${on ? "checked" : ""}><i></i></span><span class="aw-txt"><b>${title}</b><span class="aw-hint">${hint}</span></span></label>`;
-    html += `<div class="panel snd-panel" style="max-width:560px"><h3 style="margin-top:0">Sounds</h3>
-      ${swr("snd-on", so.on, "Interface sounds", "Short sounds when you move over posters and open a movie. Never while a video is playing. Also switched with the speaker button in the top bar.")}
+    html += `<div class="panel snd-panel" style="max-width:560px"><h3 style="margin-top:0">Poster Sounds</h3>
+      <p class="help" style="margin-top:0">Little sounds as you browse: a tick when you move onto a poster, a chime when you open a movie or show, a rising tone for Play and a swish for the row arrows. Made in the browser; never while a video plays.</p>
+      ${swr("snd-on", so.on, "Poster sounds", "All of the sounds below. Also switched with the speaker button in the top bar and in your account menu.")}
       ${swr("snd-hover", so.hover, "Hover sounds", SFX.COARSE ? "A soft tick when the mouse moves onto a poster (not on touch screens, so off on this device)." : "A soft tick when the mouse moves onto a poster or you Tab to one.")}
       ${swr("snd-select", so.select, "Select sounds", "A chime when you open a movie, a rising tone for Play / Resume and a swish for the < > row buttons.")}
       <div class="aw-row aw-static snd-vol"><span class="snd-vol-l">Volume</span><input type="range" id="snd-vol" min="0" max="100" step="5" value="${Math.round(so.vol * 100)}" aria-label="Sound volume"><span id="snd-vol-n" class="muted">${Math.round(so.vol * 100)}%</span>
@@ -1505,11 +1590,6 @@ async function viewSettings(tab) {
     $("#snd-vol").onchange = () => SFX.test();
     $("#snd-test").onclick = () => SFX.test();
     sndSync();
-    $("#cpsave").onclick = async () => {
-      if ($("#np").value !== $("#np2").value) { $("#cperr").textContent = "Passwords do not match"; return; }
-      try { await api("/api/me/password", { method: "POST", body: { current_password: $("#cp").value, new_password: $("#np").value } }); toast("Password changed"); $("#cperr").textContent = ""; ["#cp", "#np", "#np2"].forEach(s => $(s).value = ""); }
-      catch (e) { $("#cperr").textContent = e.message; }
-    };
   } else if (tab === "users") {
     const users = await api("/api/users");
     html += `<div class="panel"><h3 style="margin-top:0">Users</h3><table><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr>
@@ -1837,16 +1917,19 @@ function folderPicker(opts) {
 
 // 1.3: save artwork into the movie folders (opt-in per library; the share must allow writing)
 // 1.3.1: redesigned as three steps (share access / what to save / run); behaviour unchanged
-function artworkDialog(l) {
-  const sh = l.share;
+// 1.5.5: TV libraries too (show poster / fanart / tvshow.nfo, season posters, episode thumbnails); opened from a show's
+// page it also offers "Write for this show" (opts.show)
+function artworkDialog(l, opts0 = {}) {
+  const sh = l.share, tv = l.kind === "tv", oneShow = tv ? opts0.show : null;
+  const W = tv ? { things: "shows", folders: "show folders", all: "Write artwork for all matched shows" } : { things: "movies", folders: "movie folders", all: "Write artwork for all matched movies" };
   const a = l.artwork || {};
   const busy = a.state === "running" || a.state === "queued";
   const row = (id, title, hint, on, extra = "") => `<label class="aw-row" for="${id}">
       <span class="sw"><input type="checkbox" id="${id}" ${on ? "checked" : ""} ${extra}><i></i></span>
       <span class="aw-txt"><b>${title}</b><span class="aw-hint">${hint}</span></span></label>`;
   modal(`<div class="aw">
-    <div class="aw-head"><h2>Save artwork to movie folders</h2>
-      <p class="aw-lead">Puts the TMDB poster (and, if you like, fanart and an info file) next to each matched movie so Kodi, Jellyfin and Plex can use it too. Video files are never changed.</p></div>
+    <div class="aw-head"><h2>Save artwork to ${W.folders}</h2>
+      <p class="aw-lead">${tv ? "Puts the TMDB show poster and season posters (and, if you like, fanart, an info file and episode thumbnails) into each matched show's folder" : "Puts the TMDB poster (and, if you like, fanart and an info file) next to each matched movie"} so Kodi, Jellyfin and Plex can use it too. Video files are never changed.</p></div>
     <div class="aw-body">
       ${sh ? `<section class="aw-step">
         <div class="aw-step-h"><span class="aw-num">1</span><h3>Share access</h3><span id="aw-mode"></span></div>
@@ -1862,13 +1945,18 @@ function artworkDialog(l) {
       </section>`}
       <section class="aw-step">
         <div class="aw-step-h"><span class="aw-num">2</span><h3>What to save</h3></div>
-        ${row("aw-poster", "Poster", "Always included when artwork is saved.", true, "disabled")}
+        ${row("aw-poster", tv ? "Show and season posters" : "Poster", "Always included when artwork is saved.", true, "disabled")}
         ${row("aw-fan", "Fanart (backdrop)", "The wide background image, saved as fanart.jpg.", l.art_fanart)}
-        ${row("aw-nfo", ".nfo info file", "Title, year, plot, genres and TMDB / IMDb ids for Kodi, Jellyfin and Plex.", l.art_nfo)}
-        <div class="aw-row aw-static"><span class="aw-ico">&#128193;</span><span class="aw-txt"><b>Naming</b><span class="aw-hint">Chosen per movie, automatically:</span>
+        ${row("aw-nfo", ".nfo info file", tv ? "tvshow.nfo with title, year, plot, genres and TMDB / IMDb ids for Kodi, Jellyfin and Plex." : "Title, year, plot, genres and TMDB / IMDb ids for Kodi, Jellyfin and Plex.", l.art_nfo)}
+        ${tv ? row("aw-th", "Episode thumbnails", "The TMDB still of each episode, saved next to the episode as &lt;file name&gt;-thumb.jpg.", l.art_thumbs) : ""}
+        ${tv ? `<div class="aw-row aw-static"><span class="aw-ico">&#128193;</span><span class="aw-txt"><b>Naming</b><span class="aw-hint">In the show's folder (the first folder under the library):</span>
+          <span class="aw-names"><span>Show</span><span class="aw-chips"><span class="aw-code">poster.jpg</span><span class="aw-code">fanart.jpg</span><span class="aw-code">tvshow.nfo</span></span>
+          <span>Seasons</span><span class="aw-chips"><span class="aw-code">season01-poster.jpg</span><span class="aw-code">season-specials-poster.jpg</span></span>
+          <span>Episodes</span><span class="aw-chips"><span class="aw-code">&lt;file name&gt;-thumb.jpg</span></span></span></span></div>`
+        : `<div class="aw-row aw-static"><span class="aw-ico">&#128193;</span><span class="aw-txt"><b>Naming</b><span class="aw-hint">Chosen per movie, automatically:</span>
           <span class="aw-names"><span>Movie in its own folder</span><span class="aw-chips"><span class="aw-code">poster.jpg</span><span class="aw-code">fanart.jpg</span><span class="aw-code">movie.nfo</span></span>
-          <span>Folder shared with other movies</span><span class="aw-chips"><span class="aw-code">&lt;file name&gt;-poster.jpg</span><span class="aw-code">&lt;file name&gt;.nfo</span></span></span></span></div>
-        ${row("aw-on", "Save automatically for new matches", "Newly matched movies get their artwork without you doing anything.", l.art_write)}
+          <span>Folder shared with other movies</span><span class="aw-chips"><span class="aw-code">&lt;file name&gt;-poster.jpg</span><span class="aw-code">&lt;file name&gt;.nfo</span></span></span></span></div>`}
+        ${row("aw-on", "Save automatically for new matches", `Newly matched ${W.things} get their artwork without you doing anything.`, l.art_write)}
         ${row("aw-ow", "Overwrite existing files", "Replace poster.jpg / fanart.jpg / .nfo that are already there. Off: existing files are never touched.", l.art_overwrite)}
       </section>
       <section class="aw-step">
@@ -1876,7 +1964,8 @@ function artworkDialog(l) {
         <p class="aw-p" id="aw-why"></p>
         <div class="aw-run">
           <button class="btn ghost" id="aw-preview">Preview (dry run)</button>
-          <button class="btn" id="aw-run">${busy ? "Saving artwork&hellip;" : "Write artwork for all matched movies"}</button>
+          ${oneShow ? `<button class="btn" id="aw-run1">Write for this show</button>` : ""}
+          <button class="btn${oneShow ? " ghost" : ""}" id="aw-run">${busy ? "Saving artwork&hellip;" : W.all}</button>
           ${busy ? `<button class="btn danger" id="aw-stop">Stop</button>` : ""}
         </div>
         ${a.state === "error" ? `<div class="err">Last run: ${esc(a.error || "")}</div>` : ""}
@@ -1887,8 +1976,8 @@ function artworkDialog(l) {
       <button class="btn ghost" id="aw-cancel">Close</button><button class="btn" id="aw-save" disabled>Save settings</button></div>
   </div>`, box => box.classList.add("modal-art"));
 
-  const ids = ["aw-fan", "aw-nfo", "aw-on", "aw-ow"];
-  const opts = () => ({ art_write: $("#aw-on").checked, art_fanart: $("#aw-fan").checked, art_nfo: $("#aw-nfo").checked, art_overwrite: $("#aw-ow").checked });
+  const ids = ["aw-fan", "aw-nfo", "aw-on", "aw-ow"].concat(tv ? ["aw-th"] : []);
+  const opts = () => Object.assign({ art_write: $("#aw-on").checked, art_fanart: $("#aw-fan").checked, art_nfo: $("#aw-nfo").checked, art_overwrite: $("#aw-ow").checked }, tv ? { art_thumbs: $("#aw-th").checked } : {});
   let saved = JSON.stringify(opts());
   const dirty = () => JSON.stringify(opts()) !== saved;
   const writable = () => !sh || sh.mount_mode === "rw";
@@ -1898,6 +1987,7 @@ function artworkDialog(l) {
     $("#aw-save").disabled = !d;
     $("#aw-dirty").textContent = d ? "Unsaved changes" : "";
     $("#aw-run").disabled = busy || d || !writable();
+    if ($("#aw-run1")) $("#aw-run1").disabled = busy || d || !writable();
     $("#aw-why").innerHTML = busy ? "Artwork is being saved now; progress is shown at the top of the page."
       : !writable() ? "Turn on <b>Allow writing</b> in step 1 to write files. You can preview first."
       : d ? "Save your settings first." : "Preview lists every file first and writes nothing. Writing runs in the background with progress at the top of the page.";
@@ -1929,13 +2019,13 @@ function artworkDialog(l) {
     $("#aw-prev").innerHTML = `<div class="aw-p muted">Checking folders&hellip;</div>`;
     try {
       if (dirty()) await save();
-      const r = await api(`/api/libraries/${l.id}/artwork/preview?limit=400`);
+      const r = await api(`/api/libraries/${l.id}/artwork/preview?limit=400${oneShow ? "&show=" + enc(oneShow) : ""}`);
       const root = (l.path || "").replace(/\/+$/, "") + "/";
       const rel = p => esc(p.startsWith(root) ? p.slice(root.length) : p);
       const s = r.summary; const todo = r.actions.filter(x => x.action !== "skip");
       const skips = r.actions.filter(x => x.action === "skip");
       $("#aw-prev").innerHTML = `<div class="aw-result">
-        <div class="aw-sum"><span class="chip ok">${nf(s.create)} to create</span><span class="chip ${s.overwrite ? "warn" : ""}">${nf(s.overwrite)} to overwrite</span><span class="chip">${nf(s.skip)} skipped</span><span class="muted">${nf(r.items)} matched movies &middot; dry run, nothing written</span></div>
+        <div class="aw-sum"><span class="chip ok">${nf(s.create)} to create</span><span class="chip ${s.overwrite ? "warn" : ""}">${nf(s.overwrite)} to overwrite</span><span class="chip">${nf(s.skip)} skipped</span><span class="muted">${nf(r.items)} matched ${W.things} &middot; dry run, nothing written</span></div>
         <div class="aw-root">Paths are inside <span class="aw-code">${esc(l.path)}</span></div>
         ${r.writable ? "" : `<div class="aw-warn">${sh && sh.mount_mode !== "rw" ? "The share is read-only right now, so nothing can be written yet. Turn on <b>Allow writing</b> in step 1 first." : esc(r.write_message)}</div>`}
         <div class="aw-list">${todo.slice(0, 300).map(x => `<div><span class="aw-act ${x.action}">${x.action}</span><span title="${esc(x.path)}">${rel(x.path)}</span></div>`).join("")}
@@ -1947,9 +2037,16 @@ function artworkDialog(l) {
   $("#aw-run").onclick = async () => {
     $("#aw-err").textContent = "";
     try {
-      if (!$("#aw-on").checked && !confirm("'Save automatically for new matches' is off, so new matches won't be written later. Write artwork for all matched movies once now?")) return;
+      if (!$("#aw-on").checked && !confirm(`'Save automatically for new matches' is off, so new matches won't be written later. ${W.all} once now?`)) return;
       await api(`/api/libraries/${l.id}/artwork/write`, { method: "POST" });
       toast("Saving artwork -- progress is shown at the top"); pollActivity(); closeModal(); route._keepScroll = true; route();
+    } catch (e) { $("#aw-err").textContent = e.message; }
+  };
+  if ($("#aw-run1")) $("#aw-run1").onclick = async () => {
+    $("#aw-err").textContent = "";
+    try {
+      await api(`/api/libraries/${l.id}/artwork/write`, { method: "POST", body: { show: oneShow } });
+      toast("Saving artwork for this show -- progress is shown at the top"); pollActivity(); closeModal(); route._keepScroll = true; route();
     } catch (e) { $("#aw-err").textContent = e.message; }
   };
   if ($("#aw-stop")) $("#aw-stop").onclick = async () => { await api(`/api/libraries/${l.id}/artwork/cancel`, { method: "POST" }); toast("Stopping..."); closeModal(); };

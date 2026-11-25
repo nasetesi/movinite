@@ -44,6 +44,13 @@ PROFILES = {
 # never more than 1.2x the source's own bitrate (min 6 Mbps).
 HIRES = {"2160p": (3840, 2160), "1440p": (2560, 1440)}
 HEVC_KBPS = {"2160p": 16000, "1440p": 8000}
+# 1.5.4: H.264 needs roughly 1.5-2x the bitrate of HEVC / AV1 / VP9 for the same picture, so 1.2x such a source was too
+# little (a 6.7 Mbps HEVC 4K film became a smeary 6.4 Mbps H.264 stream).  For those sources the H.264 average is now
+# 1.8x the source, at least the floor below, and never more than the profile's own ceiling.  H.264 sources and HEVC
+# output keep the 1.5.3 rule.  Values are the average (-b:v) in kbps; maxrate is 1.25x that and bufsize 2x maxrate.
+MODERN_CODECS = ("hevc", "h265", "av1", "vp9")
+MODERN_FACTOR = 1.8
+H264_FLOOR_KBPS = {"2160p": 12000, "1440p": 8000}   # 1080p and below already get the full profile rate
 CPU_FALLBACK_BOX = (1920, 1080)   # a 2K/4K H.264 stream that loses the GPU carries on at 1080p on the CPU
 
 
@@ -55,6 +62,25 @@ def split_profile(profile):
 def valid_profile(profile):
     base, vc = split_profile(profile)
     return base in PROFILES and (vc == "" or (vc == "hevc" and base in HIRES))
+
+
+def video_kbps(item, base, hevc_out=False, cpu=False):
+    """Maxrate (kbps) for a video transcode.  stage_args / libx264 use it as -maxrate (GPU: -b:v is 0.8x of it)."""
+    maxh, vk, _ak = PROFILES.get(base, PROFILES["720p"])
+    src_kbps = int((item.get("bitrate") or 0) / 1000)
+    modern = (item.get("vcodec") or "").lower() in MODERN_CODECS
+    if base in HIRES:
+        if hevc_out:
+            vk = HEVC_KBPS[base]
+        if src_kbps > 0:
+            if modern and not hevc_out:
+                avg = max(H264_FLOOR_KBPS[base], int(src_kbps * MODERN_FACTOR))
+                vk = min(vk, int(avg * 1.25))
+            else:
+                vk = min(vk, max(6000, int(src_kbps * 1.2)))
+        if cpu:
+            vk = min(vk, PROFILES["1080p"][1])
+    return vk
 
 
 def is_hires(profile):
@@ -215,17 +241,11 @@ class Session:
         audio_only = self.profile == "audio" or not it.get("vcodec")
         box = None          # 1.5.3: 2K / 4K -- explicit output size fitted into the box
         if self.base in HIRES and not audio_only:
-            if self.hevc:
-                vk = HEVC_KBPS[self.base]
-            src_kbps = int((it.get("bitrate") or 0) / 1000)
-            if src_kbps > 0:
-                vk = min(vk, max(6000, int(src_kbps * 1.2)))
+            vk = video_kbps(it, self.base, self.hevc, self.stage == "cpu")
             sw, sh = it.get("width") or 0, it.get("height") or 0
             if self.rot in (90, 270):
                 sw, sh = sh, sw
             bw, bh = HIRES[self.base] if self.stage != "cpu" else CPU_FALLBACK_BOX
-            if self.stage == "cpu":
-                vk = min(vk, PROFILES["1080p"][1])
             box = fit_box(sw, sh, bw, bh)
         t0 = start * SEG
         cmd = [config.FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error"]
@@ -251,7 +271,7 @@ class Session:
             src_h = it.get("height") or maxh
             h = min(maxh, src_h) if src_h else maxh
             # scale bitrate down for small sources
-            if src_h and src_h < maxh:
+            if src_h and src_h < maxh and not box:      # 1.5.4: 2K/4K already sized for the fitted box
                 vk = max(600, int(vk * (src_h / maxh) ** 1.5))
             vf = "scale=-2:'min(%d,ih)',format=yuv420p" % h
             if box:
@@ -272,7 +292,9 @@ class Session:
             cmd += ["-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init%d.mp4" % start,
                     "-hls_segment_options", "movflags=+frag_discont"]
         else:
-            cmd += ["-hls_segment_type", "mpegts"]
+            # 1.5.4: -muxdelay/-muxpreload 0 -- the MPEG-TS muxer otherwise starts every run ~1.4 s late (seg88 began at
+            # 529.4 instead of 528.0).  Now each segment starts on its playlist time (first DTS = t0 - one B-frame).
+            cmd += ["-hls_segment_type", "mpegts", "-muxdelay", "0", "-muxpreload", "0"]
         cmd += ["-hls_flags", "temp_file+independent_segments", "-start_number", str(start),
                 "-output_ts_offset", "%.3f" % t0,
                 "-hls_segment_filename", str(self.dir / ("seg%d." + self.ext)), str(self.dir / "ffmpeg.m3u8")]

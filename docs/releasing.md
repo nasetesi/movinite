@@ -8,7 +8,7 @@
 3. Commit, then tag and push:
 
    ```bash
-   git tag -a v1.5.3 -m "Movinite 1.5.3"
+   git tag -a v1.6 -m "Movinite 1.6"
    git push origin main --tags
    ```
 

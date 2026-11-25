@@ -123,7 +123,7 @@ r = subprocess.run(["bash", "-n", os.path.join(ROOT, "hwsetup.sh")]); check(r.re
 for route in ('@app.get("/api/hw")', '@app.put("/api/hw")', '@app.post("/api/hw/test")', '@app.post("/api/hw/scan")'):
     i = srv.index(route); check("auth.require_admin" in srv[i:i + 200], "%s is admin-only" % route)
 check('threading.Thread(target=hwaccel.warm_up' in srv or 'target=hwaccel.warm_up' in srv, "first start of 1.5.2 scans when unset (servers updated with an older update.sh)")
-check('["transcoding", "Transcoding"], ["system", "System"]' in js and "async function viewTranscoding" in js, "Settings > Transcoding tab")
+check('["transcoding", "Transcoding"' in js and '["system", "System"' in js and "async function viewTranscoding" in js, "Settings > Transcoding tab")
 check('["auto", "qsv", "vaapi", "nvenc", "off"].map(opt)' in js and 'auto: "Auto", qsv: "Intel QSV", vaapi: "VAAPI", nvenc: "NVIDIA NVENC", off: "Off (CPU)"' in js, "mode choices Auto / Intel QSV / VAAPI / NVIDIA NVENC / Off (CPU)")
 check('data-hwtest=' in js and '"/api/hw/test"' in js and '"/api/hw/scan"' in js and 'id="hw-save"' in js, "Test, Scan again and Save buttons")
 check('class="hw-badge ss-gpu"' in js and "d.hw.streams" in js and 'row("Transcoding"' in js, "GPU badge in the status pill, popover row, player overlay")

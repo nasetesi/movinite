@@ -10,6 +10,12 @@ Opt-in per library (Settings -> Libraries -> Artwork), and the share must be all
   * new files are created with O_EXCL (no race, no clobbering), mode 0644; existing files keep their owner
     (overwrite rewrites them in place instead of replacing the inode)
   * a dry run returns exactly the list of files that would be written
+
+1.5.5: TV libraries too.  Per matched show, in the show's own folder (the first folder under the library root):
+poster.jpg, fanart.jpg, tvshow.nfo and season posters (season01-poster.jpg, season-specials-poster.jpg), plus,
+optionally, episode thumbnails next to each episode (<file name>-thumb.jpg).  Same rules as for movies: opt-in,
+never overwrite unless asked, O_EXCL.  A show whose episodes sit loose in the library root, or whose folder also
+holds other shows, gets no show-level files (episode thumbnails still work).
 """
 import errno
 import json
@@ -115,6 +121,203 @@ def plan_item(item, lib, meta, siblings, nested_dirs):
     return out
 
 
+# ---- 1.5.5: TV shows --------------------------------------------------------------------------------------------
+def show_dir_of(lib_root, ep_path):
+    """The show's folder = first folder under the library root, or None when the episode is in the root itself."""
+    try:
+        rel = os.path.relpath(ep_path, lib_root)
+    except ValueError:
+        return None
+    parts = Path(rel).parts
+    if len(parts) < 2 or parts[0] in ("..", "."):
+        return None
+    return os.path.join(lib_root, parts[0])
+
+
+def season_poster_name(season):
+    return "season-specials-poster.jpg" if season == 0 else "season%02d-poster.jpg" % season
+
+
+def _show_units(lib_id, item_ids=None):
+    """Matched shows of a TV library -> [{show, tmdb_id, episodes:[...]}] (only shows touching item_ids if given)."""
+    rows = db.rows("SELECT i.id, i.path, i.show, i.season, i.episode, m.tmdb_id FROM items i JOIN show_matches m "
+                   "ON m.library_id=i.library_id AND m.show=i.show WHERE i.library_id=? AND i.kind='episode' "
+                   "AND m.status IN ('matched','manual') AND m.tmdb_id IS NOT NULL ORDER BY i.show, i.season, i.episode, i.path",
+                   (lib_id,))
+    units = {}
+    for r in rows:
+        units.setdefault(r["show"], {"show": r["show"], "tmdb_id": r["tmdb_id"], "episodes": []})["episodes"].append(r)
+    if item_ids:
+        want = set(item_ids)
+        units = {k: u for k, u in units.items() if any(e["id"] in want for e in u["episodes"])}
+    return list(units.values())
+
+
+def _dir_shows(lib_id, lib_root):
+    """show folder -> set of show names found in it (to spot folders shared by several shows)."""
+    out = {}
+    for r in db.rows("SELECT path, show FROM items WHERE library_id=? AND kind='episode'", (lib_id,)):
+        d = show_dir_of(lib_root, r["path"])
+        if d:
+            out.setdefault(d, set()).add(r["show"])
+    return out
+
+
+def plan_show(unit, lib, meta, dir_shows, season_paths=None, still_paths=None):
+    """-> actions for one show.  season_paths: {season: TMDB poster path} (None = not looked up yet: assume there);
+    still_paths: {(season, episode): TMDB still path}."""
+    out = []
+    eps = unit["episodes"]
+    dirs = {}
+    for e in eps:
+        d = show_dir_of(lib["path"], e["path"])
+        dirs[d] = dirs.get(d, 0) + 1
+    d = max(dirs, key=dirs.get) if dirs else None
+    if not d:
+        out.append({"path": os.path.dirname(eps[0]["path"]), "what": "show", "action": "skip",
+                    "reason": "episodes are not in a show folder (show-level artwork needs one folder per show)"})
+    elif len(dir_shows.get(d, ())) > 1:
+        out.append({"path": d, "what": "show", "action": "skip", "reason": "folder holds more than one show"})
+        d = None
+    if d:
+        try:
+            entries = {x.lower(): x for x in os.listdir(d)}
+        except OSError as e:
+            entries = None
+            out.append({"path": d, "what": "folder", "action": "skip", "reason": "folder not readable: %s" % e.strerror})
+        if entries is not None:
+            want = [("poster", "poster.jpg", _image_names(POSTER_NAMES), bool(meta and (meta.get("poster_path") or meta.get("poster"))))]
+            if lib.get("art_fanart"):
+                want.append(("fanart", "fanart.jpg", _image_names(FANART_NAMES), bool(meta and (meta.get("backdrop_path") or meta.get("backdrop")))))
+            if lib.get("art_nfo"):
+                want.append(("nfo", "tvshow.nfo", ["tvshow.nfo"], bool(meta)))
+            for sn in sorted({e["season"] for e in eps if e["season"] is not None}):
+                tgt = season_poster_name(sn)
+                stem = tgt[:-4]
+                avail = bool(meta) and (season_paths is None or bool(season_paths.get(sn)))
+                want.append(("season", tgt, [stem + ext for ext in media.IMAGE_EXT], avail, sn))
+            for w in want:
+                what, target, names, available = w[:4]
+                existing = _exists_ci(d, names, entries)
+                path = os.path.join(d, target)
+                a = {"path": path, "what": what, "mode": "show"}
+                if len(w) > 4:
+                    a["season"] = w[4]
+                if not available:
+                    a.update(action="skip", reason="no TMDB %s" % ("season poster" if what == "season" else what))
+                elif existing and not (lib.get("art_overwrite") and existing.lower() == target.lower()):
+                    a.update(path=os.path.join(d, existing), action="skip",
+                             reason="already there" if existing.lower() == target.lower() else "existing %s" % existing)
+                else:
+                    a.update(action="overwrite" if existing else "create", reason=None)
+                out.append(a)
+    if lib.get("art_thumbs"):
+        listing = {}
+        for e in eps:
+            ed = os.path.dirname(e["path"])
+            if ed not in listing:
+                try:
+                    listing[ed] = {x.lower(): x for x in os.listdir(ed)}
+                except OSError:
+                    listing[ed] = None
+            entries = listing[ed]
+            stem = Path(e["path"]).stem
+            target = stem + "-thumb.jpg"
+            a = {"path": os.path.join(ed, target), "what": "thumb", "mode": "episode", "item": e["id"],
+                 "season": e["season"], "episode": e["episode"]}
+            sp = (still_paths or {}).get((e["season"], e["episode"]))
+            if entries is None:
+                a.update(action="skip", reason="folder not readable")
+            elif not sp:
+                a.update(action="skip", reason="no TMDB episode still")
+            else:
+                a["still_path"] = sp
+                existing = _exists_ci(ed, [stem + "-thumb" + x for x in media.IMAGE_EXT] + [stem + x for x in media.IMAGE_EXT], entries)
+                if existing and not (lib.get("art_overwrite") and existing.lower() == target.lower()):
+                    a.update(path=os.path.join(ed, existing), action="skip",
+                             reason="already there" if existing.lower() == target.lower() else "existing %s" % existing)
+                else:
+                    a.update(action="overwrite" if existing else "create", reason=None)
+            out.append(a)
+    return out
+
+
+def _still_paths(tv_id):
+    return {(r["season"], r["episode"]): r["still_path"] for r in
+            db.rows("SELECT season, episode, still_path FROM tmdb_episodes WHERE tv_id=? AND still_path IS NOT NULL", (tv_id,))}
+
+
+def _season_paths(tv_id):
+    """{season number: poster path} from TMDB (one request per show; {} when TMDB can't be reached)."""
+    try:
+        d = tmdb.request("/tv/%d" % int(tv_id), {"language": settings.tmdb_language()})
+    except Exception:
+        return {}
+    return {s.get("season_number"): s.get("poster_path") for s in d.get("seasons") or []
+            if s.get("season_number") is not None and s.get("poster_path")}
+
+
+def _tv_meta_full(tv_id):
+    m = tmdb.cached("tv", tv_id)
+    if m and not m.get("poster_path") and m.get("fetched_at"):
+        try:
+            tmdb.fetch_details("tv", tv_id, force=True)
+            m = tmdb.cached("tv", tv_id)
+        except tmdb.TMDBError:
+            pass
+    return m
+
+
+def tvshow_nfo_xml(meta, show):
+    """Kodi tvshow.nfo (read by Jellyfin / Emby and Plex's XBMCnfoTVImporter too)."""
+    root = ET.Element("tvshow")
+
+    def sub(tag, text, **attrs):
+        if text is None or text == "":
+            return None
+        e = ET.SubElement(root, tag, **attrs)
+        e.text = str(text)
+        return e
+    sub("title", meta.get("title") or show)
+    if meta.get("original_title") and meta.get("original_title") != meta.get("title"):
+        sub("originaltitle", meta.get("original_title"))
+    sub("year", meta.get("year"))
+    sub("premiered", meta.get("release_date"))
+    sub("plot", meta.get("overview"))
+    if meta.get("rating") is not None:
+        ratings = ET.SubElement(root, "ratings")
+        r = ET.SubElement(ratings, "rating", name="themoviedb", max="10", default="true")
+        ET.SubElement(r, "value").text = "%.1f" % float(meta["rating"])
+        ET.SubElement(r, "votes").text = str(meta.get("vote_count") or 0)
+    for g in json.loads(meta.get("genres") or "[]"):
+        sub("genre", g)
+    sub("uniqueid", meta["tmdb_id"], type="tmdb", default="true")
+    if meta.get("imdb_id"):
+        sub("uniqueid", meta["imdb_id"], type="imdb")
+    sub("tmdbid", meta["tmdb_id"])
+    if meta.get("poster_path"):
+        sub("thumb", tmdb.image_url(meta["poster_path"], "original"), aspect="poster")
+    if meta.get("backdrop_path"):
+        fa = ET.SubElement(root, "fanart")
+        ET.SubElement(fa, "thumb").text = tmdb.image_url(meta["backdrop_path"], "original")
+    ET.indent(root, space="  ")
+    return (b'<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>\n'
+            b"<!-- written by Movinite from TMDB (themoviedb.org) -->\n" + ET.tostring(root, encoding="utf-8") + b"\n")
+
+
+def _use_show_poster(lib_id, show, path):
+    """After poster.jpg was written: use it for the show's episodes that still show a video frame / TMDB poster,
+    exactly as a rescan would (the episode files didn't change, so a scan would not look again)."""
+    try:
+        name = media.make_image_thumb(path)
+    except Exception:
+        name = None
+    if name:
+        with db.tx() as c:
+            c.execute("UPDATE items SET poster=? WHERE library_id=? AND show=? AND kind='episode' "
+                      "AND (poster IS NULL OR poster=thumb)", (name, lib_id, show))
+
+
 def _library_items(lib_id, item_ids=None):
     q = ("SELECT id, path, title, year, tmdb_id, edition, meta_status FROM items WHERE library_id=? AND kind='movie' "
          "AND meta_status IN ('matched','manual') AND tmdb_id IS NOT NULL")
@@ -144,6 +347,17 @@ def plan_library(lib_id, item_ids=None, limit=None):
     lib = db.row("SELECT * FROM libraries WHERE id=?", (lib_id,))
     if not lib:
         raise ValueError("No such library")
+    if lib["kind"] == "tv":
+        actions, dsh = [], _dir_shows(lib_id, lib["path"])
+        for u in _show_units(lib_id, item_ids):
+            meta = tmdb.cached("tv", u["tmdb_id"])
+            for a in plan_show(u, lib, meta, dsh, None, _still_paths(u["tmdb_id"]) if lib.get("art_thumbs") else None):
+                a["item_id"] = "show:" + u["show"]
+                a["title"] = (meta or {}).get("title") or u["show"]
+                actions.append(a)
+            if limit and len(actions) >= limit:
+                break
+        return lib, actions
     sib, nested = _siblings(lib_id)
     actions = []
     for it in _library_items(lib_id, item_ids):
@@ -315,6 +529,9 @@ def run_library(lib_id, item_ids=None, dry_run=False, auto=False):
             st.update(state="error", error=msg, finished_at=time.time())
             log.warning("artwork library %s: %s", lib_id, msg)
             return
+        if lib["kind"] == "tv":
+            _run_tv(lib, st, item_ids)
+            return
         sib, nested = _siblings(lib_id)
         items = _library_items(lib_id, item_ids)
         st.update(phase="writing", total=len(items))
@@ -357,6 +574,67 @@ def run_library(lib_id, item_ids=None, dry_run=False, auto=False):
     except Exception as e:
         log.exception("artwork library %s", lib_id)
         st.update(state="error", error=str(e), finished_at=time.time())
+
+
+def _run_tv(lib, st, item_ids=None):
+    lib_id = lib["id"]
+    dsh = _dir_shows(lib_id, lib["path"])
+    units = _show_units(lib_id, item_ids)
+    st.update(phase="writing", total=len(units))
+    for u in units:
+        if lib_id in _cancel:
+            st.update(state="cancelled", finished_at=time.time())
+            return
+        meta = _tv_meta_full(u["tmdb_id"])
+        if not meta:
+            st["skipped"] += 1
+            st["done"] += 1
+            continue
+        plan = plan_show(u, lib, meta, dsh, None, _still_paths(u["tmdb_id"]) if lib.get("art_thumbs") else None)
+        seasons = None
+        if any(a["what"] == "season" and a["action"] != "skip" for a in plan):
+            seasons = _season_paths(u["tmdb_id"])
+        for a in plan:
+            if a["action"] == "skip":
+                st["skipped"] += 1
+                continue
+            if a["what"] == "nfo":
+                data = tvshow_nfo_xml(meta, u["show"])
+            elif a["what"] == "poster":
+                data = _image_bytes(meta.get("poster_path"), "w780") or _image_bytes(meta.get("poster"), None)
+            elif a["what"] == "fanart":
+                data = _image_bytes(meta.get("backdrop_path"), "w1280") or _image_bytes(meta.get("backdrop"), None)
+            elif a["what"] == "season":
+                sp = (seasons or {}).get(a["season"])
+                if not sp:
+                    st["skipped"] += 1
+                    continue
+                data = _image_bytes(sp, "w780")
+            else:
+                data = _image_bytes(a.get("still_path"), "original")
+            if not data:
+                st["errors"] += 1
+                st["last_error"] = "could not download %s for %s" % (a["what"], u["show"])
+                continue
+            try:
+                r = _write(a["path"], data, a["action"] == "overwrite")
+            except WriteDenied as e:
+                st.update(state="error", error=denied_message(e, lib), finished_at=time.time())
+                log.warning("artwork library %s stopped: %s", lib_id, st["error"])
+                return
+            except OSError as e:
+                st["errors"] += 1
+                st["last_error"] = "%s: %s" % (os.path.basename(a["path"]), e.strerror or e)
+                continue
+            if r == "exists":
+                st["skipped"] += 1
+            else:
+                st["written"] += 1
+                if a["what"] == "poster":
+                    _use_show_poster(lib_id, u["show"], a["path"])
+        st["done"] += 1
+    st.update(state="done", finished_at=time.time())
+    log.info("artwork library %s (tv): %s", lib_id, {k: st[k] for k in ("total", "written", "skipped", "errors")})
 
 
 def start_library(lib_id, item_ids=None):

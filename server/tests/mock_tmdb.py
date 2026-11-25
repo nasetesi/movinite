@@ -141,7 +141,12 @@ TV = {
     2001: {"id": 2001, "name": "Test Show", "original_name": "Test Show", "first_air_date": "2020-01-05",
            "overview": "A show about testing.", "genres": [{"id": 5, "name": "Comedy"}], "vote_average": 8.5,
            "vote_count": 321, "episode_run_time": [22], "poster_path": "/showposter.jpg", "backdrop_path": "/showbd.jpg",
-           "popularity": 30},
+           "popularity": 30, "seasons": [{"season_number": 1, "poster_path": "/season1.jpg"},   # 1.5.5: season posters
+                                         {"season_number": 2, "poster_path": "/season2.jpg"}]},
+    2002: {"id": 2002, "name": "Night Shift", "original_name": "Night Shift", "first_air_date": "2014-05-27",
+           "overview": "Doctors on the night shift.", "genres": [{"id": 6, "name": "Drama"}], "vote_average": 7.1,
+           "vote_count": 120, "episode_run_time": [44], "poster_path": "/nightshift.jpg", "backdrop_path": "/nightbd.jpg",
+           "popularity": 12, "seasons": [{"season_number": 1, "poster_path": "/ns-season1.jpg"}]},
 }
 SEASONS = {
     (2001, 1): [{"episode_number": 1, "name": "The Real Pilot", "overview": "It begins.", "still_path": "/s1e1.jpg",

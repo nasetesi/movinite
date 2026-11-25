@@ -10,7 +10,7 @@ def check(ok, msg):
     print(("ok   " if ok else "FAIL ") + msg)
     if not ok: fails.append(msg)
 m151 = css[css.index("1.5.1: phone layout"):]
-check(re.search(r'"1\.5\.[1-9][0-9]*"', ver) is not None, "version 1.5.1+")
+check(tuple(int(x) for x in re.search(r'"([0-9.]+)"', ver).group(1).split(".")) >= (1, 5, 1), "version (1, 5, 1) or later (numeric; 1.6 > 1.5.5)")
 check('viewport-fit=cover' in html, "viewport-fit=cover so the safe-area insets work")
 # tab bar
 tb = html[html.index('id="tabbar"'):html.index('</nav>', html.index('id="tabbar"'))]

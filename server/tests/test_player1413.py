@@ -10,7 +10,7 @@ def check(c, m):
     global fails
     print(("ok   " if c else "FAIL ") + m)
     if not c: fails += 1
-check(re.search(r'"(1\.4\.(1[3-9]|[2-9][0-9])|1\.([5-9]|[1-9][0-9])\.[0-9]+)"', ver), "version 1.4.13 or later")
+check(tuple(int(x) for x in re.search(r'"([0-9.]+)"', ver).group(1).split(".")) >= (1, 4, 13), "version 1.4.13 or later")
 bar = html[html.index('id="pl-bar"'):html.index('id="pl-pop"')]
 order = [bar.index('id="%s"' % i) for i in ("pl-seek", "pl-bplay", "pl-bback", "pl-bfwd", "pl-mute", "pl-vol", "pl-time", "pl-bq", "pl-bcc", "pl-baud", "pl-pip", "pl-fs")]
 check(order == sorted(order), "bottom bar order: seek, play, -10, +10, volume, time ... Quality, CC, Audio, PiP, Full screen")

@@ -14,7 +14,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import artwork, auth, browse, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
+from . import artwork, auth, browse, liborder, sharehealth, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
 from .version import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -33,6 +33,7 @@ def _startup():
     threading.Thread(target=scanner.scheduler_loop, daemon=True, name="scan-scheduler").start()
     # re-mount shares that dropped (e.g. NAS was down at boot)
     threading.Thread(target=_share_watchdog, daemon=True, name="share-watchdog").start()
+    threading.Thread(target=sharehealth.loop, args=(lambda: _stop,), daemon=True, name="share-health").start()   # 1.6
     # 1.2.1: finish TMDB matching that was cut short (e.g. by the update restart) or never started
     threading.Thread(target=tmdb.resume_loop, args=(lambda: _stop,), daemon=True, name="tmdb-resume").start()
     # 1.5.2: video card scan (first start without a setting: scan, test, save; Auto: pick the card)
@@ -245,7 +246,9 @@ def _lib_out(lib):
     lib["artwork"] = _snap(artwork.status.get(lib["id"]))
     h = lib.get("scan_interval_h") or 0
     lib["next_scan"] = (max(lib.get("last_scan") or 0, 0) + h * 3600) if h > 0 else None
-    lib["online"] = os.path.isdir(lib["path"])
+    # 1.6: share libraries use the cached, timeout-guarded check (a hung CIFS mount must not stall this request)
+    lib["health"] = sharehealth.get(lib)
+    lib["online"] = lib["health"]["state"] not in ("offline", "stuck") if lib["health"] else os.path.isdir(lib["path"])
     if lib.get("share_id"):
         s = db.row("SELECT id,name,kind,remote,username,options,mount_point,last_status,last_error FROM shares WHERE id=?",
                    (lib["share_id"],))
@@ -259,7 +262,28 @@ def _lib_out(lib):
 
 @app.get("/api/libraries")
 def list_libraries(u=Depends(auth.require_user)):
-    return [_lib_out(l) for l in db.rows("SELECT * FROM libraries ORDER BY name")]
+    return [_lib_out(l) for l in db.rows("SELECT * FROM libraries " + liborder.ORDER_SQL)]
+
+
+@app.post("/api/libraries/health")
+def libraries_health(u=Depends(auth.require_user)):
+    """1.6: check the network-share libraries now (at most every few seconds) and return {library_id: health}."""
+    sharehealth.check_all()
+    return {str(l["id"]): sharehealth.get(dict(l)) for l in db.rows("SELECT id, share_id FROM libraries WHERE share_id IS NOT NULL")}
+
+
+@app.put("/api/libraries/order")
+def order_libraries(body: dict = Body(...), u=Depends(auth.require_admin)):
+    """1.6: {"ids": [3, 1, 2, ...]} -- every library once, top to bottom. One order for everyone."""
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
+        raise HTTPException(400, "ids must be a list of library ids")
+    try:
+        with db.tx() as c:
+            liborder.set_order(c, ids)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return [_lib_out(l) for l in db.rows("SELECT * FROM libraries " + liborder.ORDER_SQL)]
 
 
 @app.post("/api/libraries")
@@ -356,6 +380,7 @@ def add_library(body: dict = Body(...), u=Depends(auth.require_admin)):
         cur = c.execute("INSERT INTO libraries(name,kind,path,share_id,scan_interval_h,created_at) VALUES(?,?,?,?,?,?)",
                         (name, kind, path, share_id, interval, now))
         lib_id = cur.lastrowid
+        liborder.assign_missing(c)      # 1.6: placed by type (Movies, TV, Other videos, Music), custom order kept
     scanner.request_scan(lib_id)
     return _lib_out(db.row("SELECT * FROM libraries WHERE id=?", (lib_id,)))
 
@@ -368,7 +393,7 @@ def edit_library(lib_id: int, body: dict = Body(...), u=Depends(auth.require_adm
     name = (body.get("name") or lib["name"]).strip()
     interval = int(body.get("scan_interval_h", lib["scan_interval_h"]) or 0)
     art = {k: int(bool(body[k])) if k in body else (lib.get(k) or 0)
-           for k in ("art_write", "art_fanart", "art_nfo", "art_overwrite")}
+           for k in ("art_write", "art_fanart", "art_nfo", "art_overwrite", "art_thumbs")}
     # 1.4.14: change the folder (inside the same share, or another local folder). The share mount is untouched.
     new_path = None
     if lib["share_id"] and "subpath" in body:
@@ -393,9 +418,9 @@ def edit_library(lib_id: int, body: dict = Body(...), u=Depends(auth.require_adm
     if new_path and os.path.normpath(new_path) == os.path.normpath(lib["path"]):
         new_path = None
     with db.tx() as c:
-        c.execute("UPDATE libraries SET name=?, scan_interval_h=?, art_write=?, art_fanart=?, art_nfo=?, art_overwrite=? "
-                  "WHERE id=?", (name, interval, art["art_write"], art["art_fanart"], art["art_nfo"],
-                                 art["art_overwrite"], lib_id))
+        c.execute("UPDATE libraries SET name=?, scan_interval_h=?, art_write=?, art_fanart=?, art_nfo=?, art_overwrite=?, "
+                  "art_thumbs=? WHERE id=?", (name, interval, art["art_write"], art["art_fanart"], art["art_nfo"],
+                                              art["art_overwrite"], art["art_thumbs"], lib_id))
         if new_path:
             c.execute("UPDATE libraries SET path=? WHERE id=?", (new_path, lib_id))
     if new_path:
@@ -406,11 +431,21 @@ def edit_library(lib_id: int, body: dict = Body(...), u=Depends(auth.require_adm
     return out
 
 
+def _show_item_ids(lib_id, show):
+    """1.5.5: the episode ids of one show (artwork for a single show), or None for the whole library."""
+    if not show:
+        return None
+    ids = [r["id"] for r in db.rows("SELECT id FROM items WHERE library_id=? AND show=?", (lib_id, show))]
+    if not ids:
+        raise HTTPException(404, "No such show")
+    return ids
+
+
 @app.get("/api/libraries/{lib_id}/artwork/preview")
-def artwork_preview(lib_id: int, limit: int = 500, u=Depends(auth.require_admin)):
+def artwork_preview(lib_id: int, limit: int = 500, show: str = "", u=Depends(auth.require_admin)):
     """Dry run: which files would be written (nothing is touched)."""
     try:
-        lib, actions = artwork.plan_library(lib_id)
+        lib, actions = artwork.plan_library(lib_id, _show_item_ids(lib_id, show))
     except ValueError as e:
         raise HTTPException(404, str(e))
     ok, msg = artwork.check_writable(lib) if os.path.isdir(lib["path"]) else (False, "library folder not reachable")
@@ -418,20 +453,20 @@ def artwork_preview(lib_id: int, limit: int = 500, u=Depends(auth.require_admin)
     return {"summary": artwork.summarize(actions), "writable": ok, "write_message": msg,
             "items": len({a["item_id"] for a in actions}),
             "actions": (todo + [a for a in actions if a["action"] == "skip"])[:max(1, min(limit, 5000))],
-            "options": {k: bool(lib.get(k)) for k in ("art_write", "art_fanart", "art_nfo", "art_overwrite")}}
+            "options": {k: bool(lib.get(k)) for k in ("art_write", "art_fanart", "art_nfo", "art_overwrite", "art_thumbs")}}
 
 
 @app.post("/api/libraries/{lib_id}/artwork/write")
-def artwork_write(lib_id: int, u=Depends(auth.require_admin)):
+def artwork_write(lib_id: int, body: dict = Body(default={}), u=Depends(auth.require_admin)):
     lib = db.row("SELECT * FROM libraries WHERE id=?", (lib_id,))
     if not lib:
         raise HTTPException(404, "No such library")
-    if lib["kind"] != "movies":
-        raise HTTPException(400, "Artwork saving is for movie libraries")
+    if lib["kind"] not in ("movies", "tv"):
+        raise HTTPException(400, "Artwork saving is for movie and TV libraries")   # 1.5.5: + TV
     ok, msg = artwork.check_writable(lib)
     if not ok:
         raise HTTPException(400, msg)
-    return {"started": artwork.start_library(lib_id)}
+    return {"started": artwork.start_library(lib_id, _show_item_ids(lib_id, (body or {}).get("show") if lib["kind"] == "tv" else None))}
 
 
 @app.post("/api/libraries/{lib_id}/artwork/cancel")
@@ -653,7 +688,7 @@ def list_connections(u=Depends(auth.require_admin)):
         if key in seen:
             continue
         seen.add(key)
-        libs = [l["name"] for l in db.rows("SELECT name FROM libraries WHERE share_id=? ORDER BY name", (sh["id"],))]
+        libs = [l["name"] for l in db.rows("SELECT name FROM libraries WHERE share_id=? " + liborder.ORDER_SQL, (sh["id"],))]
         out.append({"id": sh["id"], "kind": sh["kind"], "remote": sh["remote"], "host": _host_of(sh["kind"], sh["remote"]),
                     "username": sh["username"] or "", "domain": sh["domain"] or "", "options": sh["options"] or "",
                     "guest": sh["kind"] == "smb" and not sh["username"], "libraries": libs,
@@ -1080,11 +1115,18 @@ def album_detail(library_id: int, artist: str, album: str, u=Depends(auth.requir
             "duration": sum(t["duration"] or 0 for t in tracks), "tracks": tracks}
 
 
+# 1.5.5: the home page (and so the Android app, which shows the same page) lists only Movies and TV Shows libraries in
+# Continue watching and the Recently added rows -- music, home videos and "other" libraries stay in their own pages
+HOME_KINDS = ("movies", "tv")
+HOME_KINDS_SQL = "('movies','tv')"
+
+
 def _continue(u):
     cont = db.rows(
         "SELECT " + ", ".join("i." + c.strip() for c in ITEM_COLS.split(",")) + ", p.position, p.updated_at, p.duration pduration "
-        "FROM progress p JOIN items i ON i.id=p.item_id WHERE p.user_id=? AND p.watched=0 AND p.position>30 "
-        "AND i.media_type='video' AND (COALESCE(p.duration, i.duration, 0) <= 0 OR "
+        "FROM progress p JOIN items i ON i.id=p.item_id JOIN libraries l ON l.id=i.library_id "
+        "WHERE p.user_id=? AND p.watched=0 AND p.position>30 "
+        "AND i.media_type='video' AND l.kind IN " + HOME_KINDS_SQL + " AND (COALESCE(p.duration, i.duration, 0) <= 0 OR "
         "p.position < 0.95 * COALESCE(p.duration, i.duration)) ORDER BY p.updated_at DESC LIMIT 20", (u["id"],))
     cont = _with_progress(cont, u["id"])
     for i in cont:   # the progress bar needs a length even when ffprobe could not read one
@@ -1097,7 +1139,9 @@ def _continue(u):
 def home(u=Depends(auth.require_user)):
     cont = _continue(u)
     libs = []
-    for lib in db.rows("SELECT * FROM libraries ORDER BY name"):
+    for lib in db.rows("SELECT * FROM libraries " + liborder.ORDER_SQL):
+        if lib["kind"] not in HOME_KINDS:      # 1.5.5: only movies and TV on the home page
+            continue
         if lib["kind"] == "music":
             recent = db.rows(
                 "SELECT COALESCE(album_artist, artist, 'Unknown artist') artist, COALESCE(album,'Unknown album') album, "
@@ -1232,7 +1276,7 @@ def playback_info(it):
     remux = it["media_type"] == "video" and transcode.remux_eligible(it)
     return {"direct": direct, "direct_maybe": maybe, "remux": remux, "mime": MIME.get(ext, "application/octet-stream"),
             "profiles": profiles, "hires": hires, "hires_off": hires_off, "hdr": hdr,
-            "hires_kbps": {p: {"h264": transcode.PROFILES[p][1], "hevc": transcode.HEVC_KBPS[p]} for p in hires},
+            "hires_kbps": {p: {"h264": transcode.video_kbps(it, p), "hevc": transcode.video_kbps(it, p, True)} for p in hires},   # 1.5.4: real maxrate
             "audio_streams": auds, "subtitles": subtitle_tracks,
             "image_subs": [s for s in subs if not s.get("text")]}
 
@@ -1757,6 +1801,7 @@ def match_show(body: dict = Body(...), u=Depends(auth.require_admin)):
             tmdb.fetch_details("tv", tid, force=True)
             tmdb.apply_show_match(lib_id, show, tid, "manual")
             tmdb.match_show_seasons(lib_id, show, tid, force=True)
+            tmdb._after_match(lib_id, [r["id"] for r in db.rows("SELECT id FROM items WHERE library_id=? AND show=?", (lib_id, show))])   # 1.5.5
     except tmdb.TMDBError as e:
         raise HTTPException(502, str(e))
     return {"ok": True}

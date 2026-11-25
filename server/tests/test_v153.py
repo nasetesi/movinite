@@ -12,7 +12,7 @@ rd = lambda *p: open(os.path.join(*p)).read()
 js = rd(APP, "static", "app.js"); css = rd(APP, "static", "style.css"); srv = rd(APP, "server.py")
 helper = rd(ROOT, "helpers", "media-server-mount"); cfg = rd(APP, "version.py")
 from app import transcode as T, hwaccel as H
-check('"1.5.3"' in cfg, "version 1.5.3")
+check(tuple(int(x) for x in cfg.split('"')[1].split(".")) >= (1, 5, 3), "version >= 1.5.3")
 # --- 2K / 4K
 check(T.PROFILES["2160p"][:2] == (2160, 25000) and T.PROFILES["1440p"][:2] == (1440, 12000), "H.264 4K 25 / 2K 12 Mbps")
 check(T.HEVC_KBPS == {"2160p": 16000, "1440p": 8000}, "HEVC 4K 16 / 2K 8 Mbps")

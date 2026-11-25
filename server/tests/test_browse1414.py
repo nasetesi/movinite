@@ -16,7 +16,7 @@ def check(c, m):
 def err(f, *a):
     try: f(*a); return None
     except b.BrowseError as e: return e.code
-check(re.search(r'"1\.5\.[0-9]+"', ver), "version 1.5.x")
+check(tuple(int(x) for x in re.search(r'"([0-9.]+)"', ver).group(1).split(".")) >= (1, 5), "version (1, 5) or later (numeric; 1.6 > 1.5.5)")
 # paths inside a share
 check(b.clean_rel("/Movies//HD/") == "Movies/HD" and b.clean_rel("a\\b") == "a/b" and b.clean_rel("") == "", "clean_rel normalises slashes")
 check(all(err(b.clean_rel, x) == "bad" for x in ["..", "a/../..", "a\\..\\b", "x\n", 'a"b', "./.."]), "clean_rel refuses '..', control characters and quotes")

@@ -1,5 +1,61 @@
 # Changelog
 
+## 1.6 -- 2026-11-24
+Builds on 1.5.5, plus:
+- **Version numbers:** two parts from now on (1.6, 1.7, ...); a third digit only for quick fixes (1.6.1).
+  update.sh compares numerically (1.5.5 < 1.6 < 1.6.1), and picking the newest tarball uses `sort -V`, which agrees.
+- **Libraries in your order.** Admins arrange the libraries in **Settings -> Libraries**: drag a row by its handle
+  (desktop) or use the up / down arrows (touch screens and phones). One order for everyone; it is used in the side
+  menu, the phone Libraries tab, the home page rows, Settings and the Android app (`GET /api/libraries`). New API:
+  `PUT /api/libraries/order {"ids": [...]}` (admins).
+- **Default order by type:** Movies, TV Shows, Other videos, Music (types `movies`, `tv`, `other`, `music`; any other
+  type goes last). On the first start of 1.6 existing libraries are ordered that way (then by name). A library you add
+  later goes right after the last library of its type (with none yet: just before the first library of a later type),
+  without changing the rest of your order. Database: new `libraries.sort_order` column (added automatically).
+- **Settings tabs** left to right: Libraries, Scan activity, Poster Sounds, Metadata, Transcoding, Users, My account,
+  System. Viewers see Poster Sounds and My account in that order. Settings opens on the first tab you can see.
+- **Share status dot.** Libraries on a network share (SMB / NFS) get a dot after their name in the side menu and on
+  the phone Libraries tab: green online, amber slow or not answering, red offline (not mounted, folder missing, error),
+  grey while the first check runs. Hover for details, e.g. "Share online · checked 12s ago" or "Share offline: share
+  not mounted". Local-folder libraries get no dot. The server checks every 45 s in the background (and on demand,
+  `POST /api/libraries/health`); each check lists the folder in its own thread with a 3 s limit, so a hung share can
+  never stall the server, and `GET /api/libraries` now uses the cached result for share libraries (it used to touch the
+  share on every request). The check never remounts anything; the existing share watchdog is unchanged.
+
+## 1.5.5 -- 2026-11-24
+Builds on 1.5.4, plus:
+- **Artwork for TV shows.** *Save artwork to folders* now works for TV libraries: the show poster (`poster.jpg`),
+  season posters (`season01-poster.jpg`, `season-specials-poster.jpg`), optional `fanart.jpg`, `tvshow.nfo` and
+  episode thumbnails (`<file>-thumb.jpg`, new *Episode thumbnails* switch) go into each matched show's folder.
+  Open it from **Settings -> Libraries -> Artwork** (all shows) or the new **Artwork** button on a show page
+  (admins, desktop and phone) with **Write for this show**. Dry-run preview, never overwrites unless asked, and
+  newly matched shows get artwork automatically when *Save automatically* is on (also after Fix match). Season
+  posters cost one TMDB request per show. Your own `poster.jpg` in a show folder is kept on rescans.
+- **Poster Sounds tab.** The interface sounds have their own Settings tab, *Poster Sounds* (for viewers too); My
+  account links to it. The speaker button and account menu say "Poster sounds". Saved settings carry over.
+- **Home page: Movies and TV only.** Continue watching and the Recently added rows (web, phone, Android app and the
+  My List in-progress list) leave out music, home videos and other libraries. If that leaves the home page empty
+  it points to Libraries.
+
+## 1.5.4 -- 2026-11-24
+Builds on 1.5.3, plus:
+- **Sharper 2K / 4K in H.264 from HEVC, AV1 and VP9 films.** H.264 needs roughly 1.5-2x the bitrate of those codecs
+  for the same picture, so the 1.5.3 cap (1.2x the source) made a 6.7 Mbps HEVC 4K film a soft 6.4 Mbps H.264
+  stream. For such sources the H.264 average is now **1.8x the source**, at least **12 Mbps for 4K** and
+  **8 Mbps for 2K**, and never above the profile ceiling (4K 25 Mbps / 2K 12 Mbps peak). Peak (`maxrate`) is
+  1.25x the average and the buffer 2x the peak. Example, The Return of the King (HEVC 6.7 Mbps): 4K
+  6.4 -> 12.0 Mbps average (15 peak), 2K 9.6 Mbps average (12 peak). H.264 sources, HEVC output and 1080p and below
+  are unchanged. The GPU (VAAPI / QSV / NVENC) and CPU paths use the same numbers; the CPU fallback of a 2K/4K
+  stream (1080p) no longer shrinks its rate a second time for wide-screen films.
+- **Dropped frames in the player.** The see-through status pill (top right, shown with the controls) now ends
+  with `Dropped N / total`: the video frames this browser dropped and showed since the stream started, amber
+  from 1 %, red from 5 %. Everyone sees it (the CPU/RAM part is still only for people allowed to see server
+  status). Many dropped frames mean the device or display can't keep up, not the server or network.
+- **HLS segments start on time.** MPEG-TS segments used to start ~1.4 s after their playlist time (the muxer's
+  default delay). They now start exactly on it (`-muxdelay 0 -muxpreload 0`), on every run after a seek too.
+  HEVC (fMP4) segments and remux are unchanged.
+- Tip for jumpy film playback: 24 fps films judder on a 30 Hz display. Use 60, 72 or 24 Hz (72 and 24 are smooth).
+
 ## 1.5.3 -- 2026-11-24
 Builds on 1.5.2, plus:
 - **Tidier library pages on phones** (<= 820 px, browser and Android app; the desktop is unchanged, checked

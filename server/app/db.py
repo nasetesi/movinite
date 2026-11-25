@@ -190,6 +190,8 @@ ADDED_COLUMNS = [
     ("libraries", "art_fanart", "INTEGER DEFAULT 0"),
     ("libraries", "art_nfo", "INTEGER DEFAULT 0"),
     ("libraries", "art_overwrite", "INTEGER DEFAULT 0"),
+    ("libraries", "art_thumbs", "INTEGER DEFAULT 0"),   # 1.5.5: TV episode thumbnails (<file>-thumb.jpg)
+    ("libraries", "sort_order", "INTEGER"),             # 1.6: admin-set display order (see liborder.py)
     # 1.4: categories (collection / franchise, age rating; cat_v = version of the category fields fetched)
     ("metadata", "collection_id", "INTEGER"),
     ("metadata", "collection_name", "TEXT"),
@@ -214,6 +216,8 @@ def migrate():
         if old and int(old[0]) < 4:
             _upgrade_4(c)
         c.execute("CREATE INDEX IF NOT EXISTS metadata_collection ON metadata(collection_id)")
+        from . import liborder
+        liborder.assign_missing(c)      # 1.6: first run orders the libraries Movies, TV, Other videos, Music
         c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
         c.commit()
     finally:

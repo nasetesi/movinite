@@ -130,6 +130,8 @@ A key saved in the UI wins over the one in `.env`. The key stays on the server (
 Home shows, in this order: **Continue watching** (only when you have part-watched movies; click to resume),
 **Recommended for you**, **Recently released**, **Recently added**, **Top movies**, then a row per top genre.
 "See all" opens the full list; the same lists are tabs on the Movies page.
+Since 1.5.5, Continue watching and the Recently added rows come only from **Movies** and **TV Shows** libraries
+(music, home videos and other libraries are left out; open them from Libraries).
 
 | Row | How movies get there |
 |---|---|
@@ -169,7 +171,7 @@ Settings work on phones: there is one swipeable line of tabs, each panel is a si
 and every control is at least 44 px. From v1.4.10 values with several parts (a share, its badge and folder) stack under their label, and paths wrap only after "/". The ⋯ menu on a movie page (Fix match, Home rows, tags, Download, File info)
 is only shown to admins, and the server refuses downloads from other users. Streaming is not affected.
 
-## Interface sounds (v1.4.8)
+## Poster Sounds (v1.4.8, own tab since 1.5.5)
 
 Quiet sounds made in the browser, with no audio files:
 - a soft tick when you hover over a poster or Tab to it;
@@ -178,7 +180,7 @@ Quiet sounds made in the browser, with no audio files:
 - a swish for the < > buttons.
 
 They are on by default at 30% volume and never play while a video is open. The speaker button in the top bar
-mutes or unmutes them. **Settings > My account > Sounds** has an on/off switch, separate Hover and Select
+mutes or unmutes them. **Settings > Poster Sounds** (its own tab since 1.5.5; before that it was under My account) has an on/off switch, separate Hover and Select
 switches, a volume slider and a Test button. Settings are saved for each user in each browser. Sound starts
 after your first click or key press, as browsers require. Phones get no hover sounds, and tap sounds are off by default.
 
@@ -426,7 +428,7 @@ To let the service read a folder you mounted yourself (e.g. owned by another use
 
 - Categories are for movie libraries; TV shows show their genres but have no genre filter or collections yet.
 
-- Artwork saving is for movies (not TV shows or music) and the .nfo has no cast/crew.
+- Artwork saving is for movies and TV shows (not music) and the .nfo has no cast/crew.
 - Online metadata is TMDB for movies and TV only. Music comes from file tags and embedded/folder art
   (no MusicBrainz). Cast/crew are not downloaded.
 - Remux needs 8-bit H.264 in MKV/MP4/MOV; other files still transcode.
@@ -470,7 +472,7 @@ non-admin users). The active tab is purple. The tab bar hides while the player i
 is minimised (PiP) or closed.
 
 The top bar shows the M logo, a search icon (opens the Search tab), the server-status dot (tap it for CPU / RAM)
-and a round **avatar** with your initial. Tap the avatar for My account, Settings, Interface sounds on/off and
+and a round **avatar** with your initial. Tap the avatar for My account, Settings, Poster sounds on/off and
 Sign out. Home rows have bold titles with a ">" that opens the full list, the library name under them, about
 2.3 posters across, 8 px rounded corners, title + year under each poster, a thin progress bar and a check on
 watched films. Desktop and wide tablets look exactly as before.
@@ -522,8 +524,14 @@ down by itself if HEVC fails.
 | 4K 3840x2160 | 25 Mbps | 16 Mbps |
 | 2K 2560x1440 | 12 Mbps | 8 Mbps |
 
-Both columns are capped at 1.2x the source bitrate (at least 6 Mbps). HDR films are sent without tone-mapping
-(colours may look flat; the player says so).
+These are peak rates. HEVC output, and H.264 from an H.264 source, are capped at 1.2x the source bitrate (at least
+6 Mbps). **1.5.4:** H.264 from an HEVC / AV1 / VP9 source averages 1.8x the source (at least 12 Mbps for 4K and
+8 Mbps for 2K, peak 1.25x the average, never above the table), because H.264 needs more bits for the same picture.
+HDR films are sent without tone-mapping (colours may look flat; the player says so).
+
+The player's status pill shows **Dropped N / total** video frames while the controls are up (1.5.4). A high count
+means the device or its display can't keep up. Films are 24 fps, so a 30 Hz display judders; 60, 72 or 24 Hz is
+better.
 
 **How many at once (Intel Arc A310, a short preliminary run on 2026-11-24 with HEVC 10-bit 4K films on the full GPU path; the full benchmark is still to come):**
 
@@ -556,3 +564,50 @@ How it works:
 - Listing a server's shares needs `smbclient` on the server. Without it, type `//server/Share` into the Share field
   and Browse.
 
+## TV show artwork, Poster Sounds tab, home rows (1.5.5)
+
+**Artwork for TV shows.** The *Save artwork to folders* feature (1.3) now works for TV libraries too:
+**Settings -> Libraries -> Artwork** on the TV library (all matched shows), or the **Artwork** button on a show's page
+(admins; adds **Write for this show**). It writes into the show's folder (the first folder under the library):
+
+| File | What |
+|---|---|
+| `poster.jpg` | TMDB show poster |
+| `season01-poster.jpg`, `season-specials-poster.jpg` | TMDB season posters |
+| `fanart.jpg` | backdrop (if *Fanart* is on) |
+| `tvshow.nfo` | title, year, plot, genres, TMDB / IMDb ids (if *.nfo* is on) |
+| `<episode file name>-thumb.jpg` | TMDB episode still, next to the episode (if *Episode thumbnails* is on) |
+
+Same rules as movies: *Preview (dry run)* first, existing files are never replaced unless *Overwrite existing
+files* is on, *Save automatically for new matches* also covers newly matched shows, and a share has to allow writing.
+Episodes straight in the library root, or folders holding more than one show, get no show-level files.
+A `poster.jpg` / `folder.jpg` you put in a show folder yourself is shown in the grid and on the show page and is kept
+on rescans (it wins over TMDB). To go back to TMDB art, delete the file (or write again with *Overwrite* on) and rescan.
+
+**Poster Sounds.** The interface sounds moved from My account to their own tab, **Settings -> Poster Sounds**
+(viewers too). Your existing on/off, hover, select and volume settings carry over.
+
+**Home rows.** Continue watching and Recently added list only Movies and TV Shows (web, phone and Android app).
+
+## Library order, settings tabs, share status (1.6)
+
+From 1.6 versions have two parts (1.6, 1.7); a third digit means a quick fix (1.6.1). `update.sh` compares them as numbers.
+
+**Library order.** **Settings -> Libraries** (admins): drag a row by the handle at its left, or use the up / down arrows
+(the only control on touch screens). The order is the same for everyone and is used in the side menu, the phone
+Libraries tab, the home page and the Android app. By default libraries are ordered by type:
+
+| Position | Type in Add library | Internal type |
+|---|---|---|
+| 1 | Movies | `movies` |
+| 2 | TV shows | `tv` |
+| 3 | Other videos | `other` |
+| 4 | Music | `music` |
+
+A new library goes after the last library of its type, so your own arrangement stays as it is.
+
+**Settings tabs:** Libraries, Scan activity, Poster Sounds, Metadata, Transcoding, Users, My account, System.
+
+**Share status.** A dot after a network-share library in the side menu (and on the phone Libraries tab) shows whether
+the share answers: green online, amber slow / not answering, red offline, grey checking. Hover it for the reason and
+when it was checked. Checked every 45 s; checks time out after 3 s and never remount the share.

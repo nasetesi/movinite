@@ -971,6 +971,8 @@ def process_library(library_id, force=False):
                         fetch_details("tv", m["id"], force=force)
                         apply_show_match(library_id, show, m["id"], "matched")
                         match_show_seasons(library_id, show, m["id"], force=force)
+                        _after_match(library_id, [r["id"] for r in db.rows(       # 1.5.5: artwork for new show matches
+                            "SELECT id FROM items WHERE library_id=? AND show=?", (library_id, show))])
                         st["matched"] += 1
                     else:
                         apply_show_match(library_id, show, None, "nomatch")

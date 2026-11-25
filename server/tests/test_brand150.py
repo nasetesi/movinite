@@ -16,7 +16,7 @@ def lum(h):
     return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 def ratio(a, b):
     la, lb = sorted([lum(a), lum(b)], reverse=True); return (la + 0.05) / (lb + 0.05)
-check(re.search(r'"1\.5\.[0-9]+"', ver), "version 1.5.x")
+check(tuple(int(x) for x in re.search(r'"([0-9.]+)"', ver).group(1).split(".")) >= (1, 5), "version (1, 5) or later (numeric; 1.6 > 1.5.5)")
 # ---- name
 check("<title>Movinite</title>" in html and 'name="application-name" content="Movinite"' in html, "page title + application-name Movinite")
 check('src="/static/logo-bar.png" alt="Movinite"' in html and 'src="/static/logo-full.png" alt="Movinite"' in js and 'class="top-brand"' in html, "official logo: compact in the menu / phone top bar, full on the sign-in page")
