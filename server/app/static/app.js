@@ -414,6 +414,18 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) { cle
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && SYS.open) setSysOpen(false, false); });
 })();
 
+function syncTopH() {
+  const t = $(".top");
+  if (t) document.documentElement.style.setProperty("--top-h", t.offsetHeight + "px");
+}
+if (typeof ResizeObserver === "function") {
+  const mo = new ResizeObserver(syncTopH);
+  const attach = () => { const t = $(".top"); if (t && !syncTopH._obs) { mo.observe(t); syncTopH._obs = true; } };
+  attach();
+  document.addEventListener("DOMContentLoaded", attach);
+}
+window.addEventListener("resize", syncTopH);
+
 async function boot() {
   try {
     const st = await api("/api/setup-status", { noAuthRedirect: true });
@@ -422,6 +434,7 @@ async function boot() {
   } catch (e) { showLogin(); return; }
   $("#auth").classList.add("hidden"); $("#shell").classList.remove("hidden");
   $("#whoami").textContent = ME.username; $("#ver").textContent = "v" + ME.version;
+  syncTopH();
   MOB.setup();
   SFX.load(ME.username);
   $("#sndbtn").onclick = () => SFX.toggle();
@@ -1286,10 +1299,12 @@ function trackList(tracks, showAlbum) {
     <div class="dur">${fmtDur(t.duration)}</div>
     <button type="button" class="iconbtn ab-tool tadd" data-add-pl="${t.id}" title="Add to playlist" aria-label="Add to playlist">${plus}</button></div>`).join("")}</div>`;
 }
-function bindTrackList(tracks) {
-  $$("[data-track]").forEach(el => {
+function bindTrackList(tracks, root) {
+  const scope = root || document;
+  $$(scope === document ? ".list [data-track], .pli-row .li[data-track]" : "[data-track]", scope).forEach(el => {
+    if (el.matches && el.matches(".pli-row")) return; // play from the title row, not the chrome
     el.onclick = (e) => {
-      if (e.target.closest("[data-add-pl]")) return;
+      if (e.target.closest("[data-add-pl], .pli-handle, .pli-move, [data-rm]")) return;
       if (el.dataset.suppressClick) { delete el.dataset.suppressClick; return; }
       playQueue(tracks, +el.dataset.track);
     };
@@ -1367,11 +1382,27 @@ function playlistArt(poster, cls) {
   const src = poster ? thumbUrl(poster) : LOGO_MARK;
   return `<div class="${cls || "pli-art"}${logo}"><img src="${src}" alt=""></div>`;
 }
+const ICO_PLAY = ico(`<path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/>`);
+const ICO_SHUFFLE = ico(`<path d="M4.5 7.5h3.4l8.2 9h3.4"/><path d="M16.3 5.8l3.2 1.7-3.2 1.7"/><path d="M16.3 14.8l3.2 1.7-3.2 1.7"/><path d="M4.5 16.5h3.4l2.2-2.4"/><path d="M15.9 9.9l-2.2-2.4"/>`);
 function playlistCard(libId, p) {
-  return `<a class="pli-card" href="#/library/${libId}/playlist/${p.id}">
-    ${playlistArt(p.poster)}
-    <div class="pli-meta"><b>${esc(p.name)}</b><div class="muted">${p.track_count} track${p.track_count === 1 ? "" : "s"}${p.duration ? " · " + fmtLen(p.duration) : ""}</div></div>
-  </a>`;
+  const n = p.track_count || 0;
+  return `<div class="pli-card-wrap">
+    <a class="pli-card" href="#/library/${libId}/playlist/${p.id}">
+      ${playlistArt(p.poster)}
+      <div class="pli-meta"><b>${esc(p.name)}</b><div class="muted">${n} track${n === 1 ? "" : "s"}${p.duration ? " · " + fmtLen(p.duration) : ""}</div></div>
+    </a>
+    <div class="pli-card-actions">
+      <button type="button" class="btn" data-pl-play="${p.id}"${n ? "" : " disabled"}>${ICO_PLAY} Play</button>
+      <button type="button" class="btn ghost" data-pl-shuffle="${p.id}"${n ? "" : " disabled"}>${ICO_SHUFFLE} Shuffle</button>
+    </div>
+  </div>`;
+}
+async function playPlaylist(pid, shuffle, start) {
+  const d = await api("/api/playlists/" + pid);
+  const tracks = d.tracks || [];
+  if (!tracks.length) { toast("This playlist is empty", true); return; }
+  const idx = start == null ? 0 : Math.max(0, Math.min(start, tracks.length - 1));
+  playQueue(shuffle ? shuffled(tracks) : tracks, shuffle ? 0 : idx);
 }
 async function viewPlaylists(libId) {
   const lib = LIBS.find(l => l.id === libId) || { id: libId, name: "Music", kind: "music" };
@@ -1386,6 +1417,8 @@ async function viewPlaylists(libId) {
   $("#libview").value = "playlists";
   $("#libview").onchange = () => { location.hash = `#/library/${libId}/${$("#libview").value}`; };
   $("#pl-new").onclick = () => openPlaylistSheet([], () => { location.hash = `#/library/${libId}/playlists`; route(); });
+  $$("[data-pl-play]").forEach(b => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); playPlaylist(+b.dataset.plPlay, false); });
+  $$("[data-pl-shuffle]").forEach(b => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); playPlaylist(+b.dataset.plShuffle, true); });
   mlBind({ id: libId, key: "filter", menu: [] });
 }
 async function viewPlaylist(pid, libId) {
@@ -1398,8 +1431,8 @@ async function viewPlaylist(pid, libId) {
     <h1 id="pl-name">${esc(d.name)}</h1>
     <div class="meta"><span>${d.track_count} track${d.track_count === 1 ? "" : "s"}</span>${d.duration ? `<span>${fmtLen(d.duration)}</span>` : ""}</div>
     <div class="pli-actions">
-      <button class="btn" id="pl-play" type="button"${tracks.length ? "" : " disabled"}>Play</button>
-      <button class="btn ghost" id="pl-shuffle" type="button"${tracks.length ? "" : " disabled"}>Shuffle</button>
+      <button class="btn" id="pl-play" type="button"${tracks.length ? "" : " disabled"}>${ICO_PLAY} Play</button>
+      <button class="btn ghost" id="pl-shuffle" type="button"${tracks.length ? "" : " disabled"}>${ICO_SHUFFLE} Shuffle</button>
       <button class="btn ghost" id="pl-rename" type="button">Rename</button>
       <button class="btn ghost" id="pl-delete" type="button">Delete</button>
     </div>
@@ -1413,7 +1446,8 @@ function playlistTrackRows(tracks) {
   const down = ico(`<path d="M7 10l5 5 5-5"/>`);
   const x = ico(`<path d="M7 7l10 10M17 7L7 17"/>`);
   return `<div class="list" id="pl-tracklist">${tracks.map((t, n) => `<div class="pli-row" data-entry="${t.entry_id}" data-track="${n}" draggable="true">
-    <button type="button" class="pli-handle" title="Drag to reorder" aria-label="Reorder">&#8942;</button>
+    <button type="button" class="pli-handle" title="Drag to reorder" aria-label="Reorder" draggable="false">&#8942;</button>
+    <button type="button" class="iconbtn ab-tool pli-play" data-track="${n}" data-item="${t.id}" title="Play from here" aria-label="Play ${esc(t.title)} from this playlist">${ICO_PLAY}</button>
     <div class="li" data-track="${n}" data-item="${t.id}">
       <div class="num">${n + 1}</div>
       <div class="ttl"><div>${esc(t.title)}</div><div class="muted" style="font-size:12.5px">${esc([t.artist, t.album].filter(Boolean).join(" · "))}</div></div>
@@ -1426,9 +1460,17 @@ function playlistTrackRows(tracks) {
 }
 function bindPlaylistDetail(d, lib) {
   const tracks = d.tracks;
-  bindTrackList(tracks);
+  const list = $("#pl-tracklist");
+  bindTrackList(tracks, list);
   if ($("#pl-play")) $("#pl-play").onclick = () => playQueue(tracks, 0);
   if ($("#pl-shuffle")) $("#pl-shuffle").onclick = () => playQueue(shuffled(tracks), 0);
+  $$(".pli-play", list || document).forEach(b => b.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    playQueue(tracks, +b.dataset.track);
+  });
+  // Touch / phone: HTML5 drag on the row often swallows the tap that should start playback.
+  const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+  if (list && coarse) $$(".pli-row", list).forEach(r => { r.draggable = false; });
   $("#pl-rename").onclick = () => modal(`<h2>Rename playlist</h2><label>Name</label><input id="pl-ren" maxlength="80" value="${esc(d.name)}"><div class="modal-actions"><button class="btn ghost" type="button" id="pl-ren-c">Cancel</button><button class="btn" type="button" id="pl-ren-ok">Save</button></div>`, () => {
     $("#pl-ren-c").onclick = closeModal;
     $("#pl-ren").focus(); $("#pl-ren").select();
@@ -1462,7 +1504,6 @@ function bindPlaylistDetail(d, lib) {
     try { await api(`/api/playlists/${d.id}/order`, { method: "PUT", body: { ids } }); route._keepScroll = true; route(); }
     catch (err) { toast(err.message, true); }
   });
-  const list = $("#pl-tracklist");
   if (list) {
     let dragEl = null;
     list.addEventListener("dragstart", (e) => {
@@ -2961,7 +3002,12 @@ function closePlayer() {
 $("#pl-close").onclick = closePlayer;
 $("#pl-next").onclick = () => { if (P && P.it.next) { saveProgress(); const n = P.it.next.id; teardownVideo(true); playItem(n, 0); } };
 document.addEventListener("keydown", (e) => {
-  if (!P || PIP.minimized() || e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;   // in PiP the page is free for browsing
+  const typing = e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA";
+  if ((e.key === "m" || e.key === "M") && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const audioOpen = $("#audiobar") && !$("#audiobar").classList.contains("hidden");
+    if ((!P || PIP.minimized()) && audioOpen) { e.preventDefault(); toggleAudioMute(); return; }
+  }
+  if (!P || PIP.minimized() || typing) return;   // in PiP the page is free for browsing
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) OV.show();   // 1.4.12: any key brings the controls back
   if (e.key === "Escape" && BAR.popOpen()) BAR.closePop();
@@ -3385,7 +3431,9 @@ function playAlbum(libId, artist, album, idx) {
 }
 async function playQueue(list, idx) {
   if (P) closePlayer();
-  Q.list = list; Q.idx = idx; await loadTrack();
+  Q.list = (list || []).slice();
+  Q.idx = idx || 0;
+  await loadTrack();
 }
 async function loadTrack() {
   const t0 = Q.list[Q.idx]; if (!t0) return;
@@ -3438,8 +3486,90 @@ $("#ab-range").addEventListener("change", () => {
 $("#ab-play").onclick = () => { eqResume(); audio.paused ? audio.play() : audio.pause(); };
 $("#ab-next").onclick = () => { eqResume(); nextTrack(); };
 $("#ab-prev").onclick = () => { eqResume(); prevTrack(); };
-$("#ab-vol").oninput = () => { audio.volume = $("#ab-vol").value / 100; };
 $("#ab-close").onclick = stopAudio;
+
+/* 1.8.1: music mute + volume. Remembers the last non-zero level. M toggles mute. */
+const AB_VOL_KEY = "ab-vol", AB_MUTE_KEY = "ab-muted";
+let abLastVol = 1, abVolPop = false;
+function abSavedVol() {
+  try {
+    const v = parseFloat(localStorage.getItem(AB_VOL_KEY));
+    if (isFinite(v) && v > 0 && v <= 1) return v;
+  } catch (e) {}
+  return 1;
+}
+function abSavedMuted() {
+  try { return localStorage.getItem(AB_MUTE_KEY) === "1"; } catch (e) { return false; }
+}
+function abPersistVol() {
+  try {
+    if (audio.volume > 0) localStorage.setItem(AB_VOL_KEY, String(audio.volume));
+    localStorage.setItem(AB_MUTE_KEY, audio.muted || audio.volume === 0 ? "1" : "0");
+  } catch (e) {}
+}
+function abSyncVol() {
+  const muted = !!(audio.muted || audio.volume === 0);
+  const shown = Math.round((muted ? 0 : audio.volume) * 100);
+  const percent = Math.round((audio.muted ? 0 : audio.volume) * 100);
+  const v = Math.round((audio.muted ? abLastVol : (audio.volume || 0)) * 100);
+  const slider = audio.muted ? Math.round(abLastVol * 100) : Math.round(audio.volume * 100);
+  ["#ab-vol", "#ab-vol-v"].forEach(sel => {
+    const el = $(sel); if (!el) return;
+    if (document.activeElement !== el) el.value = String(slider);
+  });
+  const btn = $("#ab-mute");
+  if (btn) {
+    btn.classList.toggle("muted", muted);
+    btn.setAttribute("aria-pressed", muted ? "true" : "false");
+    btn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+    btn.title = muted ? "Unmute (M)" : "Mute (M)";
+  }
+  const wrap = $("#ab-volw"); if (wrap) wrap.classList.toggle("is-muted", muted);
+}
+function abSetVolume(pct, fromUser) {
+  const v = Math.max(0, Math.min(100, +pct)) / 100;
+  audio.volume = v;
+  if (v > 0) { abLastVol = v; audio.muted = false; }
+  else audio.muted = true;
+  if (fromUser) abPersistVol();
+  abSyncVol();
+}
+function toggleAudioMute() {
+  if (audio.muted || audio.volume === 0) {
+    audio.muted = false;
+    if (audio.volume === 0) audio.volume = abLastVol || abSavedVol() || 0.5;
+    if (audio.volume > 0) abLastVol = audio.volume;
+  } else {
+    if (audio.volume > 0) abLastVol = audio.volume;
+    audio.muted = true;
+  }
+  abPersistVol();
+  abSyncVol();
+}
+function abSetVolPop(on) {
+  abVolPop = !!on;
+  const pop = $("#ab-vol-pop"), btn = $("#ab-vol-open");
+  if (pop) pop.classList.toggle("hidden", !abVolPop);
+  if (btn) btn.setAttribute("aria-expanded", abVolPop ? "true" : "false");
+  const wrap = $("#ab-volw"); if (wrap) wrap.classList.toggle("open", abVolPop);
+}
+function abInitVol() {
+  abLastVol = abSavedVol();
+  audio.volume = abLastVol;
+  audio.muted = abSavedMuted();
+  abSyncVol();
+}
+abInitVol();
+if ($("#ab-mute")) $("#ab-mute").onclick = (e) => { e.stopPropagation(); toggleAudioMute(); };
+["#ab-vol", "#ab-vol-v"].forEach(sel => {
+  const el = $(sel); if (!el) return;
+  el.addEventListener("input", () => abSetVolume(el.value, true));
+  el.addEventListener("change", () => abSetVolume(el.value, true));
+});
+if ($("#ab-vol-open")) $("#ab-vol-open").onclick = (e) => { e.stopPropagation(); abSetVolPop(!abVolPop); };
+document.addEventListener("click", (e) => { if (abVolPop && !e.target.closest("#ab-volw")) abSetVolPop(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && abVolPop) abSetVolPop(false); });
+audio.addEventListener("volumechange", abSyncVol);
 $("#ab-stage").onclick = openAudioFull;
 $("#ab-art").onclick = openAudioFull;
 $("#ab-meta").onclick = openAudioFull;

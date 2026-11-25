@@ -1,16 +1,26 @@
 # Changelog
 
+## 1.8.1 -- 2026-11-25
+Builds on 1.8, plus music playback, volume fixes, and frosted-glass chrome:
+
+- **Play and Shuffle are on the playlist list and the playlist page.** You could already add playlists in 1.7.6, and the detail page had Play / Shuffle, but the playlist list (the first place you land after creating one) had no play control — only a card that opened the page. Those buttons were also easy to miss, and on a phone a tap on a track often started a drag instead of playing. The list now has Play and Shuffle on each playlist, the detail page uses the same themed play and shuffle icons as albums, and each track has a play button that starts the playlist from that song, in playlist order. On touch screens the row is no longer a drag handle, so a tap plays. Shuffle still uses a copy of the list, so the page order does not change.
+- **Mute and a volume control you can actually use.** The music player had no mute button, and M only muted the video player. On a phone the volume slider was hidden on the mini bar and sat on the very bottom row of the full now-playing screen, where it is hard to drag. The slider now sits with the play controls, with a larger hit area, in the purple theme. A mute button next to it remembers the last volume and shows a muted icon; M toggles mute while music is playing. On a phone the mini bar shows mute plus a vertical volume popover that opens above the bar, so you are not reaching the bottom edge.
+- **Frosted-glass chrome.** The top status bar, the mini music player, and the phone tab bar use the same translucent purple glass, blur, border, and inset highlight as the Server status popup. The mini player is a floating glass bar so the list can show through; the volume popover and equalizer use the same tokens. The full now-playing screen stays a solid page.
+
+No database schema change.
+
+
+
 ## 1.8 -- 2026-11-25
 Builds on 1.7.9, plus a themed Server status panel and background-cache yield:
 
-- **Themed Server status.** The header status control and dropdown use the purple theme: CPU and RAM ring gauges, a purple sparkline with a soft fill, and bars that stay purple at normal use and shift amber or red when high. Outlined icons mark disks and background work. Disk names wrap in full (with a tooltip) instead of being cut off. Sizes at or above about 1 TB are shown in TB.
+- **Themed Server status.** The header pill and dropdown use the purple theme: a glass-dark pill, CPU and RAM ring gauges, a purple sparkline with a soft fill, and bars that stay purple at normal use and shift amber or red when high. Outlined icons mark disks and background work. Disk names wrap in full (with a tooltip) instead of being cut off. Sizes at or above about 1 TB are shown in TB.
 - **CPU and RAM icons.** The header status control uses clear 18px outlined chip and memory-module icons (same 24px stroke language as the library icons, in `#B07CFF`) each followed by a compact percent, on desktop and phone — for example a chip + "3%" and a stick + "1%". The full RAM figure (e.g. "3.6 / 379 GB") is in the tooltip and in the dropdown panel, not on the toolbar. The icons sit directly on the header with no rounded border, fill, pill container, or usage bars. Hover or an open panel adds only a faint purple underline and a soft icon glow; the control stays clickable. The old sparkline and mini progress bars are gone from the toolbar. The dropdown panel still has the same icons centred in its CPU and RAM rings, with usage bars and the RAM figure kept on one line.
 - **Share used space.** Some network shares report free space equal to their total size, so the bar looked empty even though the label said the share was entirely free. Those shares are now marked as "used space is not reported" and the bar is left empty instead of pretending the disk is unused or full.
 - **Transcoding vs background work.** When nothing is playing, the panel shows the card that is ready, for example "Idle · GPU (VAAPI)", not "CPU". Background subtitle, remux, and opening-clip jobs are listed separately as "Background: N jobs (…)", so a cache job is not mistaken for a viewer transcode.
 - **Background jobs yield to play.** Pressing play immediately stops an in-flight subtitle extract, remux probe, or opening-clip prefetch (they used to run to completion and could delay the first picture by a few seconds while they held the NAS). New cache work already waited until the stream was idle; this also interrupts the job that is running.
 
 No database schema change. This release does not need a new migrate() snapshot.
-
 
 
 ## 1.7.9 -- 2026-11-25
@@ -25,6 +35,7 @@ Builds on 1.7.8, plus faster first picture (schema 9):
 - **Versioned app files** (JS, CSS, logos, icons, the manifest) carry long cache headers, and the service worker precaches them. API and HLS responses are not cached.
 
 update.sh still writes a full code+database tarball first. migrate() also writes `data/media-server.db.pre-schema9` (mode 600) before the new tables.
+
 
 ## 1.7.8 -- 2026-11-25
 Builds on 1.7.7, plus:
@@ -84,7 +95,7 @@ Builds on 1.7.1, and includes the unreleased 1.7.2 phone work, plus:
   rewritten for the current match even without "Overwrite". Files written by other tools are never touched.
 - **Phone Libraries tab, kept simple.** The Collections, Recommended, Recently added and Top movies chips
   under each movie library are gone, so every library is just its card -- the same as TV, Music and Other.
-  The list is still grouped under your share headings (NAS, Backup NAS, ...) and movie libraries
+  The list is still grouped under your share headings (Sunset Server, Waimea Server, ...) and movie libraries
   still say how many films they hold (1,967 movies), not how many files.
   (Those two were already in 1.7. If the phone still showed a flat list and "2,022 items", it was keeping an
   older copy of the page; see cache-busting below.)

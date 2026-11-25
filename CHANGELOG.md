@@ -1,7 +1,13 @@
 # Changelog
 
-The full server history (1.0 to 1.8) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
+The full server history (1.0 to 1.8.1) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
+
+## 1.8.1 -- 2026-11-25
+
+Server 1.8.1 is a quick fix on 1.8. The Android app is unchanged (its WebView uses the same JS). Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.8.1 — play playlists, mute and volume, frosted-glass chrome:** Play and Shuffle are on the playlist list as well as the playlist page, and you can start a playlist from any song in it. A mute button sits next to the volume control (M toggles it) and remembers the last level. Volume sits with the play controls; on a phone a vertical slider opens above the mini player. The top bar, mini player, and phone tab bar use the same frosted glass as the Server status popup.
 
 ## 1.8 -- 2026-11-25
 
