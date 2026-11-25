@@ -242,7 +242,17 @@ function forcePasswordChange() {
 // one small request every 4 s; stops while the tab is hidden; the server caches the numbers so many tabs are cheap
 const SYS = { timer: null, d: null, open: false, pinned: false };
 const GB = (b) => (b / 1073741824);
+const TB = (b) => (b / 1099511627776);
 function fmtGB(b, dp) { const g = GB(b || 0); return g >= 100 ? g.toFixed(0) : g.toFixed(dp == null ? 1 : dp); }
+function fmtDisk(b, dp) {
+  const n = b || 0;
+  if (n >= 0.95 * 1099511627776) {
+    const t = TB(n);
+    const nDp = dp == null ? (t >= 10 ? 1 : 2) : dp;
+    return t.toFixed(nDp) + " TB";
+  }
+  return fmtGB(n, dp) + " GB";
+}
 function fmtUptime(s) { const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; }
 function cpuPct(d) { return d.cpu == null ? "n/a" : Math.round(d.cpu) + "%"; }
 function sysLevel(p, warn, bad) { return p >= bad ? "bad" : p >= warn ? "warn" : "ok"; }
@@ -250,9 +260,38 @@ function sysSpark(vals, w, h) {
   if (!vals.length) return "";
   const n = vals.length, step = n > 1 ? w / (n - 1) : w;
   const pts = vals.map((v, i) => `${(i * step).toFixed(1)},${(h - 1 - (Math.max(0, Math.min(100, v)) / 100) * (h - 2)).toFixed(1)}`).join(" ");
-  return `<svg class="ss-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+  const lastX = ((n - 1) * step).toFixed(1);
+  return `<svg class="ss-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polygon points="0,${h} ${pts} ${lastX},${h}" fill="currentColor" fill-opacity="0.18" stroke="none"/><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 }
-function sysBar(p, lvl) { return `<span class="ss-bar ${lvl}"><i style="width:${Math.max(2, Math.min(100, p)).toFixed(0)}%"></i></span>`; }
+function sysBar(p, lvl) { return `<span class="ss-bar ${lvl}"><i style="width:${Math.max(0, Math.min(100, p)).toFixed(0)}%"></i></span>`; }
+function sysRing(pct, lvl, size, icon) {
+  const s = size || 48, r = 16, c = 2 * Math.PI * r, p = Math.max(0, Math.min(100, pct || 0));
+  const dash = (p / 100) * c;
+  const svg = `<svg class="ss-ring" width="${s}" height="${s}" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="${r}" fill="none" stroke="currentColor" stroke-opacity=".18" stroke-width="4"/><circle cx="22" cy="22" r="${r}" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-dasharray="${dash.toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 22 22)"/></svg>`;
+  if (!icon) return `<span class="ss-ring-wrap ${lvl}">${svg}</span>`;
+  return `<span class="ss-ring-wrap ${lvl}">${svg}<span class="ss-ring-ico">${icon}</span></span>`;
+}
+function transcodeLabel(d) {
+  const hw = d.hw || {};
+  if (hw.streams) return `<span class="hw-badge">GPU</span> ${esc(hw.label || "GPU")} · ${hw.streams} stream${hw.streams > 1 ? "s" : ""}`;
+  if (hw.method) return `Idle · GPU (${esc(hw.label || "ready")})${hw.name ? ` <span class="muted">(${esc(hw.name)})</span>` : ""}`;
+  if ((hw.mode || "off") === "off") return "Off (CPU)";
+  return "Idle (CPU)";
+}
+function backgroundLabel(d) {
+  const bg = d.background || {};
+  const n = Math.max(bg.ffmpeg || 0, bg.running || 0);
+  if (!n) return "";
+  const kinds = { subtitles: "subtitles", prefetch: "opening clips", remux: "remux plans", cache: "cache" };
+  const k = kinds[bg.kind] || "cache";
+  return `Background: ${n} job${n > 1 ? "s" : ""} (${k})`;
+}
+const SS_DISK_ICO = ico(`<path d="M4 6.5h16A1.5 1.5 0 0 1 21.5 8v8A1.5 1.5 0 0 1 20 17.5H4A1.5 1.5 0 0 1 2.5 16V8A1.5 1.5 0 0 1 4 6.5Z"/><path d="M2.5 12h19"/><circle cx="16.5" cy="9.2" r=".7" fill="currentColor" stroke="none"/><circle cx="18.7" cy="9.2" r=".7" fill="currentColor" stroke="none"/>`);
+const SS_ACT_ICO = ico(`<path d="M4.5 18.5 9 12l3.2 4.2L15.5 11l4 7.5"/><path d="M4 6.5h16"/>`);
+// 1.8: outlined 24px-grid chip and DIMM, same stroke language as the library icons
+const SS_CPU_ICO = ico(`<rect x="7.25" y="7.25" width="9.5" height="9.5" rx="1.35"/><rect x="9.85" y="9.85" width="4.3" height="4.3" rx="0.7"/><path d="M9.75 7.25V4.4M12 7.25V4.4M14.25 7.25V4.4"/><path d="M9.75 16.75v2.85M12 16.75v2.85M14.25 16.75v2.85"/><path d="M7.25 9.75H4.4M7.25 12H4.4M7.25 14.25H4.4"/><path d="M16.75 9.75h2.85M16.75 12h2.85M16.75 14.25h2.85"/>`);
+const SS_RAM_ICO = ico(`<path d="M3.35 7.6h17.3a1.15 1.15 0 0 1 1.15 1.15v5.5a1.15 1.15 0 0 1-1.15 1.15h-5.05l-.55-1.15h-4.1L10.4 15.4H3.35A1.15 1.15 0 0 1 2.2 14.25v-5.5A1.15 1.15 0 0 1 3.35 7.6Z"/><rect x="4.85" y="9.15" width="3.35" height="2.7" rx="0.45"/><rect x="10.05" y="9.15" width="3.9" height="2.7" rx="0.45"/><rect x="15.8" y="9.15" width="3.35" height="2.7" rx="0.45"/><path d="M5.1 16.85v2.05M6.7 16.85v2.05M8.3 16.85v2.05M11.2 16.85v2.05M12.8 16.85v2.05M14.4 16.85v2.05M17.4 16.85v2.05M19 16.85v2.05"/>`);
+function ssMem(d) { return `${fmtGB(d.mem.used)} / ${fmtGB(d.mem.total, 0)} GB`; }
 function renderSysstat() {
   const d = SYS.d, box = $("#sysstat");
   if (!d) return;
@@ -260,13 +299,14 @@ function renderSysstat() {
   const memPct = d.mem.total ? 100 * d.mem.used / d.mem.total : 0;
   const cl = sysLevel(d.cpu, 60, 85), ml = sysLevel(memPct, 75, 90);
   const worst = [cl, ml].includes("bad") ? "bad" : [cl, ml].includes("warn") ? "warn" : "ok";
-  const cpuHist = (d.history || []).map(x => x[1]);
   const hw = d.hw || {}, gpu = hw.streams > 0;
+  const ramPct = Math.round(memPct) + "%";
   $("#ss-pill").className = "ss-pill " + worst + (gpu ? " gpu" : "");
-  $("#ss-pill").innerHTML = `<span class="ss-dot ${worst}"></span>${gpu ? `<span class="hw-badge ss-gpu" title="${hw.streams} stream${hw.streams > 1 ? "s" : ""} on the video card (${esc(hw.label || "")})">GPU</span>` : ""}
-    <span class="ss-full"><span class="ss-k">CPU</span> <b class="${cl}">${cpuPct(d)}</b>${sysSpark(cpuHist, 44, 16).replace("ss-spark", "ss-spark " + cl)}
-    <span class="ss-sep">&middot;</span><span class="ss-k">RAM</span> <b class="${ml}">${fmtGB(d.mem.used)}/${fmtGB(d.mem.total, 0)} GB</b>${sysBar(memPct, ml)}</span>`;
-  $("#ss-pill").title = `Server status -- CPU ${cpuPct(d)}, RAM ${fmtGB(d.mem.used)} of ${fmtGB(d.mem.total)} GB${gpu ? ` -- ${hw.streams} on the GPU (${hw.label})` : ""}`;
+  // Toolbar: 18px outlined icons + compact percents on all widths (full RAM size is in the tooltip / panel).
+  $("#ss-pill").innerHTML = `${gpu ? `<span class="hw-badge ss-gpu" title="${hw.streams} stream${hw.streams > 1 ? "s" : ""} on the video card (${esc(hw.label || "")})">GPU</span>` : ""}
+    <span class="ss-metric" title="CPU ${cpuPct(d)}"><span class="ss-pill-ico ${cl}">${SS_CPU_ICO}</span><b class="${cl}">${cpuPct(d)}</b></span>
+    <span class="ss-metric" title="RAM ${ssMem(d)} (${ramPct})"><span class="ss-pill-ico ${ml}">${SS_RAM_ICO}</span><b class="${ml}">${ramPct}</b></span>`;
+  $("#ss-pill").title = `Server status -- CPU ${cpuPct(d)}, RAM ${fmtGB(d.mem.used)} of ${fmtGB(d.mem.total)} GB (${ramPct})${gpu ? ` -- ${hw.streams} on the GPU (${hw.label})` : ""}`;
   if (SYS.open) renderSysPanel();
   renderPlayerStat();
 }
@@ -302,7 +342,7 @@ function renderPlayerStat() {
   const gpu = !!(d.hw && d.hw.streams);
   const enc = gpu
     ? `<span class="hw-badge" title="${d.hw.streams} stream${d.hw.streams > 1 ? "s" : ""} on the video card (${esc(d.hw.label || "")})">GPU</span>`
-    : `<span class="k">Encoder</span><div class="row"><b>${d.hw && d.hw.method ? esc(d.hw.label || "GPU ready") : "CPU"}</b></div>`;
+    : `<span class="k">Encoder</span><div class="row"><b>${transcodeLabel(d)}</b></div>`;
   el.className = "pl-ss";
   const qCap = P && P.cappedTo ? `Auto-capped to ${qualName(P.cappedTo)}` : (P && P.mode ? (P.mode === "direct" ? "Direct play" : P.mode === "remux" ? "Remux" : qualName(P.mode)) : "");
   el.innerHTML = `<div class="pl-ss-cell"><span class="k">CPU</span><div class="row"><b class="${cl}">${cpuPct(d)}</b></div>${sysBar(d.cpu || 0, cl)}</div>
@@ -322,20 +362,33 @@ function renderSysPanel() {
   const cl = sysLevel(d.cpu, 60, 85), ml = sysLevel(memPct, 75, 90);
   const row = (k, v, bar) => `<div class="ss-row"><span>${k}</span><b>${v}</b>${bar || ""}</div>`;
   const cores = (d.cores || []).map((c, i) => `<i class="${sysLevel(c, 60, 85)}" style="height:${Math.max(6, c).toFixed(0)}%" title="Core ${i}: ${Math.round(c)}%"></i>`).join("");
-  const disks = (d.disks || []).map(x => { const p = 100 * x.used / x.total; return row(esc(x.name), `${fmtGB(x.free)} GB free of ${fmtGB(x.total, 0)}`, sysBar(p, sysLevel(p, 85, 95))); }).join("");
+  const disks = (d.disks || []).map(x => {
+    const unknown = !!(x.used_unknown || (x.total && (x.used || 0) <= 0 && x.free >= x.total * 0.99));
+    const p = unknown || !x.total ? 0 : 100 * x.used / x.total;
+    const tip = esc(x.detail || x.path || x.name || "");
+    const note = unknown ? `<div class="ss-disk-note">Used space is not reported by this share</div>` : "";
+    return `<div class="ss-disk" title="${tip}"><div class="ss-disk-h"><span class="ss-ico">${SS_DISK_ICO}</span><span class="ss-disk-name">${esc(x.name)}</span><b>${fmtDisk(x.free)} free of ${fmtDisk(x.total, 1)}</b></div>${sysBar(p, unknown ? "ok" : sysLevel(p, 85, 95))}${note}</div>`;
+  }).join("");
+  const bg = backgroundLabel(d);
+  const ff = d.ffmpeg && d.ffmpeg.count
+    ? (d.streams ? ` · ${d.ffmpeg.count} ffmpeg (${fmtSize(d.ffmpeg.rss)})` : "")
+    : " · no ffmpeg running";
   $("#ss-panel").innerHTML = `<div class="ss-h"><b>Server status</b><span class="muted">up ${fmtUptime(d.uptime_s)}</span></div>
-    ${row("CPU", `${cpuPct(d)} of ${d.ncpu} cores`, sysBar(d.cpu, cl))}
-    <div class="ss-big">${sysSpark((d.history || []).map(x => x[1]), 268, 34).replace("ss-spark", "ss-spark " + cl)}</div>
+    <div class="ss-gauges">
+      <div class="ss-gauge">${sysRing(d.cpu, cl, 48, SS_CPU_ICO)}<div class="ss-g-txt"><span>CPU</span><b class="${cl}">${cpuPct(d)}</b><span>${d.ncpu} cores</span></div></div>
+      <div class="ss-gauge">${sysRing(memPct, ml, 48, SS_RAM_ICO)}<div class="ss-g-txt"><span>RAM</span><b class="${ml}">${ssMem(d)}</b><span>${Math.round(memPct)}% used</span></div></div>
+    </div>
+    <div class="ss-big">${sysSpark((d.history || []).map(x => x[1]), 308, 36).replace("ss-spark", "ss-spark " + cl)}</div>
     ${cores ? `<div class="ss-cores" title="Per core">${cores}</div>` : ""}
     ${row("Load average", d.load.map(x => x.toFixed(2)).join(" &nbsp;"))}
-    ${row("Memory", `${fmtGB(d.mem.used)} / ${fmtGB(d.mem.total)} GB (${Math.round(memPct)}%)`, sysBar(memPct, ml))}
     ${row("Swap", d.swap.total ? `${fmtGB(d.swap.used)} / ${fmtGB(d.swap.total)} GB` : "none", d.swap.total ? sysBar(swPct, sysLevel(swPct, 50, 80)) : "")}
     <div class="ss-sub">Disks</div>${disks || `<div class="muted">-</div>`}
     <div class="ss-sub">Media server</div>
-    ${row("Active streams", `${d.streams}${d.ffmpeg.count ? ` &middot; ${d.ffmpeg.count} ffmpeg (${fmtSize(d.ffmpeg.rss)})` : " &middot; no ffmpeg running"}`)}
-    ${d.hw ? row("Transcoding", d.hw.streams ? `<span class="hw-badge">GPU</span> ${esc(d.hw.label)} &middot; ${d.hw.streams} stream${d.hw.streams > 1 ? "s" : ""}` : d.hw.method ? `${esc(d.hw.label)} ready${d.hw.name ? ` <span class="muted">(${esc(d.hw.name)})</span>` : ""}` : "CPU") : ""}
+    ${row("Active streams", `${d.streams}${ff}`)}
+    ${d.hw ? row("Transcoding", transcodeLabel(d)) : ""}
+    ${bg ? `<div class="ss-row"><span class="ss-bg"><span class="ss-ico" style="display:inline-block;vertical-align:-3px;margin-right:4px">${SS_ACT_ICO}</span>${bg}</span><b></b></div>` : ""}
     ${row("App memory", fmtSize(d.app_rss))}
-    <div class="ss-foot muted">Refreshes every 4 s${ME && ME.is_admin ? ` &middot; <a href="#/settings/system">Who can see this</a>` : ""}</div>`;
+    <div class="ss-foot muted">Refreshes every 4 s${ME && ME.is_admin ? ` · <a href="#/settings/system">Who can see this</a>` : ""}</div>`;
 }
 function setSysOpen(on, pinned) {
   SYS.open = on; if (pinned !== undefined) SYS.pinned = pinned;

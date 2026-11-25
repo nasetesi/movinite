@@ -31,6 +31,7 @@ _wake = threading.Event()
 _lock = threading.Lock()
 _urgent_subs = []                 # (item_dict, key) requested at play time
 _worker = None
+_job = {"kind": None, "proc": None}   # in-flight background ffmpeg/ffprobe
 
 
 def cache_gb():
@@ -98,6 +99,80 @@ def start_loop(stop_flag):
 
 def kick():
     _wake.set()
+
+
+def _register(kind, proc):
+    with _lock:
+        _job["kind"] = kind
+        _job["proc"] = proc
+
+
+def _clear(proc=None):
+    with _lock:
+        if proc is None or _job.get("proc") is proc:
+            _job["kind"] = None
+            _job["proc"] = None
+
+
+def _stop_proc(p):
+    if p is None:
+        return
+    try:
+        os.killpg(p.pid, signal.SIGTERM)
+    except Exception:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+    try:
+        p.wait(timeout=3)
+    except Exception:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+
+def jobs():
+    """What the status panel shows as background cache work (not viewer transcodes)."""
+    with _lock:
+        p = _job.get("proc")
+        kind = _job.get("kind")
+        running = bool(p is not None and p.poll() is None)
+    if not running:
+        kind = None
+    return {"running": 1 if running else 0, "kind": kind}
+
+
+def yield_to_playback():
+    """1.8: stop an in-flight subtitle/prefetch/remux job the moment a stream starts.
+
+    extract_sub used to run ffmpeg to completion even after someone pressed play,
+    which kept the NAS busy and delayed the first picture (about 4.6s in the 1.7.9 install).
+    """
+    with _lock:
+        p = _job.get("proc")
+        kind = _job.get("kind")
+    if p is not None and p.poll() is None:
+        _stop_proc(p)
+        log.info("preload yielded to playback (stopped %s pid %s)", kind, getattr(p, "pid", None))
+    _clear(p)
+    kick()
+
+
+def run_cmd(cmd, timeout, kind="remux"):
+    """Run a background ffprobe/ffmpeg that yield_to_playback can kill mid-flight."""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    _register(kind, p)
+    try:
+        out, err = p.communicate(timeout=timeout)
+        return p.returncode, out, err
+    except subprocess.TimeoutExpired:
+        _stop_proc(p)
+        raise
+    finally:
+        _clear(p)
+
 
 
 def enqueue_library(library_id):
@@ -202,13 +277,20 @@ def extract_sub(item, key):
     dest = sub_path(item["id"], key)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".vtt.tmp")
+    p = None
     try:
-        env = os.environ.copy()
-        p = subprocess.run(cmd, capture_output=True, timeout=180)
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        _register("subtitles", p)
+        try:
+            out, err = p.communicate(timeout=180)
+        except subprocess.TimeoutExpired:
+            _stop_proc(p)
+            _sub_status(item, key, "retry")
+            return False
         if p.returncode != 0:
             _sub_status(item, key, "retry")
             return False
-        tmp.write_bytes(p.stdout or b"WEBVTT\n\n")
+        tmp.write_bytes(out or b"WEBVTT\n\n")
         tmp.replace(dest)
         rel = str(dest.relative_to(config.DATA_DIR))
         with db.tx() as c:
@@ -217,13 +299,15 @@ def extract_sub(item, key):
                       (item["id"], key, item.get("mtime"), "ready", rel, int(time.time())))
         log.info("cached subtitles item %s %s (%d bytes)", item["id"], key, dest.stat().st_size)
         return True
-    except (subprocess.TimeoutExpired, OSError):
+    except OSError:
         _sub_status(item, key, "retry")
         try:
             tmp.unlink()
         except OSError:
             pass
         return False
+    finally:
+        _clear(p)
 
 
 def _sub_status(item, key, status):
@@ -437,6 +521,7 @@ def _build_prefetch(item, kind, start_t):
         os.setsid()
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=_low)
+        _register("prefetch", proc)
     except OSError:
         shutil.rmtree(dest, ignore_errors=True)
         return False
@@ -445,8 +530,8 @@ def _build_prefetch(item, kind, start_t):
     ok = False
     try:
         while time.time() - t0 < 45:
-            if busy() and time.time() - t0 > 8:
-                # a real viewer arrived; abandon so we do not contend
+            if busy():
+                # a real viewer arrived; abandon immediately so we do not contend
                 break
             if (dest / ("seg%d.ts" % last)).is_file() and (dest / ("seg%d.ts" % last)).stat().st_size > 1000:
                 ok = True
@@ -464,6 +549,7 @@ def _build_prefetch(item, kind, start_t):
                 os.killpg(proc.pid, signal.SIGKILL)
             except Exception:
                 pass
+        _clear(proc)
     size = 0
     for f in dest.glob("seg*.ts"):
         try:

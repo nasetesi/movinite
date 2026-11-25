@@ -19,6 +19,8 @@ On servers with a supported video card, transcoding can run on the GPU.
 | ![Playlists](docs/screenshots/web-playlists.png) | ![Phone libraries](docs/screenshots/phone-libraries.png) |
 | ![Quality auto-capped to 1080p on a 1920×1200 tablet](docs/screenshots/tablet-player-quality-capped-1080p.png) | ![Settings: cap quality to this screen](docs/screenshots/web-settings-quality-cap.png) |
 | ![Settings: transcoding and opening-clip cache](docs/screenshots/web-settings-transcoding.png) | ![Opening-clip cache size](docs/screenshots/web-settings-opening-clip-cache.png) |
+| **Server status toolbar** | **Server status panel** |
+| ![Header with compact CPU and RAM icons and percentages](docs/screenshots/status-toolbar-desktop.png) | ![Themed server status panel](docs/screenshots/status-panel-desktop.png) |
 
 <p>
 <img src="docs/screenshots/phone-home.png" width="200" alt="Phone home">
@@ -27,11 +29,13 @@ On servers with a supported video card, transcoding can run on the GPU.
 <img src="docs/screenshots/phone-equalizer.png" width="200" alt="Phone music equalizer with the Dynamic preset">
 <img src="docs/screenshots/phone-playlists.png" width="200" alt="Phone playlists">
 <img src="docs/screenshots/phone-library-filters.png" width="200" alt="Phone library filters">
+<img src="docs/screenshots/status-toolbar-phone.png" width="200" alt="Phone header with CPU and RAM icons">
+<img src="docs/screenshots/status-panel-phone.png" width="200" alt="Phone server status panel">
 <img src="docs/screenshots/android-01-first-run.png" width="200" alt="Android first run">
 <img src="docs/screenshots/android-03-sign-in.png" width="200" alt="Android sign in">
 </p>
 
-*The screenshots use generated test media and placeholder posters. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p.*
+*The screenshots use generated test media and placeholder posters. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p. The server status shots show the 1.8 toolbar (icons and percentages) and the themed status panel, using test figures.*
 
 ## Features
 
@@ -44,7 +48,7 @@ On servers with a supported video card, transcoding can run on the GPU.
 - **Hardware transcoding:** Intel VAAPI/QSV (plus AMD VAAPI and NVIDIA NVENC, both untested). Video cards are detected on install. Concurrent 4K streams use extra GPU surfaces and the card's low-power encoder; a stream that cannot stay on the GPU falls back once and stays there, with the reason logged. The same account can play on more than one device at a time.
 - **Home rows** (Continue watching, Recently added, Recommended), My List, search, genres, decades, tags and collections.
 - **Phone layout** with a bottom tab bar and filter sheets, plus an installable web app (PWA) and a native **Android app**.
-- **Multiple users** with admin and viewer roles, and a server status panel (CPU, RAM, streams).
+- **Multiple users** with admin and viewer roles, and a themed server status panel (CPU and RAM icons and rings, disks, idle GPU, and background cache jobs that pause when you press play).
 
 ## Requirements
 
