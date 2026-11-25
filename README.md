@@ -23,6 +23,14 @@ On servers with a supported video card, transcoding can run on the GPU.
 | ![Settings: transcoding and opening-clip cache](docs/screenshots/web-settings-transcoding.png) | ![Opening-clip cache size](docs/screenshots/web-settings-opening-clip-cache.png) |
 | **Server status toolbar** | **Server status panel** |
 | ![Header with compact CPU and RAM icons and percentages](docs/screenshots/status-toolbar-desktop.png) | ![Themed server status panel](docs/screenshots/status-panel-desktop.png) |
+| **Users and email invites** | **Invite someone** |
+| ![Users with roles and Invite by email](docs/screenshots/web-users.png) | ![Invite dialog](docs/screenshots/web-invite.png) |
+| **Send invites from your Gmail** | **Activity** |
+| ![Email settings with a Gmail app password](docs/screenshots/web-email.png) | ![Activity with Now playing and a timeline](docs/screenshots/web-activity.png) |
+| **Signed-in devices** | **Join from an invite** |
+| ![Signed-in devices](docs/screenshots/web-account-devices.png) | ![Join page](docs/screenshots/web-join.png) |
+| **Trusted proxies** | |
+| ![Trusted proxies in System](docs/screenshots/web-system-proxies.png) | |
 
 <p>
 <img src="docs/screenshots/phone-home.png" width="200" alt="Phone home">
@@ -39,9 +47,15 @@ On servers with a supported video card, transcoding can run on the GPU.
 <img src="docs/screenshots/status-panel-phone.png" width="200" alt="Phone server status panel">
 <img src="docs/screenshots/android-01-first-run.png" width="200" alt="Android first run">
 <img src="docs/screenshots/android-03-sign-in.png" width="200" alt="Android sign in">
+<img src="docs/screenshots/phone-users.png" width="200" alt="Phone Users tab with Invite by email">
+<img src="docs/screenshots/phone-invite.png" width="200" alt="Phone invite dialog">
+<img src="docs/screenshots/phone-email.png" width="200" alt="Phone Email tab with a Gmail app password">
+<img src="docs/screenshots/phone-activity.png" width="200" alt="Phone Activity tab">
+<img src="docs/screenshots/phone-account-devices.png" width="200" alt="Phone signed-in devices">
+<img src="docs/screenshots/phone-join.png" width="200" alt="Phone join page">
 </p>
 
-*The screenshots use generated test media and placeholder posters. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p. The 1.8.1 shots show Play and Shuffle on playlists, the music bar with mute and a reachable volume control, and the frosted-glass top bar, mini player, and status popup, using test figures.*
+*The screenshots use generated test media, placeholder posters, and made-up names at example.com. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p. The 1.9 shots show Users and Invite, Email (Gmail app password), Activity, signed-in devices, Trusted proxies, and the join page, with documentation addresses such as 192.0.2.10.*
 
 ## Features
 
@@ -54,7 +68,7 @@ On servers with a supported video card, transcoding can run on the GPU.
 - **Hardware transcoding:** Intel VAAPI/QSV (plus AMD VAAPI and NVIDIA NVENC, both untested). Video cards are detected on install. Concurrent 4K streams use extra GPU surfaces and the card's low-power encoder; a stream that cannot stay on the GPU falls back once and stays there, with the reason logged. The same account can play on more than one device at a time.
 - **Home rows** (Continue watching, Recently added, Recommended), My List, search, genres, decades, tags and collections.
 - **Phone layout** with a bottom tab bar and filter sheets, plus an installable web app (PWA) and a native **Android app**.
-- **Multiple users** with admin and viewer roles, and a themed server status panel (CPU and RAM icons and rings, disks, idle GPU, and background cache jobs that pause when you press play).
+- **Multiple users** with Admin, Viewer, and Viewer + Downloads roles, per-library access, email invites sent from your own Gmail (or a copyable link and QR code), a signed-in device list, and Settings > Activity (now playing and a timeline). Existing accounts keep their access after the update. A themed server status panel shows CPU and RAM icons and rings, disks, idle GPU, and background cache jobs that pause when you press play.
 
 ## Requirements
 
@@ -121,10 +135,12 @@ To install it, download `movinite-android-vX.Y.apk` from [Releases](../../releas
 
 Put Movinite behind a reverse proxy with HTTPS, such as Caddy or nginx. The examples are in
 [server/README.md](server/README.md#https--access-from-outside-reverse-proxy).
+In **Settings > System > Trusted proxies**, list the proxy's address (for example `192.0.2.10`) so Movinite sees each visitor's real address for sign-in lockouts, the device list, and Activity.
 
 ## Documentation
 
 - [server/README.md](server/README.md): full server guide (libraries, naming, TMDB, playback, shares, proxy, file locations)
+- [docs/gmail-setup.md](docs/gmail-setup.md): send invites from your Gmail (app password, or Connect Gmail)
 - [CHANGELOG.md](CHANGELOG.md) and [server/CHANGELOG.md](server/CHANGELOG.md)
 - [docs/android-signing.md](docs/android-signing.md): making a release key for the Android app
 - [docs/releasing.md](docs/releasing.md): building and publishing a release (GitHub Actions)

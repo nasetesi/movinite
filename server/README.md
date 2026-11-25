@@ -313,6 +313,10 @@ to both:
 - **No WebSockets** are used -- nothing special is needed for them. (If you reuse a config that upgrades
   connections, it does no harm.)
 - Pass **`X-Forwarded-Proto`** so the sign-in cookie is marked `Secure` over HTTPS.
+- **1.9:** tell Movinite which proxy to trust so it sees the real visitor address (sign-in lockouts, Activity and
+  the device list use it): **Settings > System > Trusted proxies** (for example `192.0.2.10`), or
+  `MS_TRUSTED_PROXIES=192.0.2.10` in `.env`. The proxy should send `X-Real-IP` / `X-Forwarded-For`; behind
+  Cloudflare, `CF-Connecting-IP` is used. Requests from 127.0.0.1 are always trusted.
 - Uploads are not used, so `client_max_body_size` doesn't matter.
 - Once the proxy works, you can stop the direct port from being reachable from other machines:
 
@@ -394,6 +398,7 @@ python3-certbot-nginx && sudo certbot --nginx -d media.example.com`.
 | `/opt/media-server/` | code, `.venv`, scripts |
 | `/opt/media-server/.env` | settings (port is on the systemd unit; transcode preset, max transcodes, `MS_TMDB_KEY`, `MS_SCAN_WORKERS`...) |
 | `/opt/media-server/data/media-server.db` | SQLite: users, libraries, items, watch progress |
+| `/opt/media-server/data/secrets/` | 1.9: server identity key and encrypted Gmail sign-ins (owner-only; included in update.sh backups) |
 | `/opt/media-server/data/thumbs/` | generated thumbnails + cached TMDB posters, backdrops, stills |
 | `/opt/media-server/data/transcode/` | temporary HLS segments (wiped automatically) |
 | `/opt/media-server/backups/` | backups made by update.sh (newest 10) |
@@ -619,8 +624,34 @@ Libraries tab, the home page and the Android app. By default libraries are order
 
 A new library goes after the last library of its type, so your own arrangement stays as it is.
 
-**Settings tabs:** Libraries, Scan activity, Poster Sounds, Metadata, Transcoding, Users, My account, System.
+**Settings tabs:** Libraries, Scans, Activity, Poster Sounds, Metadata, Transcoding, Users, Email, My account, System (1.9).
 
 **Share status.** A dot after a network-share library in the side menu (and on the phone Libraries tab) shows whether
 the share answers: green online, amber slow / not answering, red offline, grey checking. Hover it for the reason and
 when it was checked. Checked every 45 s; checks time out after 3 s and never remount the share.
+
+
+## Users, invites, Gmail and Activity (1.9)
+
+**Roles.** Admin (everything), **Viewer + Downloads** (watch; offline downloads arrive with the Android app 2.0) and
+**Viewer** (watch). Non-admins can be limited to picked libraries; they never see the others anywhere.
+Settings > Users: add or invite people, change role or libraries, reset a password, sign a person out everywhere,
+turn an account off, or delete it.
+
+**Invites.** Settings > Users > **Invite**: email, role, libraries, optional note, expiry (7 days by default). The link
+works once. With email set up the invite is sent from your address with your name on it (up to 20 an hour,
+100 a day); otherwise copy the link or show the QR code. The person opens the link, picks a username and password,
+and is signed in. They can also sign in with their email address.
+
+**Email.** Settings > Email: your Gmail address plus a Google **app password** (turn on 2-Step Verification, then
+create one at https://myaccount.google.com/apppasswords), and the From name. Press **Send test email to myself**.
+Any other SMTP provider works too. The password is stored encrypted in `data/secrets/`. Step by step:
+[`docs/gmail-setup.md`](../docs/gmail-setup.md). Advanced: **Connect Gmail** with Google sign-in (OAuth) instead, which
+needs your own Google Cloud project; redirect URIs `https://<your public address>/api/gmail/callback` and
+`http://localhost/movinite-gmail-callback` (paste mode).
+
+**Devices.** My account lists the browsers and phones signed in to your account, with Sign out for each.
+
+**Activity.** Settings > Activity (admins): Now playing, then a timeline of sign-ins, failed sign-ins, plays,
+invites, account and settings changes, with filters and CSV export. Kept 90 days by default; IP addresses are
+blanked after 30 days. My account > My activity shows your own.

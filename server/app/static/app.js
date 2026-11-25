@@ -427,6 +427,8 @@ if (typeof ResizeObserver === "function") {
 window.addEventListener("resize", syncTopH);
 
 async function boot() {
+  const inv = location.hash.match(/^#\/invite\/([A-Za-z0-9_-]{20,200})/);   // 1.9: invite link
+  if (inv) { await showJoin(inv[1]); return; }
   try {
     const st = await api("/api/setup-status", { noAuthRedirect: true });
     if (st.needs_setup) { showSetup(); return; }
@@ -1812,11 +1814,419 @@ async function viewMyList() {
 }
 
 // ---------------------------------------------------------------- settings
+// ---------------------------------------------------------------- 1.9: users, invites, Connect Gmail, devices, activity
+const ROLE_NAMES = { admin: "Admin", download: "Viewer + Downloads", view: "Viewer" };
+function roleChip(r) { return `<span class="role-chip r-${esc(r)}">${esc(ROLE_NAMES[r] || r)}</span>`; }
+function fmtWhen(ts) { if (!ts) return ""; return new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+async function copyText(t, okMsg) {
+  try { await navigator.clipboard.writeText(t); toast(okMsg || "Copied"); }
+  catch (e) { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast(okMsg || "Copied"); } catch (e2) { toast("Copy failed; select the text and copy it", true); } ta.remove(); }
+}
+function libPicker(id, sel) {   // sel: null = all, or a list of library ids
+  const all = sel == null;
+  return `<div class="lib-pick" id="${id}"><label class="chk"><input type="checkbox" data-all ${all ? "checked" : ""}> <b>All libraries</b> <span class="help">(and any added later)</span></label>
+    <div class="lib-pick-list${all ? " off" : ""}">${LIBS.map(l => `<label class="chk"><input type="checkbox" data-lib="${l.id}" ${all || (sel || []).includes(l.id) ? "checked" : ""} ${all ? "disabled" : ""}> ${esc(l.name)} <span class="help">${esc(l.kind)}</span></label>`).join("")}</div></div>`;
+}
+function bindLibPicker(id) {
+  const root = $("#" + id); if (!root) return;
+  const all = root.querySelector("[data-all]");
+  all.onchange = () => { root.querySelector(".lib-pick-list").classList.toggle("off", all.checked); root.querySelectorAll("[data-lib]").forEach(c => { c.disabled = all.checked; if (all.checked) c.checked = true; }); };
+}
+function readLibPicker(id) {
+  const root = $("#" + id);
+  if (root.querySelector("[data-all]").checked) return { all_libraries: true };
+  return { all_libraries: false, libraries: [...root.querySelectorAll("[data-lib]:checked")].map(c => +c.dataset.lib) };
+}
+
+function inviteResultDialog(r, email) {
+  const sent = r.sent;
+  modal(`<h2>${sent ? "Invite sent" : "Share this invite"}</h2>
+    ${sent ? `<p>Sent to <b>${esc(email)}</b> from ${r.from ? `<b>${esc(r.from_name || "")}</b> &lt;${esc(r.from)}&gt;` : "your email"}. It's in your Sent folder too.</p>`
+      : `${r.error ? `<p class="inv-warn">${esc(r.error)}</p>` : r.manual ? `<p class="muted">New link made; nothing was emailed and any earlier link for this invite stops working. Send <b>${esc(email)}</b> this link yourself, or let them scan the code.</p>` : `<p class="muted">Email sending isn't set up, so nothing was emailed. Send <b>${esc(email)}</b> this link yourself, or let them scan the code.</p>`}`}
+    <div class="inv-share"><div class="inv-qr" aria-label="QR code for the invite link">${window.MSQR ? MSQR.svg(r.link, 200) : ""}</div>
+      <div class="inv-linkbox"><label class="help">Invite link (works once)</label><textarea readonly id="inv-link" rows="3">${esc(r.link)}</textarea>
+        <button class="btn" id="inv-copy">Copy link</button>${!sent && !r.manual && (r.reconnect || r.mail === "not_set_up" || r.mail === "disconnected" || r.mail === "needs_reconnect") ? `<a class="btn ghost" href="#/settings/email" id="inv-gm">${r.reconnect ? "Fix email settings" : "Set up email"}</a>` : ""}</div></div>
+    <div class="modal-actions"><button class="btn ghost" id="inv-done">Done</button></div>`, () => {
+    $("#inv-copy").onclick = () => copyText(r.link, "Invite link copied");
+    $("#inv-done").onclick = () => { closeModal(); route(); };
+    if ($("#inv-gm")) $("#inv-gm").onclick = () => closeModal();
+  });
+}
+
+async function inviteDialog() {
+  await refreshLibs();
+  let ms = { ready: false };
+  try { ms = (await api("/api/mail/status")) || ms; } catch (e) { /* not fatal */ }
+  const from = ms.ready ? `<div class="inv-from ok"><span class="gm-dot ${ms.status === "auth_failed" || ms.status === "error" ? "warn" : ""}"></span>Will be sent from <b>${esc(ms.from_name || "")}</b> &lt;${esc(ms.from_addr)}&gt;</div>`
+    : `<div class="inv-from"><span class="gm-dot off"></span>Email sending isn't set up. You'll get a link and QR code to share yourself. <a href="#/settings/email" id="inv-togm">Set up email</a></div>`;
+  modal(`<h2>Invite someone</h2>${from}
+    <div class="form"><label for="iv-email">Email</label><input type="text" id="iv-email" inputmode="email" autocomplete="off" placeholder="friend@example.com">
+    <label for="iv-role">Role</label><select id="iv-role"><option value="view">Viewer — watch</option><option value="download">Viewer + Downloads — watch, and download for offline (Android app 2.0)</option></select>
+    <label>Libraries</label>${libPicker("iv-libs", null)}
+    <label for="iv-note">Personal note</label><textarea id="iv-note" rows="3" maxlength="500" placeholder="Optional — shown in the email"></textarea>
+    <label for="iv-days">Link expires</label><select id="iv-days"><option value="1">in 24 hours</option><option value="3">in 3 days</option><option value="7" selected>in 7 days</option><option value="30">in 30 days</option></select></div>
+    <div class="help">The link works once. Only a fingerprint of it is stored on the server.</div>
+    <div class="err" id="iv-err"></div>
+    <div class="modal-actions"><button class="btn ghost" id="iv-cancel">Cancel</button><button class="btn" id="iv-go">${ms.ready ? "Send invite" : "Create invite link"}</button></div>`, () => {
+    bindLibPicker("iv-libs");
+    $("#iv-cancel").onclick = closeModal;
+    if ($("#inv-togm")) $("#inv-togm").onclick = () => closeModal();
+    $("#iv-email").focus();
+    $("#iv-go").onclick = async () => {
+      const email = $("#iv-email").value.trim();
+      const b = Object.assign({ email, role: $("#iv-role").value, note: $("#iv-note").value, days: +$("#iv-days").value }, readLibPicker("iv-libs"));
+      $("#iv-go").disabled = true; $("#iv-go").textContent = ms.ready ? "Sending…" : "Creating…";
+      try { const r = await api("/api/invites", { method: "POST", body: b }); inviteResultDialog(r, email); }
+      catch (e) { $("#iv-err").textContent = e.message; $("#iv-go").disabled = false; $("#iv-go").textContent = ms.ready ? "Send invite" : "Create invite link"; }
+    };
+  });
+}
+
+function editUserDialog(x) {
+  modal(`<h2>${esc(x.username)}</h2>
+    <div class="form"><label for="eu-email">Email</label><input type="text" id="eu-email" value="${esc(x.email || "")}" placeholder="optional">
+    <label for="eu-role">Role</label><select id="eu-role">${["view", "download", "admin"].map(r => `<option value="${r}" ${x.role === r ? "selected" : ""}>${ROLE_NAMES[r]}</option>`).join("")}</select>
+    <label>Libraries</label><div id="eu-libwrap">${libPicker("eu-libs", x.libraries)}</div></div>
+    <p class="help">Viewers can watch. Viewer + Downloads will also be able to download for offline use in the Android app (2.0). Admins can change settings, libraries and users, and always see every library.</p>
+    <div class="err" id="eu-err"></div>
+    <div class="modal-actions">${x.id !== ME.id ? `<button class="btn ghost" id="eu-dis">${x.disabled ? "Turn account on" : "Turn account off"}</button>` : ""}<span style="flex:1"></span><button class="btn ghost" id="eu-cancel">Cancel</button><button class="btn" id="eu-save">Save</button></div>`, () => {
+    bindLibPicker("eu-libs");
+    const syncAdmin = () => { $("#eu-libwrap").classList.toggle("off", $("#eu-role").value === "admin"); };
+    $("#eu-role").onchange = syncAdmin; syncAdmin();
+    $("#eu-cancel").onclick = closeModal;
+    if ($("#eu-dis")) $("#eu-dis").onclick = async () => {
+      if (!x.disabled && !confirm(`Turn off ${x.username}'s account? They are signed out everywhere and can't sign in until you turn it back on.`)) return;
+      try { await api("/api/users/" + x.id, { method: "PUT", body: { disabled: !x.disabled } }); closeModal(); toast(x.disabled ? "Account turned on" : "Account turned off"); route(); } catch (e) { $("#eu-err").textContent = e.message; }
+    };
+    $("#eu-save").onclick = async () => {
+      const b = Object.assign({ email: $("#eu-email").value.trim(), role: $("#eu-role").value }, $("#eu-role").value === "admin" ? {} : readLibPicker("eu-libs"));
+      try { await api("/api/users/" + x.id, { method: "PUT", body: b }); closeModal(); toast("Saved"); route(); } catch (e) { $("#eu-err").textContent = e.message; }
+    };
+  });
+}
+
+async function devicesDialog(x) {
+  const list = await api(`/api/users/${x.id}/sessions`);
+  modal(`<h2>${esc(x.username)} — signed-in devices</h2>${deviceRows(list, true)}
+    <div class="modal-actions">${list.length ? `<button class="btn danger" id="dv-all">Sign out everywhere</button>` : ""}<span style="flex:1"></span><button class="btn ghost" id="dv-close">Close</button></div>`, () => {
+    $("#dv-close").onclick = closeModal;
+    if ($("#dv-all")) $("#dv-all").onclick = async () => { try { await api(`/api/users/${x.id}/signout`, { method: "POST" }); toast("Signed out everywhere"); closeModal(); route(); } catch (e) { toast(e.message, true); } };
+    $$("[data-endsess]").forEach(b => b.onclick = async () => { try { await api(`/api/users/${x.id}/sessions/${b.dataset.endsess}`, { method: "DELETE" }); b.closest(".dev-row").remove(); toast("Signed out"); } catch (e) { toast(e.message, true); } });
+  });
+}
+
+const DEV_ICO = { phone: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 18.5h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+  desk: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 20h7M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>` };
+function deviceRows(list, admin) {
+  if (!list.length) return `<div class="muted">Not signed in anywhere.</div>`;
+  return `<div class="dev-list">${list.map(s => `<div class="dev-row${s.current ? " cur" : ""}"><span class="dev-ic">${/Android|iPhone|app/.test(s.device) ? DEV_ICO.phone : DEV_ICO.desk}</span>
+    <div class="dev-txt"><b>${esc(s.device)}</b>${s.current ? ` <span class="chip ok pill">this device</span>` : ""}<div class="help">${s.ip ? esc(s.ip) + " · " : ""}last active ${esc(ago(s.last_seen))} · signed in ${esc(fmtWhen(s.created_at))}</div></div>
+    ${s.current && !admin ? "" : `<button class="btn ghost small" data-endsess="${esc(s.id)}">Sign out</button>`}</div>`).join("")}</div>`;
+}
+
+async function viewUsers(v, html) {
+  const [users, inv] = await Promise.all([api("/api/users"), api("/api/invites")]);
+  const pending = inv.invites.filter(i => i.state === "pending");
+  const older = inv.invites.filter(i => i.state !== "pending").slice(0, 15);
+  const ms = inv.mail || {};
+  const gmLine = ms.ready && (ms.status === "auth_failed" || ms.status === "error" || ms.status === "needs_reconnect") ? `<span class="gm-dot warn"></span><b>Email sending has a problem</b> — invites fall back to a link you share. <a href="#/settings/email">Fix it</a>`
+    : ms.ready ? `<span class="gm-dot"></span>Invites are sent from <b>${esc(ms.from_name || "")}</b> &lt;${esc(ms.from_addr)}&gt; · ${ms.sent_hour || 0}/${ms.hourly_cap} this hour`
+    : `<span class="gm-dot off"></span>Email sending isn't set up — invites give you a link and QR code to share. <a href="#/settings/email">Set up email</a>`;
+  html += `<div class="panel"><div class="row-head"><h3 style="margin:0">Users</h3><button class="btn" id="u-invite">+ Invite by email</button></div>
+    <div class="gm-line">${gmLine}</div>
+    <table class="users-tbl"><tr><th>User</th><th>Role</th><th>Libraries</th><th>Last active</th><th>Devices</th><th></th></tr>
+    ${users.map(x => `<tr class="${x.disabled ? "u-off" : ""}"><td><b>${esc(x.username)}</b>${x.id === ME.id ? ` <span class="help">(you)</span>` : ""}${x.disabled ? ` <span class="chip bad pill">off</span>` : ""}${x.email ? `<div class="help">${esc(x.email)}</div>` : ""}</td>
+      <td>${roleChip(x.role)}</td><td>${x.libraries == null ? `<span class="muted">All</span>` : esc(x.library_names.join(", ") || "none")}</td>
+      <td>${x.last_seen ? esc(ago(x.last_seen)) : `<span class="muted">—</span>`}</td><td>${x.devices}</td>
+      <td><div class="row-actions"><button class="btn ghost small" data-edit="${x.id}">Edit</button><button class="btn ghost small" data-dev="${x.id}">Devices</button><a class="btn ghost small" href="#/settings/activity" data-act="${x.id}">Activity</a><button class="btn ghost small" data-pw="${x.id}">Set password</button>${x.id !== ME.id ? `<button class="btn danger small" data-deluser="${x.id}">Delete</button>` : ""}</div></td></tr>`).join("")}</table></div>`;
+  html += `<div class="panel"><h3 style="margin-top:0">Pending invites</h3>${pending.length ? `<table class="inv-tbl"><tr><th>Email</th><th>Role</th><th>Libraries</th><th>Sent</th><th>Expires</th><th></th></tr>
+    ${pending.map(i => `<tr><td>${esc(i.email)}${i.note ? `<div class="help">“${esc(i.note.slice(0, 80))}${i.note.length > 80 ? "…" : ""}”</div>` : ""}</td><td>${roleChip(i.role)}</td><td>${i.libraries == null ? `<span class="muted">All</span>` : esc(i.library_names.join(", "))}</td>
+      <td>${(i.sent_via === "gmail" || i.sent_via === "email") && i.sent_at ? `Emailed · ${esc(ago(i.sent_at))}` : i.send_error ? `<span class="inv-warn" title="${esc(i.send_error)}">not emailed</span>` : `link only`}</td><td>${esc(inTime(i.expires_at).replace("in ", ""))}</td>
+      <td><div class="row-actions"><button class="btn ghost small" data-resend="${i.id}">${ms.ready ? "Resend" : "New link"}</button><button class="btn ghost small" data-newlink="${i.id}">Copy new link</button><button class="btn danger small" data-revoke="${i.id}">Revoke</button></div></td></tr>`).join("")}</table>`
+    : `<div class="muted">None. Press <b>Invite by email</b> to add someone; they choose their own username and password.</div>`}
+    ${older.length ? `<details class="inv-old"><summary>Earlier invites (${older.length})</summary><table><tr><th>Email</th><th>Role</th><th>Status</th><th>When</th></tr>${older.map(i => `<tr><td>${esc(i.email)}</td><td>${roleChip(i.role)}</td><td>${i.state === "accepted" ? `<span class="chip ok pill">joined as ${esc(i.accepted_username || "?")}</span>` : `<span class="chip pill">${esc(i.state)}</span>`}</td><td>${esc(fmtWhen(i.accepted_at || i.revoked_at || i.expires_at))}</td></tr>`).join("")}</table></details>` : ""}</div>`;
+  html += `<details class="panel add-user"><summary><b>Add a user by hand</b> <span class="help">(you set the password; they change it at first sign-in)</span></summary>
+    <div class="form" style="max-width:640px;margin-top:12px"><label>Username</label><input type="text" id="nu"><label>Password</label><input type="password" id="nup" autocomplete="new-password">
+    <label>Email</label><input type="text" id="nue" placeholder="optional"><label for="nur">Role</label><select id="nur"><option value="view">Viewer</option><option value="download">Viewer + Downloads</option><option value="admin">Admin</option></select>
+    <label>Libraries</label>${libPicker("nu-libs", null)}</div><div class="err" id="nuerr"></div><button class="btn" id="nuadd">Add user</button></details>`;
+  v.innerHTML = html;
+  bindLibPicker("nu-libs");
+  $("#u-invite").onclick = () => inviteDialog();
+  $("#nuadd").onclick = async () => { try { await api("/api/users", { method: "POST", body: Object.assign({ username: $("#nu").value, password: $("#nup").value, email: $("#nue").value, role: $("#nur").value }, readLibPicker("nu-libs")) }); toast("User added"); route(); } catch (e) { $("#nuerr").textContent = e.message; } };
+  $$("[data-deluser]").forEach(b => b.onclick = async () => { if (!confirm("Delete this user? Their playlists and watch progress are removed too.")) return; try { await api("/api/users/" + b.dataset.deluser, { method: "DELETE" }); route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-pw]").forEach(b => b.onclick = async () => { const pw = prompt("New password (8+ characters). Other users must change it at next sign-in:"); if (!pw) return; try { await api(`/api/users/${b.dataset.pw}/password`, { method: "POST", body: { password: pw } }); toast("Password set"); } catch (e) { toast(e.message, true); } });
+  $$("[data-edit]").forEach(b => b.onclick = () => editUserDialog(users.find(x => x.id === +b.dataset.edit)));
+  $$("[data-dev]").forEach(b => b.onclick = () => devicesDialog(users.find(x => x.id === +b.dataset.dev)));
+  $$("[data-act]").forEach(a => a.onclick = () => { sessionStorage.setItem("actFilter", JSON.stringify({ user: +a.dataset.act })); });
+  $$("[data-revoke]").forEach(b => b.onclick = async () => { if (!confirm("Revoke this invite? The link stops working.")) return; try { await api("/api/invites/" + b.dataset.revoke, { method: "DELETE" }); toast("Invite revoked"); route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-resend]").forEach(b => b.onclick = async () => { const i = pending.find(x => x.id === +b.dataset.resend); try { const r = await api(`/api/invites/${i.id}/resend`, { method: "POST", body: { send: true } }); inviteResultDialog(r, i.email); } catch (e) { toast(e.message, true); } });
+  $$("[data-newlink]").forEach(b => b.onclick = async () => { const i = pending.find(x => x.id === +b.dataset.newlink); if (!confirm("Make a new link for " + i.email + "? The old link stops working.")) return; try { const r = await api(`/api/invites/${i.id}/resend`, { method: "POST", body: { send: false } }); inviteResultDialog(r, i.email); } catch (e) { toast(e.message, true); } });
+}
+
+async function viewEmail(v, html, q) {
+  const s = await api("/api/settings/email");
+  const m = s.smtp || {};
+  const isG = (m.provider || "gmail") === "gmail";
+  const mchip = m.status === "ok" ? `<span class="chip ok pill">Working</span>` : m.status === "untested" ? `<span class="chip pill">Saved — not tested</span>`
+    : m.status === "auth_failed" || m.status === "error" ? `<span class="chip warn pill">Problem</span>` : `<span class="chip pill">Not set up</span>`;
+  const usingOAuth = s.mail_method === "gmail_oauth";
+  html += `<div class="panel sm-panel"><div class="row-head"><h3 style="margin:0">Send invites from your email</h3>${usingOAuth ? `<span class="chip pill">Not in use — Connect Gmail is selected below</span>` : mchip}</div>
+    <p class="help" style="margin-top:6px">Invites go out from your own address, so people see a name they know and replies come straight to you. The password is stored encrypted on this server and is never shown again.</p>
+    ${m.last_error && !usingOAuth ? `<p class="inv-warn">${esc(m.last_error)}</p>` : ""}
+    ${m.configured && !usingOAuth ? `<div class="gm-line"><span class="gm-dot ${m.status === "ok" ? "" : m.status === "untested" ? "off" : "warn"}"></span>Invites are sent as <b>${esc(m.from_name || m.suggested_from_name || "")}</b> &lt;${esc(m.from_addr)}&gt; · ${m.sent_hour}/${m.hourly_cap} this hour, ${m.sent_day}/${m.daily_cap} today${m.last_used ? " · last sent " + esc(ago(m.last_used)) : ""}</div>` : ""}
+    <div class="form sm-form" style="max-width:760px">
+      <label for="sm-prov">Send with</label><select id="sm-prov"><option value="gmail" ${isG ? "selected" : ""}>Gmail (app password)</option><option value="custom" ${isG ? "" : "selected"}>Other email (SMTP server)</option></select>
+      <label for="sm-user" id="sm-user-l">${isG ? "Gmail address" : "Username"}</label><input type="text" id="sm-user" value="${esc(m.user || "")}" placeholder="${isG ? "you@gmail.com" : "you@example.com"}" autocomplete="off" spellcheck="false" inputmode="email">
+      <label for="sm-pw" id="sm-pw-l">${isG ? "App password" : "Password"}</label><div><input type="password" id="sm-pw" placeholder="${m.password_saved ? "••••••••  saved — type to replace" : (isG ? "abcd efgh ijkl mnop" : "")}" autocomplete="new-password" spellcheck="false">
+        <div class="help sm-g ${isG ? "" : "hidden"}">Not your normal Gmail password: a 16-letter <b>app password</b>. Turn on <b>2-Step Verification</b>, then create one at <a href="${esc(m.app_password_url)}" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> (name it "Movinite"). Spaces are fine. <a href="/static/gmail-setup.html" target="_blank" rel="noopener">Step-by-step guide</a></div></div>
+      <label for="sm-name">From name</label><div><input type="text" id="sm-name" value="${esc(m.from_name || m.suggested_from_name || "")}" maxlength="80" placeholder="Your name"><div class="help">Shown as the sender, e.g. <b>${esc(m.from_name || m.suggested_from_name || "Your Name")}</b> &lt;${esc(m.from_addr || (isG ? "you@gmail.com" : "you@example.com"))}&gt;. Use the name on your Google account so people recognise it.</div></div>
+      <label for="sm-host" class="sm-c ${isG ? "hidden" : ""}">SMTP server</label><input type="text" id="sm-host" class="sm-c ${isG ? "hidden" : ""}" value="${esc(isG ? "" : m.host || "")}" placeholder="smtp.example.com" spellcheck="false">
+      <label for="sm-port" class="sm-c ${isG ? "hidden" : ""}">Port</label><input type="number" id="sm-port" class="sm-c ${isG ? "hidden" : ""}" min="1" max="65535" value="${esc(isG ? 587 : m.port || 587)}" style="max-width:120px">
+      <label for="sm-sec" class="sm-c ${isG ? "hidden" : ""}">Security</label><select id="sm-sec" class="sm-c ${isG ? "hidden" : ""}">${[["starttls", "STARTTLS (usually port 587)"], ["ssl", "SSL/TLS (usually port 465)"], ["none", "None (not recommended)"]].map(([k, l]) => `<option value="${k}" ${(m.security || "starttls") === k && !isG ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <label for="sm-from" class="sm-c ${isG ? "hidden" : ""}">From address</label><input type="text" id="sm-from" class="sm-c ${isG ? "hidden" : ""}" value="${esc(isG ? "" : m.from_addr || "")}" placeholder="same as username" spellcheck="false">
+    </div>
+    <p class="help sm-g ${isG ? "" : "hidden"}">Gmail sends through <code>smtp.gmail.com:587</code> (STARTTLS). The From address is always your Gmail address, with replies going to it too.</p>
+    ${m.crypto === false ? `<p class="inv-warn">This server is missing the Python <code>cryptography</code> package, so the password can't be stored safely. Re-run update.sh.</p>` : ""}
+    <div class="err" id="sm-err"></div>
+    <div class="gm-actions"><button class="btn" id="sm-save">Save</button><button class="btn ghost" id="sm-test" ${m.configured ? "" : "disabled"}>Send test email to myself</button>${m.configured || m.password_saved ? `<button class="btn ghost danger" id="sm-del">Remove</button>` : ""}</div>
+  </div>`;
+  html += `<div class="panel"><h3 style="margin-top:0">Invite links</h3><div class="form" style="max-width:760px">
+    <label for="em-pub">Public address</label><div><input type="text" id="em-pub" value="${esc(s.public_url)}" placeholder="https://movies.example.com"><div class="help">Used in invite links (and the Connect Gmail redirect). Empty: the address you're using now (<code>${esc(s.effective_base_url)}</code>).</div></div>
+    <label for="em-name">Server name</label><input type="text" id="em-name" value="${esc(s.server_name === "Movinite" ? "" : s.server_name)}" placeholder="Movinite" maxlength="60">
+    <label for="em-hcap">Invites per hour</label><input type="number" id="em-hcap" min="1" max="2000" value="${s.hourly_cap}" style="max-width:120px">
+    <label for="em-dcap">Invites per day</label><input type="number" id="em-dcap" min="1" max="2000" value="${s.daily_cap}" style="max-width:120px"></div>
+    <div class="err" id="em-err"></div><button class="btn" id="em-save">Save</button></div>`;
+  const me = s.me || {};
+  let adv = "";
+  if (q.connected) toast("Gmail connected" + (me.email ? " as " + me.email : ""));
+  const st = me.status || "disconnected";
+  const stChip = st === "connected" ? `<span class="chip ok pill">Connected</span>` : st === "needs_reconnect" ? `<span class="chip warn pill">Needs reconnect</span>` : `<span class="chip pill">Not connected</span>`;
+  const credsOk = s.client_id && s.client_secret_saved;
+  adv += `<div class="panel gm-panel"><div class="row-head"><h3 style="margin:0">Connect Gmail</h3>${stChip}</div>
+    <p class="help" style="margin-top:6px">Invites go out from your own Gmail, so people see a name they know and replies come straight to you. Movinite can <b>only send</b> email — it can't read, search or delete your mail. Your Google password is never seen by Movinite.</p>
+    ${st === "connected" ? `<div class="gm-who"><span class="gm-av">${esc((me.display_name || me.email || "?").slice(0, 1).toUpperCase())}</span><div><b>${esc(me.display_name || "")}</b><div class="help">${esc(me.email)} · connected ${esc(fmtWhen(me.connected_at))}${me.last_used ? " · last sent " + esc(ago(me.last_used)) : ""}</div><div class="help">Invites show as from <b>${esc(me.display_name || me.email)}</b> &lt;${esc(me.email)}&gt; (the name on this Google account). Sent: ${me.sent_hour}/${me.hourly_cap} this hour, ${me.sent_day}/${me.daily_cap} today.</div></div></div>
+      <div class="gm-actions"><button class="btn ghost" id="gm-test">Send test invite to myself</button><button class="btn ghost" id="gm-re">Reconnect</button><button class="btn danger" id="gm-off">Disconnect Gmail</button></div>`
+    : `${st === "needs_reconnect" && me.last_error ? `<p class="inv-warn">${esc(me.last_error)}</p>` : ""}
+      <div class="gm-actions"><button class="btn gm-connect" id="gm-connect" ${credsOk ? "" : "disabled"}><span class="g-ic" aria-hidden="true">G</span>Connect Gmail</button>${credsOk ? "" : `<span class="help">Add the Google OAuth client below first.</span>`}</div>`}
+    ${!s.redirect_ok && credsOk && st !== "connected" ? `<div class="gm-paste"><b>This page isn't open at an https address</b>, so Google can't send you straight back here.
+      <ol><li>Open Movinite at its public https address, e.g. ${esc(s.public_url || "https://movies.example.com")}, and connect there, <b>or</b></li>
+      <li>Use the copy-paste method: press <b>Connect with copy-paste</b>, sign in with Google, and when the browser ends on a page that can't load (address starting <code>${esc(s.paste_redirect_uri)}</code>), copy that whole address and paste it here.</li></ol>
+      <button class="btn ghost" id="gm-pastego">Connect with copy-paste</button>
+      <div class="gm-paste-in hidden" id="gm-pastebox"><input type="text" id="gm-pasteurl" placeholder="${esc(s.paste_redirect_uri)}?state=…&code=…"><button class="btn" id="gm-pastesave">Finish connecting</button></div><div class="err" id="gm-pasteerr"></div></div>` : ""}
+    ${s.accounts && s.accounts.filter(a => a.user_id !== ME.id).length ? `<div class="help" style="margin-top:10px">Other admins: ${s.accounts.filter(a => a.user_id !== ME.id).map(a => `${esc(a.username)} (${esc(a.email)}, ${esc(a.status)})`).join(" · ")}</div>` : ""}
+  </div>`;
+  adv += `<div class="panel"><h3 style="margin-top:0">Google OAuth client (for Connect Gmail)</h3>
+    <p class="help" style="margin-top:0">Each Movinite server uses its own free Google Cloud project for now (about 10 minutes, once). Follow <a href="/static/gmail-setup.html" target="_blank" rel="noopener" style="color:var(--acc-text)">the setup guide</a>, then paste the client ID and secret here. The secret is stored encrypted on this server and is never shown again.</p>
+    <div class="form" style="max-width:760px"><label for="gm-cid">Client ID</label><input type="text" id="gm-cid" value="${esc(s.client_id)}" placeholder="1234567890-abc….apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+    <label for="gm-sec">Client secret</label><input type="password" id="gm-sec" placeholder="${s.client_secret_saved ? "••••••••  saved — type to replace" : "GOCSPX-…"}" autocomplete="new-password" spellcheck="false">
+    <label>Redirect URI</label><div class="gm-uri"><code id="gm-uri">${esc(s.redirect_uri)}</code><button class="btn ghost small" data-copy="${esc(s.redirect_uri)}">Copy</button>${s.redirect_ok ? "" : ` <span class="chip warn pill" title="Google only accepts https addresses (or localhost)">not https</span>`}</div>
+    <label>Also add</label><div class="gm-uri"><code>${esc(s.paste_redirect_uri)}</code><button class="btn ghost small" data-copy="${esc(s.paste_redirect_uri)}">Copy</button> <span class="help">for the copy-paste method</span></div>
+    <label>Scopes</label><div class="help">${s.scopes.map(x => `<code>${esc(x)}</code>`).join(" ")}</div></div>
+    ${s.crypto ? "" : `<p class="inv-warn">This server is missing the Python <code>cryptography</code> package, so secrets can't be stored safely. Re-run update.sh.</p>`}
+    <div class="err" id="gm-err"></div><button class="btn" id="gm-save">Save credentials</button></div>`;
+  html += `<details class="panel adv-mail" ${usingOAuth || q.connected ? "open" : ""}><summary><b>Advanced: Connect Gmail with Google sign-in (OAuth)</b> <span class="help">— instead of an app password; needs a Google Cloud project</span></summary>
+    <div class="form" style="max-width:760px;margin-top:12px"><label>Send invites with</label><div class="mm-pick">
+      <label class="chk"><input type="radio" name="mm" value="smtp" ${usingOAuth ? "" : "checked"}> App password / SMTP (above)</label>
+      <label class="chk"><input type="radio" name="mm" value="gmail_oauth" ${usingOAuth ? "checked" : ""}> Connect Gmail (below)</label></div></div>
+    ${adv}</details>`;
+  v.innerHTML = html;
+  const prov = () => $("#sm-prov").value;
+  $("#sm-prov").onchange = () => {
+    const g = prov() === "gmail";
+    $$(".sm-c").forEach(e => e.classList.toggle("hidden", g)); $$(".sm-g").forEach(e => e.classList.toggle("hidden", !g));
+    $("#sm-user-l").textContent = g ? "Gmail address" : "Username"; $("#sm-pw-l").textContent = g ? "App password" : "Password";
+    $("#sm-user").placeholder = g ? "you@gmail.com" : "you@example.com";
+  };
+  $("#sm-save").onclick = async () => {
+    const body = { provider: prov(), user: $("#sm-user").value.trim(), from_name: $("#sm-name").value.trim() };
+    if ($("#sm-pw").value) body.password = $("#sm-pw").value;
+    if (prov() === "custom") Object.assign(body, { host: $("#sm-host").value.trim(), port: +$("#sm-port").value, security: $("#sm-sec").value, from_addr: $("#sm-from").value.trim() });
+    $("#sm-save").disabled = true;
+    try { await api("/api/settings/smtp", { method: "PUT", body }); $("#sm-pw").value = ""; toast("Saved — press Send test email to check it"); route(); }
+    catch (e) { $("#sm-err").textContent = e.message; } $("#sm-save").disabled = false;
+  };
+  $("#sm-test").onclick = async () => { $("#sm-test").disabled = true; $("#sm-err").textContent = ""; try { const r = await api("/api/smtp/test", { method: "POST" }); toast("Test email sent to " + r.to + " — check your inbox"); route(); } catch (e) { $("#sm-err").textContent = e.message; } $("#sm-test").disabled = false; };
+  if ($("#sm-del")) $("#sm-del").onclick = async () => { if (!confirm("Remove the saved email address and password? Invites will give you a link to share instead.")) return; try { await api("/api/settings/smtp", { method: "DELETE" }); toast("Removed"); route(); } catch (e) { toast(e.message, true); } };
+  $$("input[name=mm]").forEach(r => r.onchange = async () => { try { await api("/api/settings/email", { method: "PUT", body: { mail_method: r.value } }); toast(r.value === "smtp" ? "Invites use the app password / SMTP" : "Invites use Connect Gmail"); route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-copy]").forEach(b => b.onclick = () => copyText(b.dataset.copy, "Copied"));
+  $("#gm-save").onclick = async () => { try { await api("/api/settings/email", { method: "PUT", body: { client_id: $("#gm-cid").value.trim(), client_secret: $("#gm-sec").value } }); $("#gm-sec").value = ""; toast("Credentials saved"); route(); } catch (e) { $("#gm-err").textContent = e.message; } };
+  $("#em-save").onclick = async () => { try { await api("/api/settings/email", { method: "PUT", body: { public_url: $("#em-pub").value.trim(), server_name: $("#em-name").value.trim(), hourly_cap: +$("#em-hcap").value, daily_cap: +$("#em-dcap").value } }); toast("Saved"); route(); } catch (e) { $("#em-err").textContent = e.message; } };
+  const go = async (paste) => { try { const r = await api("/api/gmail/connect", { method: "POST", body: { paste } }); if (paste) { $("#gm-pastebox").classList.remove("hidden"); window.open(r.url, "_blank", "noopener"); } else location.href = r.url; } catch (e) { toast(e.message, true); } };
+  if ($("#gm-connect")) $("#gm-connect").onclick = () => go(!s.redirect_ok);
+  if ($("#gm-re")) $("#gm-re").onclick = () => go(!s.redirect_ok);
+  if ($("#gm-pastego")) $("#gm-pastego").onclick = () => go(true);
+  if ($("#gm-pastesave")) $("#gm-pastesave").onclick = async () => { try { await api("/api/gmail/paste", { method: "POST", body: { url: $("#gm-pasteurl").value } }); toast("Gmail connected"); route(); } catch (e) { $("#gm-pasteerr").textContent = e.message; } };
+  if ($("#gm-test")) $("#gm-test").onclick = async () => { $("#gm-test").disabled = true; try { const r = await api("/api/gmail/test", { method: "POST" }); toast("Test email sent to " + r.to); } catch (e) { toast(e.message, true); } $("#gm-test").disabled = false; };
+  if ($("#gm-off")) $("#gm-off").onclick = async () => { if (!confirm("Disconnect Gmail? Movinite's access is revoked at Google and its saved sign-in is deleted.")) return; try { const r = await api("/api/gmail", { method: "DELETE" }); toast(r.revoked ? "Gmail disconnected" : "Disconnected here; also remove Movinite at myaccount.google.com > Security", !r.revoked); route(); } catch (e) { toast(e.message, true); } };
+}
+
+// ---- Settings > Activity
+const UACT = {
+  login: ["Signed in", "in"], login_failed: ["Sign-in failed", "warn"], logout: ["Signed out", "out"], password_changed: ["Changed password", "key"],
+  session_revoked: ["Signed out a device", "out"], signed_out_everywhere: ["Signed out everywhere", "out"],
+  play_start: ["Started", "play"], play_stop: ["Stopped", "stop"],
+  invite_created: ["Created an invite", "mail"], invite_sent: ["Emailed an invite", "mail"], invite_send_failed: ["Invite email failed", "warn"], invite_accepted: ["Joined from an invite", "user"],
+  invite_revoked: ["Revoked an invite", "mail"], user_created: ["Added a user", "user"], user_deleted: ["Deleted a user", "user"], role_changed: ["Changed a role", "user"],
+  libraries_changed: ["Changed library access", "user"], user_disabled: ["Turned an account off", "user"], user_enabled: ["Turned an account on", "user"], password_reset: ["Set a password", "key"],
+  gmail_connected: ["Connected Gmail", "mail"], gmail_disconnected: ["Disconnected Gmail", "mail"], gmail_error: ["Gmail problem", "warn"], email_error: ["Email sending problem", "warn"], email_test: ["Sent a test email", "mail"],
+  library_added: ["Added a library", "lib"], library_removed: ["Removed a library", "lib"], scan_started: ["Started a scan", "lib"], settings_changed: ["Changed settings", "gear"], server_started: ["Server started", "gear"]
+};
+const ACT_ICO = { play: `<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>`, stop: `<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>`,
+  in: `<path d="M10 17l5-5-5-5M15 12H3M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`,
+  out: `<path d="M14 17l5-5-5-5M19 12H8M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`,
+  warn: `<path d="M12 4l9 16H3z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M12 10v4M12 17v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+  key: `<circle cx="8" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M11.5 12H20M17 12v3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`,
+  mail: `<rect x="3" y="5.5" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M3.5 7l8.5 6 8.5-6" fill="none" stroke="currentColor" stroke-width="1.9"/>`,
+  user: `<circle cx="12" cy="8.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`,
+  lib: `<path d="M5 4v16M10 4v16M15 4.5l4.5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+  gear: `<circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>` };
+function actIcon(k) { const t = (UACT[k] || [k, "gear"])[1]; return `<span class="act-ic t-${t}"><svg viewBox="0 0 24 24" aria-hidden="true">${ACT_ICO[t] || ACT_ICO.gear}</svg></span>`; }
+function actDetail(e) {
+  const d = e.detail || {};
+  const bits = [];
+  if (e.kind === "play_start" || e.kind === "play_stop") {
+    if (d.mode) bits.push({ transcode: "Transcode", remux: "Remux", direct: "Direct play", music: "Music" }[d.mode] || d.mode);
+    if (d.quality && d.quality !== "remux" && d.quality !== "audio") bits.push(d.quality);
+    if (d.watched_s) bits.push("watched " + fmtLen(d.watched_s));
+  }
+  if (d.email) bits.push(d.email);
+  if (d.username) bits.push(d.username);
+  if (d.role) bits.push(ROLE_NAMES[d.role] || d.role);
+  if (d.from && d.to) bits.push(`${ROLE_NAMES[d.from] || d.from} → ${ROLE_NAMES[d.to] || d.to}`);
+  if (d.reason) bits.push(d.reason);
+  if (d.keys) bits.push(d.keys.join(", "));
+  if (d.devices != null) bits.push(d.devices + " device" + (d.devices === 1 ? "" : "s"));
+  return bits.map(esc).join(" · ");
+}
+function actRow(e) {
+  const what = (UACT[e.kind] || [e.kind])[0];
+  return `<div class="act-row g-${esc(e.group)}">${actIcon(e.kind)}<div class="act-main"><div><b>${esc(e.actor || "Server")}</b> <span class="act-what">${esc(what)}</span>${e.title ? ` <span class="act-title">${esc(e.title)}</span>` : ""}</div>
+    <div class="help">${esc(new Date(e.ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${e.device ? " · " + esc(e.device) : ""}${e.ip ? " · " + esc(e.ip) : ""}${actDetail(e) ? " · " + actDetail(e) : ""}</div></div></div>`;
+}
+function actDays(events) {
+  let out = "", last = "";
+  const today = new Date().toDateString(), yest = new Date(Date.now() - 86400000).toDateString();
+  for (const e of events) {
+    const d = new Date(e.ts * 1000), k = d.toDateString();
+    if (k !== last) { last = k; out += `<div class="act-day">${k === today ? "Today" : k === yest ? "Yesterday" : esc(d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }))}</div>`; }
+    out += actRow(e);
+  }
+  return out;
+}
+function nowCard(n) {
+  const it = n.item || {}, t = n.transcode;
+  const title = it.show ? `${it.show} ${epCode(it)}` : it.title;
+  const mode = n.mode === "transcode" || (t && t.profile !== "remux" && n.mode !== "direct") ? (t && t.encoder && t.encoder !== "cpu" ? `<span class="hw-badge">GPU</span> Transcode` : "Transcode (CPU)") : n.mode === "remux" ? "Remux" : n.mode === "music" ? "Music" : "Direct play";
+  const pct = n.progress != null ? Math.max(0, Math.min(100, n.progress * 100)) : null;
+  return `<div class="np-card"><div class="np-art"${it.poster || it.thumb ? ` style="background-image:url('${thumbUrl(it.poster || it.thumb)}')"` : ""}></div>
+    <div class="np-txt"><div class="np-title">${esc(title || "?")}</div><div class="np-user"><span class="gm-av sm">${esc((n.username || "?").slice(0, 1).toUpperCase())}</span>${esc(n.username || "?")}</div>
+    <div class="help">${mode}${n.profile && n.profile !== "remux" && n.profile !== "audio" ? " · " + esc(n.profile) : ""}${t && t.paused ? " · buffered ahead" : ""}</div>
+    <div class="help">${esc(n.device || "")}${n.ip ? " · " + esc(n.ip) : ""} · ${esc(fmtLen(Math.max(1, Date.now() / 1000 - n.started)))}</div>
+    ${pct != null ? `<div class="np-bar"><i style="width:${pct.toFixed(1)}%"></i></div>` : ""}</div>
+    <button class="iconbtn np-stop" title="Stop this stream" aria-label="Stop ${esc(n.username)}'s stream" data-npstop="${n.user_id}:${it.id}">&#9632;</button></div>`;
+}
+async function viewUserActivity(v, html) {
+  let f = {}; try { f = JSON.parse(sessionStorage.getItem("actFilter") || "{}"); } catch (e) { f = {}; }
+  const qs = () => { const p = new URLSearchParams(); if (f.user) p.set("user", f.user); if (f.group) p.set("group", f.group); if (f.q) p.set("q", f.q);
+    if (f.from) p.set("since", Math.floor(new Date(f.from + "T00:00").getTime() / 1000)); if (f.to) p.set("until", Math.floor(new Date(f.to + "T00:00").getTime() / 1000) + 86400); return p.toString(); };
+  const [now, list, sum, users] = await Promise.all([api("/api/admin/activity/now"), api("/api/admin/activity?limit=100&" + qs()), api("/api/admin/activity/summary?days=30"), api("/api/users")]);
+  html += `<div class="panel np-panel"><div class="row-head"><h3 style="margin:0">Now playing</h3><span class="help" id="np-count">${now.now.length ? now.now.length + " stream" + (now.now.length === 1 ? "" : "s") : ""}</span></div>
+    <div class="np-grid" id="np-grid">${now.now.length ? now.now.map(nowCard).join("") : `<div class="muted">Nothing is playing right now.</div>`}</div></div>`;
+  html += `<div class="panel"><h3 style="margin-top:0">Last 30 days</h3><div class="act-sum">${sum.users.map(x => `<button class="act-user${f.user === x.id ? " on" : ""}" data-fuser="${x.id}"><span class="gm-av sm">${esc(x.username.slice(0, 1).toUpperCase())}</span><span><b>${esc(x.username)}</b><span class="help">${x.plays} play${x.plays === 1 ? "" : "s"} · ${x.hours} h · ${x.last_active ? esc(ago(x.last_active)) : "never"}</span></span></button>`).join("")}</div></div>`;
+  html += `<div class="panel"><div class="act-filters">
+      <select id="af-user" aria-label="User"><option value="">Everyone</option>${users.map(x => `<option value="${x.id}" ${f.user === x.id ? "selected" : ""}>${esc(x.username)}</option>`).join("")}</select>
+      <select id="af-group" aria-label="Type"><option value="">All activity</option>${[["playback", "Playback"], ["signin", "Sign-ins"], ["accounts", "Users & invites"], ["server", "Server"]].map(([k, n]) => `<option value="${k}" ${f.group === k ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <input type="date" id="af-from" value="${esc(f.from || "")}" aria-label="From"><input type="date" id="af-to" value="${esc(f.to || "")}" aria-label="To">
+      <input type="search" id="af-q" value="${esc(f.q || "")}" placeholder="Search titles, devices, IPs" aria-label="Search">
+      <a class="btn ghost small" id="af-csv" href="/api/admin/activity/export.csv?${esc(qs())}" download>Export CSV</a></div>
+    <div class="act-list" id="act-list">${list.events.length ? actDays(list.events) : `<div class="muted" style="padding:14px 0">No activity${qs() ? " matches these filters" : " yet"}.</div>`}</div>
+    ${list.more ? `<button class="btn ghost" id="act-more">Show older</button>` : ""}
+    <div class="act-ret"><label for="af-ret">Keep activity for</label><select id="af-ret">${[[30, "30 days"], [90, "90 days"], [180, "180 days"], [365, "1 year"], [0, "forever"]].map(([d, n]) => `<option value="${d}" ${list.retention_days === d ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <span class="help">Failed sign-ins are kept 30 days, and IP addresses are cleared after 30 days.</span></div></div>`;
+  v.innerHTML = html;
+  const setF = (k, val) => { if (val === "" || val == null) delete f[k]; else f[k] = val; sessionStorage.setItem("actFilter", JSON.stringify(f)); route._keepScroll = true; route(); };
+  $("#af-user").onchange = (e) => setF("user", e.target.value ? +e.target.value : "");
+  $("#af-group").onchange = (e) => setF("group", e.target.value);
+  $("#af-from").onchange = (e) => setF("from", e.target.value);
+  $("#af-to").onchange = (e) => setF("to", e.target.value);
+  let qt; $("#af-q").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => setF("q", e.target.value.trim()), 400); };
+  $$("[data-fuser]").forEach(b => b.onclick = () => setF("user", f.user === +b.dataset.fuser ? "" : +b.dataset.fuser));
+  $("#af-ret").onchange = async (e) => { try { await api("/api/admin/activity/settings", { method: "PUT", body: { retention_days: +e.target.value } }); toast("Saved"); } catch (err) { toast(err.message, true); } };
+  let oldest = list.events.length ? list.events[list.events.length - 1].id : 0, shown = list.events.slice();
+  if ($("#act-more")) $("#act-more").onclick = async () => { const r = await api(`/api/admin/activity?limit=100&before_id=${oldest}&` + qs()); shown = shown.concat(r.events); if (r.events.length) oldest = r.events[r.events.length - 1].id; $("#act-list").innerHTML = actDays(shown); if (!r.more) $("#act-more").remove(); };
+  const bindStops = () => $$("[data-npstop]").forEach(b => b.onclick = async () => { const [uid, iid] = b.dataset.npstop.split(":").map(Number); if (!confirm("Stop this stream?")) return; try { await api("/api/admin/activity/stop", { method: "POST", body: { user_id: uid, item_id: iid } }); toast("Stream stopped"); } catch (e) { toast(e.message, true); } });
+  bindStops();
+  const tok = route._token;
+  route._poll = setInterval(async () => {
+    if (route._token !== tok || document.hidden) return;
+    try { const n = await api("/api/admin/activity/now"); if (route._token !== tok) return;
+      $("#np-grid").innerHTML = n.now.length ? n.now.map(nowCard).join("") : `<div class="muted">Nothing is playing right now.</div>`;
+      $("#np-count").textContent = n.now.length ? n.now.length + " stream" + (n.now.length === 1 ? "" : "s") : ""; bindStops(); } catch (e) { /* ignore */ }
+  }, 5000);
+}
+
+async function accountExtras(v) {
+  const [sess, act] = await Promise.all([api("/api/me/sessions"), api("/api/me/activity?limit=15")]);
+  const box = document.createElement("div");
+  box.innerHTML = `<div class="panel" style="max-width:760px"><div class="row-head"><h3 style="margin:0">Signed-in devices</h3>${sess.length > 1 ? `<button class="btn ghost small" id="dv-others">Sign out all other devices</button>` : ""}</div>
+    <p class="help">Phones, tablets and browsers signed in to your account. Sign out any you don't recognise, then change your password.</p>${deviceRows(sess, false)}</div>
+    <div class="panel" style="max-width:760px"><h3 style="margin-top:0">My recent activity</h3><div class="act-list">${act.events.length ? actDays(act.events) : `<div class="muted">Nothing yet.</div>`}</div>
+    <p class="help">Admins can see activity on this server, including what you play. It is kept ${act.retention_days ? act.retention_days + " days" : "until an admin clears it"}.</p></div>`;
+  const ref = v.querySelector(".panel:nth-of-type(2)");
+  v.insertBefore(box, ref ? ref.nextSibling : null);
+  if ($("#dv-others")) $("#dv-others").onclick = async () => { try { const r = await api("/api/me/sessions/others", { method: "POST" }); toast(`Signed out ${r.signed_out} other device${r.signed_out === 1 ? "" : "s"}`); route(); } catch (e) { toast(e.message, true); } };
+  $$("[data-endsess]", box).forEach(b => b.onclick = async () => { try { await api("/api/me/sessions/" + b.dataset.endsess, { method: "DELETE" }); b.closest(".dev-row").remove(); toast("Signed out"); } catch (e) { toast(e.message, true); } });
+}
+
+async function networkPanel(v) {
+  const n = await api("/api/settings/network");
+  const box = document.createElement("div");
+  box.className = "panel"; box.id = "net-panel";
+  box.innerHTML = `<h3 style="margin-top:0">Reverse proxy</h3>
+    <p class="help" style="margin-top:0">If Movinite sits behind a proxy (for example OpenResty or nginx, with Cloudflare in front), list the proxy's address so the server sees each visitor's real address. Sign-in limits and Activity use it.</p>
+    ${n.untrusted_proxy ? `<div class="inv-warn">Requests are arriving through <b>${esc(n.untrusted_proxy.ip)}</b> with forwarded-address headers, but it isn't trusted yet, so every visitor looks like ${esc(n.untrusted_proxy.ip)}. <button class="btn small" id="net-trust" data-ip="${esc(n.untrusted_proxy.ip)}">Trust ${esc(n.untrusted_proxy.ip)}</button></div>` : ""}
+    <div class="form" style="max-width:760px"><label for="net-tp">Trusted proxies</label><div><input type="text" id="net-tp" value="${esc(n.trusted_proxies)}" placeholder="e.g. 192.0.2.10"><div class="help">IP addresses or networks, comma-separated. 127.0.0.1 is always trusted${n.env ? `; also from .env: ${esc(n.env)}` : ""}.</div></div>
+    <label>You are seen as</label><b>${esc(n.your_ip)}${n.peer && n.peer !== n.your_ip ? ` <span class="help">(via ${esc(n.peer)})</span>` : ""}</b></div>
+    <div class="err" id="net-err"></div><button class="btn" id="net-save">Save</button>`;
+  v.appendChild(box);
+  const save = async (spec) => { try { await api("/api/settings/network", { method: "PUT", body: { trusted_proxies: spec } }); toast("Saved"); route(); } catch (e) { $("#net-err").textContent = e.message; } };
+  $("#net-save").onclick = () => save($("#net-tp").value.trim());
+  if ($("#net-trust")) $("#net-trust").onclick = (e) => { const cur = $("#net-tp").value.trim(); save(cur ? cur + ", " + e.target.dataset.ip : e.target.dataset.ip); };
+}
+
+// ---- the page an invited person opens (no sign-in needed)
+async function showJoin(token) {
+  stopAll();
+  let p;
+  try { p = await api("/api/invite/" + enc(token), { noAuthRedirect: true }); }
+  catch (e) { showAuth(`<div class="auth-box join-box"><h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1><h2 class="auth-h">Invite not valid</h2><p class="muted">${esc(e.message)}</p><button class="btn" id="jn-login">Go to sign in</button></div>`);
+    $("#jn-login").onclick = () => { location.hash = "#/home"; boot(); }; return; }
+  const libs = p.all_libraries ? "all libraries" : p.libraries.join(", ");
+  showAuth(`<form class="auth-box join-box" id="joinf"><h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
+    <h2 class="auth-h">${esc(p.inviter)} invited you</h2><div class="muted">to ${esc(p.server)} as <b>${esc(p.role_label)}</b> · ${esc(libs)}</div>
+    ${p.note ? `<div class="join-note">${esc(p.note)}</div>` : ""}
+    <label>Email</label><input type="text" value="${esc(p.email)}" disabled>
+    <label for="ju">Choose a username</label><input type="text" id="ju" autocomplete="username" value="${esc((p.email.split("@")[0] || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 40))}">
+    <label for="jp">Choose a password (8+ characters)</label><input type="password" id="jp" autocomplete="new-password">
+    <label for="jp2">Repeat password</label><input type="password" id="jp2" autocomplete="new-password">
+    <button class="btn" type="submit">Join</button><div class="err" id="jerr"></div>
+    <div class="help" style="margin-top:8px">This invite works once and expires ${esc(fmtWhen(p.expires_at))}. You can sign in later with your username or your email.</div></form>`);
+  $("#joinf").onsubmit = async (e) => {
+    e.preventDefault();
+    if ($("#jp").value !== $("#jp2").value) { $("#jerr").textContent = "Passwords do not match"; return; }
+    try { await api("/api/invite/" + enc(token) + "/accept", { method: "POST", body: { username: $("#ju").value.trim(), password: $("#jp").value }, noAuthRedirect: true });
+      history.replaceState(null, "", "/#/home"); boot(); }
+    catch (err) { $("#jerr").textContent = err.message; }
+  };
+}
+
 async function viewSettings(tab) {
   // 1.4.9: non-admins only see their own tabs.  1.5.5: Poster Sounds has its own tab (for everyone).
   // 1.6: fixed left-to-right order; viewers get the same relative order; an unknown / hidden tab opens the first one
-  const ALL_TABS = [["libraries", "Libraries", 1], ["scans", "Scan activity", 1], ["sounds", "Poster Sounds", 0], ["metadata", "Metadata", 1],
-    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["account", "My account", 0], ["system", "System", 1]];
+  // 1.9: + Activity (users) and Email (Connect Gmail); "Scan activity" is now "Scans"
+  const tq = {}; if (tab && tab.includes("?")) { new URLSearchParams(tab.split("?")[1]).forEach((v, k) => { tq[k] = v; }); tab = tab.split("?")[0]; }
+  const ALL_TABS = [["libraries", "Libraries", 1], ["scans", "Scans", 1], ["activity", "Activity", 1], ["sounds", "Poster Sounds", 0], ["metadata", "Metadata", 1],
+    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["email", "Email", 1], ["account", "My account", 0], ["system", "System", 1]];
   const tabs = ALL_TABS.filter(t => ME.is_admin || !t[2]).map(t => [t[0], t[1]]);
   if (!tabs.some(t => t[0] === tab)) tab = tabs[0][0];
   let html = `<h2>Settings</h2><div class="tabs set-tabs" role="tablist" aria-label="Settings sections">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? "on" : ""}" data-href="#/settings/${k}">${n}</button>`).join("")}</div>`;
@@ -2000,6 +2410,7 @@ async function viewSettings(tab) {
       <button class="btn" id="cpsave">Change password</button></div>`;
     html += `<p class="help" style="max-width:560px">Sounds for posters and buttons are in <a style="color:var(--acc-text)" href="#/settings/sounds">Poster Sounds</a>.</p>`;
     v.innerHTML = html;
+    accountExtras(v).catch(() => {});
     $("#qcap-on").onchange = () => { setQualityCap($("#qcap-on").checked); toast($("#qcap-on").checked ? "Quality will be capped to this screen" : "Screen cap off on this device"); };
     $("#cpsave").onclick = async () => {
       if ($("#np").value !== $("#np2").value) { $("#cperr").textContent = "Passwords do not match"; return; }
@@ -2027,16 +2438,11 @@ async function viewSettings(tab) {
     $("#snd-test").onclick = () => SFX.test();
     sndSync();
   } else if (tab === "users") {
-    const users = await api("/api/users");
-    html += `<div class="panel"><h3 style="margin-top:0">Users</h3><table><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr>
-      ${users.map(x => `<tr><td>${esc(x.username)}</td><td>${x.is_admin ? "admin" : "viewer"}</td><td>${new Date(x.created_at * 1000).toLocaleDateString()}</td>
-      <td><button class="btn ghost small" data-pw="${x.id}">Set password</button>${x.id !== ME.id ? `<button class="btn danger small" data-deluser="${x.id}">Delete</button>` : ""}</td></tr>`).join("")}</table>
-      <h3>Add a user</h3><div class="form" style="max-width:560px"><label>Username</label><input type="text" id="nu"><label>Password</label><input type="password" id="nup" autocomplete="new-password">
-      <label for="nua">Administrator</label><label class="chk"><input type="checkbox" id="nua"> <span class="help">can add libraries, shares and users</span></label></div><div class="err" id="nuerr"></div><button class="btn" id="nuadd">Add user</button></div>`;
-    v.innerHTML = html;
-    $("#nuadd").onclick = async () => { try { await api("/api/users", { method: "POST", body: { username: $("#nu").value, password: $("#nup").value, is_admin: $("#nua").checked } }); toast("User added"); route(); } catch (e) { $("#nuerr").textContent = e.message; } };
-    $$("[data-deluser]").forEach(b => b.onclick = async () => { if (!confirm("Delete this user?")) return; try { await api("/api/users/" + b.dataset.deluser, { method: "DELETE" }); route(); } catch (e) { toast(e.message, true); } });
-    $$("[data-pw]").forEach(b => b.onclick = async () => { const pw = prompt("New password (8+ characters). Other users must change it at next sign-in:"); if (!pw) return; try { await api(`/api/users/${b.dataset.pw}/password`, { method: "POST", body: { password: pw } }); toast("Password set"); } catch (e) { toast(e.message, true); } });
+    await viewUsers(v, html);
+  } else if (tab === "email") {
+    await viewEmail(v, html, tq);
+  } else if (tab === "activity") {
+    await viewUserActivity(v, html);
   } else if (tab === "transcoding") {
     await viewTranscoding(v, html);
   } else if (tab === "system") {
@@ -2051,8 +2457,9 @@ async function viewSettings(tab) {
       <span>TMDB metadata</span><b>${s.tmdb && s.tmdb.enabled ? "on" : "off (no key)"}${s.tmdb && s.tmdb.stats ? ` · ${s.tmdb.stats.requests || 0} requests since start` : ""}</b></div>
       <h3>Active transcodes</h3>${s.transcodes.length ? `<table><tr><th>Title</th><th>Quality</th><th>Encoder</th><th>State</th><th>Segment</th><th>Idle</th></tr>${s.transcodes.map(t => `<tr><td>${esc(t.title)}</td><td>${t.profile === "remux" ? "remux (video copied)" : t.profile}</td><td>${encName(t)}</td><td>${t.running ? (t.paused ? "paused (buffered ahead)" : "running") : "finished"}</td><td>${t.last_req}</td><td>${t.idle_s}s</td></tr>`).join("")}</table>` : `<div class="muted">None</div>`}</div>`;
     v.innerHTML = html;
+    await networkPanel(v).catch(() => {});
     $("#ss-all").onchange = async (e) => { try { await api("/api/settings", { method: "PUT", body: { status_all_users: e.target.checked } }); toast(e.target.checked ? "Server status is shown to everyone" : "Server status is shown to admins only"); } catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); } };
-    route._poll = setInterval(() => { route._keepScroll = true; route(); }, 5000);
+    route._poll = setInterval(() => { const a = document.activeElement; if (a && (a.tagName === "INPUT" || a.tagName === "SELECT")) return; route._keepScroll = true; route(); }, 5000);
   }
 }
 

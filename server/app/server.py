@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 
 from . import artwork, auth, browse, folderart, liborder, playlists, preload, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
+from . import gmail, mailer, guard, invites, keys, netutil, useractivity
 from .version import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -23,12 +24,18 @@ log = logging.getLogger("media-server")
 STATIC = Path(__file__).parent / "static"
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 app = FastAPI(title="Movinite", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(guard.Guard)    # 1.9: per-library access + Activity > Now playing
 _stop = False
 
 
 @app.on_event("startup")
 def _startup():
     db.migrate()
+    if keys.available():
+        keys.ensure()                              # 1.9: this server's identity key (data/secrets, 0600)
+    else:
+        log.warning("Python package 'cryptography' is missing: Connect Gmail is unavailable until update.sh installs it")
+    threading.Thread(target=useractivity.loop, args=(lambda: _stop,), daemon=True, name="activity").start()   # 1.9
     threading.Thread(target=transcode.janitor_loop, args=(lambda: _stop,), daemon=True, name="janitor").start()
     threading.Thread(target=scanner.scheduler_loop, daemon=True, name="scan-scheduler").start()
     # re-mount shares that dropped (e.g. NAS was down at boot)
@@ -91,7 +98,8 @@ def setup(request: Request, response: Response, body: dict = Body(...)):
     username, password = (body.get("username") or "").strip(), body.get("password") or ""
     _check_new_user(username, password)
     uid = auth.create_user(username, password, is_admin=True)
-    _set_cookie(request, response, auth.new_session(uid))
+    _set_cookie(request, response, _new_session(request, uid))
+    useractivity.record("user_created", user={"id": uid, "username": username}, ip=netutil.client_ip(request), detail={"role": "admin", "first_run": True})
     return {"ok": True}
 
 
@@ -102,6 +110,24 @@ def _check_new_user(username, password):
         raise HTTPException(400, "Password must be at least 8 characters")
 
 
+def _new_session(request, uid):
+    return auth.new_session(uid, netutil.client_ip(request), request.headers.get("user-agent"))
+
+
+def _base_url(request):
+    """Links in invites and the Gmail redirect use Settings > Email > Public address when set (never the Host
+    header of an anonymous request).  Without it, the address the signed-in admin is using right now."""
+    pu = (settings.get("public_url", "") or "").strip().rstrip("/")
+    if pu:
+        return pu
+    peer = request.client.host if request.client else None
+    proto = request.url.scheme
+    if peer and netutil._is_trusted(peer, netutil.trusted_nets()):
+        proto = (request.headers.get("x-forwarded-proto") or proto).split(",")[0].strip()
+    host = request.headers.get("host") or request.url.netloc
+    return "%s://%s" % (proto, host)
+
+
 def _set_cookie(request, response, tok):
     secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
     response.set_cookie(auth.COOKIE, tok, httponly=True, samesite="lax", secure=secure,
@@ -110,14 +136,24 @@ def _set_cookie(request, response, tok):
 
 @app.post("/api/login")
 def login(request: Request, response: Response, body: dict = Body(...)):
-    ip = request.client.host if request.client else "?"
+    ip = netutil.client_ip(request)      # 1.9: the real client behind a trusted proxy (was the proxy's address)
+    ua = request.headers.get("user-agent")
     if not auth.login_allowed(ip):
         raise HTTPException(429, "Too many failed sign-ins; wait 5 minutes")
-    u = db.row("SELECT * FROM users WHERE username=?", ((body.get("username") or "").strip(),))
+    tried = (body.get("username") or "").strip()
+    u = db.row("SELECT * FROM users WHERE username=?", (tried,))
+    if not u and "@" in tried:
+        u = db.row("SELECT * FROM users WHERE email=?", (tried,))     # 1.9: invited people may sign in with their email
     if not u or not auth.check_pw(body.get("password") or "", u["pw_hash"]):
         auth.login_failed(ip)
+        useractivity.record("login_failed", user_id=u["id"] if u else None, actor=tried[:64] or "?", ip=ip,
+                            device=auth._device_name(ua))
         raise HTTPException(401, "Wrong username or password")
-    _set_cookie(request, response, auth.new_session(u["id"]))
+    if u.get("disabled_at"):
+        useractivity.record("login_failed", user=u, ip=ip, device=auth._device_name(ua), detail={"reason": "disabled"})
+        raise HTTPException(403, "This account is turned off. Ask the server admin.")
+    _set_cookie(request, response, auth.new_session(u["id"], ip, ua))
+    useractivity.record("login", user=u, ip=ip, device=auth._device_name(ua))
     return {"ok": True, "must_change_pw": bool(u["must_change_pw"])}
 
 
@@ -125,6 +161,9 @@ def login(request: Request, response: Response, body: dict = Body(...)):
 def logout(request: Request, response: Response):
     tok = request.cookies.get(auth.COOKIE)
     if tok:
+        u = auth.user_from_token(tok)
+        if u:
+            useractivity.record("logout", user=u, ip=netutil.client_ip(request), device=auth._device_name(request.headers.get("user-agent")))
         auth.end_session(tok)
     response.delete_cookie(auth.COOKIE, path="/")
     return {"ok": True}
@@ -132,7 +171,10 @@ def logout(request: Request, response: Response):
 
 @app.get("/api/me")
 def me(u=Depends(auth.require_user)):
-    return {"id": u["id"], "username": u["username"], "is_admin": bool(u["is_admin"]),
+    role = auth.norm_role(u.get("role"), u.get("is_admin"))
+    return {"id": u["id"], "username": u["username"], "is_admin": bool(u["is_admin"]), "role": role,
+            "role_label": auth.ROLE_LABEL.get(role), "email": u.get("email"),
+            "all_libraries": u.get("libs") is None, "session_id": u.get("sid"),
             "must_change_pw": bool(u["must_change_pw"]), "version": __version__, "show_status": _status_visible(u)}
 
 
@@ -157,7 +199,8 @@ def change_my_password(request: Request, response: Response, body: dict = Body(.
     if len(new) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
     auth.set_password(u["id"], new)
-    _set_cookie(request, response, auth.new_session(u["id"]))
+    _set_cookie(request, response, _new_session(request, u["id"]))
+    useractivity.record("password_changed", user=u, ip=netutil.client_ip(request))
     return {"ok": True}
 
 
@@ -166,7 +209,36 @@ def change_my_password(request: Request, response: Response, body: dict = Body(.
 # ---------------------------------------------------------------------------
 @app.get("/api/users")
 def list_users(u=Depends(auth.require_admin)):
-    return db.rows("SELECT id, username, is_admin, created_at FROM users ORDER BY username")
+    """1.9: role, email, libraries, last active, signed-in devices, Gmail state."""
+    names = {r["id"]: r["name"] for r in db.rows("SELECT id, name FROM libraries")}
+    libmap = {}
+    for r in db.rows("SELECT user_id, library_id FROM user_libraries"):
+        libmap.setdefault(r["user_id"], []).append(r["library_id"])
+    now = int(time.time())
+    out = []
+    for x in db.rows("SELECT id, username, is_admin, role, email, all_libraries, disabled_at, invited_by, created_at FROM users ORDER BY username"):
+        role = auth.norm_role(x.get("role"), x.get("is_admin"))
+        libs = None if (role == "admin" or x.get("all_libraries")) else sorted(libmap.get(x["id"], []))
+        sess = db.row("SELECT COUNT(*) n, MAX(last_seen) seen FROM sessions WHERE user_id=? AND expires_at>?", (x["id"], now))
+        g = db.row("SELECT email, status FROM gmail_accounts WHERE user_id=?", (x["id"],))
+        out.append({"id": x["id"], "username": x["username"], "is_admin": role == "admin", "role": role,
+                    "role_label": auth.ROLE_LABEL[role], "email": x.get("email"), "libraries": libs,
+                    "library_names": None if libs is None else [names.get(i, "?") for i in libs],
+                    "disabled": bool(x.get("disabled_at")), "created_at": x["created_at"], "devices": sess["n"],
+                    "last_seen": sess["seen"], "gmail": g})
+    return out
+
+
+def _parse_libs(body):
+    if body.get("all_libraries", True) in (True, 1, "1", "true", None) and not body.get("libraries"):
+        return None
+    if body.get("all_libraries") in (True, 1, "1", "true"):
+        return None
+    ok = {r["id"] for r in db.rows("SELECT id FROM libraries")}
+    libs = sorted({int(x) for x in (body.get("libraries") or []) if str(x).isdigit() and int(x) in ok})
+    if not libs:
+        raise HTTPException(400, "Pick at least one library, or choose All libraries")
+    return libs
 
 
 @app.post("/api/users")
@@ -175,8 +247,74 @@ def add_user(body: dict = Body(...), u=Depends(auth.require_admin)):
     _check_new_user(username, password)
     if db.row("SELECT id FROM users WHERE username=?", (username,)):
         raise HTTPException(409, "That username exists")
-    uid = auth.create_user(username, password, is_admin=bool(body.get("is_admin")))
+    role = auth.norm_role(body.get("role"), bool(body.get("is_admin")))
+    email = (body.get("email") or "").strip() or None
+    if email and not invites.valid_email(email):
+        raise HTTPException(400, "Enter a valid email address")
+    if email and db.row("SELECT id FROM users WHERE email=?", (email,)):
+        raise HTTPException(409, "Someone already has that email")
+    libs = None if role == "admin" else _parse_libs(body)
+    uid = auth.create_user(username, password, role=role, email=email, all_libraries=libs is None, libraries=libs,
+                           invited_by=u["id"])
+    useractivity.record("user_created", user=u, detail={"username": username, "role": role})
     return {"id": uid}
+
+
+def _admins_left(excluding):
+    return db.row("SELECT COUNT(*) n FROM users WHERE role='admin' AND disabled_at IS NULL AND id<>?", (excluding,))["n"]
+
+
+@app.put("/api/users/{uid}")
+def edit_user(uid: int, body: dict = Body(...), u=Depends(auth.require_admin)):
+    """1.9: change role, libraries, email, or turn an account off / on."""
+    t = db.row("SELECT * FROM users WHERE id=?", (uid,))
+    if not t:
+        raise HTTPException(404, "No such user")
+    old_role = auth.norm_role(t.get("role"), t.get("is_admin"))
+    role = auth.norm_role(body.get("role"), False) if body.get("role") else old_role
+    if old_role == "admin" and role != "admin" and _admins_left(uid) < 1:
+        raise HTTPException(400, "Keep at least one admin")
+    if uid == u["id"] and role != "admin":
+        raise HTTPException(400, "You can't remove your own admin role")
+    with db.tx() as c:
+        if role != old_role:
+            c.execute("UPDATE users SET role=?, is_admin=? WHERE id=?", (role, 1 if role == "admin" else 0, uid))
+        if "email" in body:
+            email = (body.get("email") or "").strip() or None
+            if email and not invites.valid_email(email):
+                raise HTTPException(400, "Enter a valid email address")
+            if email and c.execute("SELECT id FROM users WHERE email=? AND id<>?", (email, uid)).fetchone():
+                raise HTTPException(409, "Someone else has that email")
+            c.execute("UPDATE users SET email=? WHERE id=?", (email, uid))
+        if role == "admin":
+            c.execute("UPDATE users SET all_libraries=1 WHERE id=?", (uid,))
+            c.execute("DELETE FROM user_libraries WHERE user_id=?", (uid,))
+        elif "libraries" in body or "all_libraries" in body:
+            libs = _parse_libs(body)
+            c.execute("UPDATE users SET all_libraries=? WHERE id=?", (1 if libs is None else 0, uid))
+            c.execute("DELETE FROM user_libraries WHERE user_id=?", (uid,))
+            if libs:
+                c.executemany("INSERT INTO user_libraries(user_id, library_id) VALUES(?,?)", [(uid, l) for l in libs])
+        if "disabled" in body:
+            if body.get("disabled"):
+                if uid == u["id"]:
+                    raise HTTPException(400, "You can't turn off your own account")
+                if old_role == "admin" and _admins_left(uid) < 1:
+                    raise HTTPException(400, "Keep at least one admin")
+                c.execute("UPDATE users SET disabled_at=? WHERE id=?", (int(time.time()), uid))
+                c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+            else:
+                c.execute("UPDATE users SET disabled_at=NULL WHERE id=?", (uid,))
+    auth.invalidate_cache()
+    if role != old_role:
+        useractivity.record("role_changed", user=u, detail={"username": t["username"], "from": old_role, "to": role})
+        if old_role == "admin":
+            gmail.forget_user(uid)
+    if "libraries" in body or "all_libraries" in body:
+        useractivity.record("libraries_changed", user=u, detail={"username": t["username"]})
+    if "disabled" in body:
+        useractivity.record("user_disabled" if body.get("disabled") else "user_enabled", user=u, detail={"username": t["username"]})
+    return {"ok": True}
 
 
 @app.delete("/api/users/{uid}")
@@ -186,10 +324,15 @@ def delete_user(uid: int, u=Depends(auth.require_admin)):
     target = db.row("SELECT * FROM users WHERE id=?", (uid,))
     if not target:
         raise HTTPException(404, "No such user")
-    if target["is_admin"] and db.row("SELECT COUNT(*) n FROM users WHERE is_admin=1")["n"] <= 1:
+    if auth.norm_role(target.get("role"), target.get("is_admin")) == "admin" and _admins_left(uid) < 1:
         raise HTTPException(400, "Cannot delete the last admin")
+    gmail.forget_user(uid)
     with db.tx() as c:
         c.execute("DELETE FROM users WHERE id=?", (uid,))
+        c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+        c.execute("DELETE FROM user_libraries WHERE user_id=?", (uid,))
+    auth.invalidate_cache()
+    useractivity.record("user_deleted", user=u, detail={"username": target["username"]})
     return {"ok": True}
 
 
@@ -198,10 +341,424 @@ def reset_user_password(uid: int, body: dict = Body(...), u=Depends(auth.require
     pw = body.get("password") or ""
     if len(pw) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
-    if not db.row("SELECT id FROM users WHERE id=?", (uid,)):
+    t = db.row("SELECT id, username FROM users WHERE id=?", (uid,))
+    if not t:
         raise HTTPException(404, "No such user")
     auth.set_password(uid, pw, must_change=uid != u["id"])
+    useractivity.record("password_reset", user=u, detail={"username": t["username"]})
     return {"ok": True}
+
+
+# ---- 1.9: signed-in devices
+@app.get("/api/me/sessions")
+def my_sessions(u=Depends(auth.require_user)):
+    return auth.list_sessions(u["id"], u.get("sid"))
+
+
+@app.delete("/api/me/sessions/{sid}")
+def end_my_session(sid: str, request: Request, u=Depends(auth.require_user)):
+    if not auth.end_session_by_id(u["id"], sid):
+        raise HTTPException(404, "That device is already signed out")
+    useractivity.record("session_revoked", user=u, ip=netutil.client_ip(request), detail={"device_id": sid, "self": sid == u.get("sid")})
+    return {"ok": True, "was_current": sid == u.get("sid")}
+
+
+@app.post("/api/me/sessions/others")
+def end_my_other_sessions(request: Request, u=Depends(auth.require_user)):
+    n = auth.end_all_sessions(u["id"], except_sid=u.get("sid"))
+    useractivity.record("signed_out_everywhere", user=u, ip=netutil.client_ip(request), detail={"devices": n})
+    return {"ok": True, "signed_out": n}
+
+
+@app.get("/api/users/{uid}/sessions")
+def user_sessions(uid: int, u=Depends(auth.require_admin)):
+    return auth.list_sessions(uid, u.get("sid") if uid == u["id"] else None)
+
+
+@app.delete("/api/users/{uid}/sessions/{sid}")
+def end_user_session(uid: int, sid: str, u=Depends(auth.require_admin)):
+    if not auth.end_session_by_id(uid, sid):
+        raise HTTPException(404, "That device is already signed out")
+    t = db.row("SELECT username FROM users WHERE id=?", (uid,))
+    useractivity.record("session_revoked", user=u, detail={"username": t and t["username"], "device_id": sid})
+    return {"ok": True}
+
+
+@app.post("/api/users/{uid}/signout")
+def signout_user(uid: int, u=Depends(auth.require_admin)):
+    n = auth.end_all_sessions(uid, except_sid=u.get("sid") if uid == u["id"] else None)
+    t = db.row("SELECT username FROM users WHERE id=?", (uid,))
+    useractivity.record("signed_out_everywhere", user=u, detail={"username": t and t["username"], "devices": n})
+    return {"ok": True, "signed_out": n}
+
+
+# ---- 1.9: invites
+def _inv_err(e):
+    raise HTTPException(e.status, e.msg)
+
+
+@app.get("/api/invites")
+def list_invites(u=Depends(auth.require_admin)):
+    return {"invites": invites.list_all(), "gmail": gmail.status_for(u["id"]), "mail": mailer.sender(u),
+            "expiry_choices": invites.EXPIRY_CHOICES}
+
+
+@app.post("/api/invites")
+def create_invite(request: Request, body: dict = Body(...), u=Depends(auth.require_admin)):
+    libs = None if body.get("all_libraries", True) in (True, 1, "1", "true") else (body.get("libraries") or [])
+    try:
+        iid, tok = invites.create(u, body.get("email"), body.get("role") or "view", libs, body.get("note") or "",
+                                  int(body.get("days") or 7))
+    except invites.InviteError as e:
+        _inv_err(e)
+    out = invites.deliver(u, iid, tok, _base_url(request)) if body.get("send", True) else \
+        {"sent": False, "via": "link", "manual": True, "link": invites.link_for(_base_url(request), tok)}
+    out["id"] = iid
+    return out
+
+
+@app.post("/api/invites/{iid}/resend")
+def resend_invite(iid: int, request: Request, body: dict = Body(default={}), u=Depends(auth.require_admin)):
+    try:
+        tok = invites.renew(u, iid)
+    except invites.InviteError as e:
+        _inv_err(e)
+    if body.get("send", True):
+        out = invites.deliver(u, iid, tok, _base_url(request))
+    else:
+        out = {"sent": False, "via": "link", "manual": True, "link": invites.link_for(_base_url(request), tok)}
+    out["id"] = iid
+    return out
+
+
+@app.delete("/api/invites/{iid}")
+def revoke_invite(iid: int, u=Depends(auth.require_admin)):
+    if not invites.revoke(u, iid):
+        raise HTTPException(404, "That invite is no longer pending")
+    return {"ok": True}
+
+
+_inv_tries = {}
+
+
+def _inv_rate(request):
+    ip = netutil.client_ip(request)
+    now = time.time()
+    lst = [t for t in _inv_tries.get(ip, []) if now - t < 300]
+    if len(lst) >= 30:
+        raise HTTPException(429, "Too many tries; wait 5 minutes")
+    lst.append(now)
+    _inv_tries[ip] = lst
+    if len(_inv_tries) > 5000:
+        _inv_tries.clear()
+
+
+@app.get("/api/invite/{token}")
+def invite_preview(token: str, request: Request):
+    _inv_rate(request)
+    try:
+        return invites.preview(token)
+    except invites.InviteError as e:
+        _inv_err(e)
+
+
+@app.post("/api/invite/{token}/accept")
+def invite_accept(token: str, request: Request, response: Response, body: dict = Body(...)):
+    _inv_rate(request)
+    try:
+        uid = invites.accept(token, body.get("username"), body.get("password") or "")
+    except invites.InviteError as e:
+        _inv_err(e)
+    _set_cookie(request, response, _new_session(request, uid))
+    return {"ok": True}
+
+
+# ---- 1.9: Connect Gmail (Settings > Email)
+def _gmail_err(e):
+    raise HTTPException(409 if e.reconnect else 400, e.message)
+
+
+def _email_settings(request, u):
+    base = _base_url(request)
+    return {"public_url": settings.get("public_url", "") or "", "effective_base_url": base,
+            "server_name": invites.server_name(),
+            "client_id": gmail.client_id(), "client_secret_saved": gmail.has_secret() if keys.available() else False,
+            "crypto": keys.available(), "redirect_uri": gmail.redirect_uri(base),
+            "paste_redirect_uri": gmail.PASTE_REDIRECT,
+            "redirect_ok": base.startswith("https://") or base.split("://", 1)[-1].startswith(("localhost", "127.0.0.1")),
+            "scopes": gmail.SCOPES, "hourly_cap": gmail.caps()[0], "daily_cap": gmail.caps()[1],
+            "me": gmail.status_for(u["id"]), "accounts": gmail.all_accounts(), "fingerprint": keys.fingerprint() if keys.available() else None,
+            "mail_method": mailer.method(), "smtp": mailer.status(u), "sender": mailer.sender(u)}
+
+
+@app.get("/api/settings/email")
+def get_email_settings(request: Request, u=Depends(auth.require_admin)):
+    return _email_settings(request, u)
+
+
+@app.put("/api/settings/email")
+def put_email_settings(request: Request, body: dict = Body(...), u=Depends(auth.require_admin)):
+    changed = []
+    if "public_url" in body:
+        pu = (body.get("public_url") or "").strip().rstrip("/")
+        if pu and not re.match(r"^https?://[A-Za-z0-9.-]+(:\d{1,5})?$", pu):
+            raise HTTPException(400, "Public address looks like https://movies.example.com (no path)")
+        settings.put("public_url", pu)
+        changed.append("public_url")
+    if "server_name" in body:
+        settings.put("server_name", (body.get("server_name") or "").strip()[:60])
+        changed.append("server_name")
+    if "mail_method" in body:
+        if body.get("mail_method") not in ("smtp", "gmail_oauth"):
+            raise HTTPException(400, "Pick app password (SMTP) or Connect Gmail")
+        settings.put("mail_method", body["mail_method"])
+        changed.append("mail_method")
+    if "hourly_cap" in body or "daily_cap" in body:
+        for k, d in (("hourly_cap", gmail.HOURLY_CAP_DEFAULT), ("daily_cap", gmail.DAILY_CAP_DEFAULT)):
+            if k in body:
+                try:
+                    v = max(1, min(int(body[k]), 2000))
+                except (TypeError, ValueError):
+                    raise HTTPException(400, "Limits are whole numbers")
+                settings.put("gmail_" + k, str(v))
+                changed.append("gmail_" + k)
+    if "client_id" in body or body.get("client_secret"):
+        if not keys.available():
+            raise HTTPException(400, "This server is missing the Python 'cryptography' package; re-run update.sh")
+        try:
+            if gmail.set_client(body.get("client_id") if "client_id" in body else None, body.get("client_secret") or None):
+                changed.append("gmail_client")
+        except gmail.GmailError as e:
+            _gmail_err(e)
+    if changed:
+        useractivity.record("settings_changed", user=u, detail={"keys": changed})   # names only
+    return _email_settings(request, u)
+
+
+# ---- 1.9: email over SMTP -- Gmail app password (default) or any SMTP server
+def _mail_err(e):
+    raise HTTPException(400, e.message)
+
+
+@app.get("/api/mail/status")
+def mail_status(u=Depends(auth.require_admin)):
+    return mailer.sender(u)
+
+
+@app.put("/api/settings/smtp")
+def put_smtp(request: Request, body: dict = Body(...), u=Depends(auth.require_admin)):
+    """Save the Gmail address + app password (or a generic SMTP server). The password is sealed in
+    data/secrets/smtp.sealed and is never returned or logged."""
+    try:
+        changed = mailer.save(body)
+    except mailer.MailError as e:
+        _mail_err(e)
+    if body.get("use", True) and mailer.method() != "smtp":
+        settings.put("mail_method", "smtp")
+        changed.append("mail_method")
+    if changed:
+        useractivity.record("settings_changed", user=u, detail={"keys": changed})   # names only, never values
+    return _email_settings(request, u)
+
+
+@app.delete("/api/settings/smtp")
+def delete_smtp(request: Request, u=Depends(auth.require_admin)):
+    mailer.forget()
+    useractivity.record("settings_changed", user=u, detail={"keys": ["smtp_removed"]})
+    return _email_settings(request, u)
+
+
+@app.post("/api/smtp/test")
+def smtp_test(request: Request, u=Depends(auth.require_admin)):
+    """Send a sample invite to the sending address itself (no invite is created)."""
+    st = mailer.status(u)
+    if not st["configured"]:
+        raise HTTPException(409, "Save your email address and app password first")
+    base = _base_url(request)
+    name = st["from_name"] or mailer.suggested_name(u)
+    fake = {"email": st["from_addr"], "role": "view", "libraries": None,
+            "note": "This is a test of Movinite invites. The link below is only a sample.",
+            "expires_at": int(time.time()) + 7 * 86400}
+    subject, text, html = invites.compose(fake, base + "/#/invite/sample-link-not-valid", name, base)
+    try:
+        mailer.send(st["from_addr"], "[Test] " + subject, text, html, from_name=name,
+                    msgid_domain=__import__("urllib.parse").parse.urlparse(base).hostname)
+    except mailer.MailError as e:
+        useractivity.record("email_error", user=u, detail={"reason": e.code, "test": True})
+        _mail_err(e)
+    useractivity.record("email_test", user=u, detail={"to": st["from_addr"]})
+    return {"ok": True, "to": st["from_addr"]}
+
+
+@app.post("/api/gmail/connect")
+def gmail_connect(request: Request, body: dict = Body(default={}), u=Depends(auth.require_admin)):
+    try:
+        return gmail.start(u, _base_url(request), paste=bool(body.get("paste")))
+    except gmail.GmailError as e:
+        _gmail_err(e)
+
+
+def _gmail_done_page(ok, msg):
+    body = ("<!doctype html><meta charset=utf-8><meta name=referrer content=no-referrer><title>Movinite</title>"
+            "<body style='background:#0d0a14;color:#eee;font-family:sans-serif;padding:40px'><p>%s</p>"
+            "<p><a style='color:#B07CFF' href='/#/settings/email'>Back to Settings &gt; Email</a></p>"
+            "<script>setTimeout(function(){location.replace('/#/settings/email?%s')},%d)</script></body>"
+            % (__import__("html").escape(msg), "connected=1" if ok else "error=1", 400 if ok else 6000))
+    return HTMLResponse(body, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@app.get("/api/gmail/callback")
+def gmail_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    u = auth.user_from_request(request)
+    if not u or not u["is_admin"]:
+        return _gmail_done_page(False, "Sign in to Movinite as an admin in this browser, then press Connect Gmail again.")
+    if error:
+        return _gmail_done_page(False, "Google sign-in was cancelled." if error == "access_denied" else "Google returned an error (%s)." % error)
+    try:
+        st = gmail.finish(u, code, state)
+    except gmail.GmailError as e:
+        useractivity.record("gmail_error", user=u, detail={"reason": e.code})
+        return _gmail_done_page(False, e.message)
+    useractivity.record("gmail_connected", user=u, detail={"email": st.get("email")})
+    if not mailer.configured():          # nothing else set up: use the account they just connected
+        settings.put("mail_method", "gmail_oauth")
+    return _gmail_done_page(True, "Gmail connected as %s." % st.get("email"))
+
+
+@app.post("/api/gmail/paste")
+def gmail_paste(body: dict = Body(...), u=Depends(auth.require_admin)):
+    """Connect when this server isn't reachable at an https address: the browser ends on
+    http://localhost/movinite-gmail-callback?code=...&state=... (it may say the page can't be reached);
+    the admin pastes that address here."""
+    try:
+        code, state = gmail.parse_pasted(body.get("url") or "")
+        st = gmail.finish(u, code, state)
+    except gmail.GmailError as e:
+        useractivity.record("gmail_error", user=u, detail={"reason": e.code})
+        _gmail_err(e)
+    useractivity.record("gmail_connected", user=u, detail={"email": st.get("email")})
+    if not mailer.configured():          # nothing else set up: use the account they just connected
+        settings.put("mail_method", "gmail_oauth")
+    return st
+
+
+@app.get("/api/gmail/status")
+def gmail_status(u=Depends(auth.require_admin)):
+    return gmail.status_for(u["id"])
+
+
+@app.post("/api/gmail/test")
+def gmail_test(request: Request, u=Depends(auth.require_admin)):
+    """Send a sample invite email to the admin's own connected address (no invite is created)."""
+    st = gmail.status_for(u["id"])
+    if st.get("status") != "connected":
+        raise HTTPException(409, "Connect Gmail first")
+    base = _base_url(request)
+    fake = {"email": st["email"], "role": "view", "libraries": None, "note": "This is a test of Movinite invites. The link below is only a sample.",
+            "expires_at": int(time.time()) + 7 * 86400}
+    subject, text, html = invites.compose(fake, base + "/#/invite/sample-link-not-valid", st.get("display_name") or u["username"], base)
+    try:
+        gmail.send(u["id"], st["email"], "[Test] " + subject, text, html, msgid_domain=__import__("urllib.parse").parse.urlparse(base).hostname)
+    except gmail.GmailError as e:
+        _gmail_err(e)
+    return {"ok": True, "to": st["email"]}
+
+
+@app.delete("/api/gmail")
+def gmail_disconnect(u=Depends(auth.require_admin)):
+    ok = gmail.disconnect(u["id"])
+    useractivity.record("gmail_disconnected", user=u, detail={"revoked_at_google": ok})
+    return {"ok": True, "revoked": ok}
+
+
+# ---- 1.9: user activity (Settings > Activity)
+def _act_args(user, group, q, since, until, before_id, limit):
+    return dict(user_id=user or None, group=group or None, q=(q or "").strip()[:100] or None, since=since or None,
+                until=until or None, before_id=before_id or None, limit=limit)
+
+
+@app.get("/api/admin/activity")
+def admin_activity(user: int = 0, group: str = "", q: str = "", since: int = 0, until: int = 0, before_id: int = 0,
+                   limit: int = 100, u=Depends(auth.require_admin)):
+    rows = useractivity.query(**_act_args(user, group, q, since, until, before_id, limit))
+    return {"events": rows, "more": len(rows) >= max(1, min(limit, 1000)), "retention_days": useractivity.retention_days()}
+
+
+@app.get("/api/admin/activity/now")
+def admin_now_playing(u=Depends(auth.require_admin)):
+    return {"now": useractivity.now_playing(), "at": time.time()}
+
+
+@app.get("/api/admin/activity/summary")
+def admin_activity_summary(days: int = 30, u=Depends(auth.require_admin)):
+    return {"users": useractivity.summary(max(1, min(days, 365))), "days": days}
+
+
+@app.get("/api/admin/activity/export.csv")
+def admin_activity_csv(user: int = 0, group: str = "", q: str = "", since: int = 0, until: int = 0,
+                       u=Depends(auth.require_admin)):
+    rows = useractivity.query(**_act_args(user, group, q, since, until, 0, 1000))
+    for r in rows:
+        pass
+    data = useractivity.to_csv(rows)
+    return Response(data, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=movinite-activity-%s.csv" % time.strftime("%Y%m%d-%H%M"),
+                             "Cache-Control": "no-store"})
+
+
+@app.put("/api/admin/activity/settings")
+def admin_activity_settings(body: dict = Body(...), u=Depends(auth.require_admin)):
+    try:
+        d = int(body.get("retention_days"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Pick a retention period")
+    if d not in useractivity.RETENTION_CHOICES:
+        raise HTTPException(400, "Pick 30, 90, 180 or 365 days, or keep forever")
+    settings.put("activity_retention_days", str(d))
+    useractivity.record("settings_changed", user=u, detail={"keys": ["activity_retention_days"]})
+    useractivity.prune()
+    return {"retention_days": d}
+
+
+@app.post("/api/admin/activity/stop")
+def admin_stop_stream(body: dict = Body(...), u=Depends(auth.require_admin)):
+    """Stop a viewer's transcode from Activity > Now playing."""
+    uid, iid = int(body.get("user_id") or 0), int(body.get("item_id") or 0)
+    n = 0
+    for s in list(transcode._sessions.values()):
+        if s.item["id"] == iid and getattr(s, "user_id", None) == uid:
+            transcode.stop_session(s.sid, "admin_stop")
+            n += 1
+    useractivity.end_player(uid, iid)
+    return {"ok": True, "stopped": n}
+
+
+@app.get("/api/me/activity")
+def my_activity(before_id: int = 0, limit: int = 100, u=Depends(auth.require_user)):
+    return {"events": useractivity.query(user_id=u["id"], before_id=before_id or None, limit=limit),
+            "retention_days": useractivity.retention_days()}
+
+
+# ---- 1.9: trusted proxies (Settings > System)
+@app.get("/api/settings/network")
+def get_network(request: Request, u=Depends(auth.require_admin)):
+    hint = dict(netutil.last_proxy_hint)
+    return {"trusted_proxies": settings.get("trusted_proxies", "") or "", "env": os.environ.get("MS_TRUSTED_PROXIES", ""),
+            "your_ip": netutil.client_ip(request), "peer": request.client.host if request.client else None,
+            "untrusted_proxy": hint if hint and time.time() - hint.get("at", 0) < 86400 else None}
+
+
+@app.put("/api/settings/network")
+def put_network(body: dict = Body(...), u=Depends(auth.require_admin)):
+    spec = (body.get("trusted_proxies") or "").strip()
+    bad = netutil.valid_spec(spec)
+    if bad:
+        raise HTTPException(400, "Not an IP address or network: %s" % ", ".join(bad[:3]))
+    settings.put("trusted_proxies", spec)
+    netutil.invalidate()
+    netutil.last_proxy_hint.clear()
+    useractivity.record("settings_changed", user=u, detail={"keys": ["trusted_proxies"]})
+    return {"ok": True, "trusted_proxies": spec}
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +944,7 @@ def add_library(body: dict = Body(...), u=Depends(auth.require_admin)):
         lib_id = cur.lastrowid
         liborder.assign_missing(c)      # 1.6: placed by type (Movies, TV, Other videos, Music), custom order kept
     scanner.request_scan(lib_id)
+    useractivity.record("library_added", user=u, item={"library_id": lib_id, "title": name}, detail={"kind": kind})
     return _lib_out(db.row("SELECT * FROM libraries WHERE id=?", (lib_id,)))
 
 
@@ -490,6 +1048,7 @@ def delete_library(lib_id: int, u=Depends(auth.require_admin)):
         c.execute("DELETE FROM libraries WHERE id=?", (lib_id,))
     scanner.status.pop(lib_id, None)
     scanner.logs.pop(lib_id, None)
+    useractivity.record("library_removed", user=u, item={"title": lib["name"]}, detail={"kind": lib["kind"], "library_id": lib_id})
     if lib["share_id"]:
         others = db.row("SELECT COUNT(*) n FROM libraries WHERE share_id=?", (lib["share_id"],))["n"]
         if not others:
@@ -504,6 +1063,8 @@ def scan_library(lib_id: int, full: bool = False, u=Depends(auth.require_admin))
     if not db.row("SELECT id FROM libraries WHERE id=?", (lib_id,)):
         raise HTTPException(404, "No such library")
     queued = scanner.request_scan(lib_id, full=full)
+    if queued:
+        useractivity.record("scan_started", user=u, item={"library_id": lib_id, "title": (db.row("SELECT name FROM libraries WHERE id=?", (lib_id,)) or {}).get("name")}, detail={"full": bool(full)})
     return {"queued": queued, "status": scanner.status.get(lib_id)}
 
 
@@ -2004,6 +2565,9 @@ def put_settings(body: dict = Body(...), u=Depends(auth.require_admin)):
             preload.set_cache_gb(body.get("prefetch_cache_gb"))
         except (TypeError, ValueError) as e:
             raise HTTPException(400, str(e))
+    keys_changed = sorted(body.keys())
+    if keys_changed:
+        useractivity.record("settings_changed", user=u, detail={"keys": keys_changed[:20]})   # names only, never values
     if changed_key or body.get("tmdb_enabled"):
         for lib in db.rows("SELECT id FROM libraries WHERE kind IN ('movies','tv')"):
             tmdb.queue_library(lib["id"])
@@ -2258,6 +2822,7 @@ def service_worker():
         "/static/app.js?v=%s" % __version__,
         "/static/style.css?v=%s" % __version__,
         "/static/hls.min.js?v=%s" % __version__,
+        "/static/qr.js?v=%s" % __version__,
         "/static/logo-bar.png?v=%s" % __version__,
         "/static/logo-mark.png?v=%s" % __version__,
         "/static/manifest.webmanifest?v=%s" % __version__,

@@ -167,6 +167,11 @@ with dst: src.backup(dst)
 dst.close(); src.close()
 PY
   fi
+  # 1.9: the server key and the encrypted Gmail tokens (data/secrets, 0700/0600) go in the backup too,
+  # so a rollback keeps the Gmail connection. The tarball itself is mode 600.
+  if [ -d "$PROJECT_DIR/data/secrets" ]; then
+    cp -a "$PROJECT_DIR/data/secrets" "$tmp/data/secrets"
+  fi
   tar -czf "$out" -C "$tmp" code data
   rm -rf "$tmp"
   chmod 600 "$out"
@@ -195,6 +200,12 @@ if [ -n "$ROLLBACK" ]; then
     rm -f "$PROJECT_DIR"/data/media-server.db-wal "$PROJECT_DIR"/data/media-server.db-shm
     cp "$TMP/data/media-server.db" "$PROJECT_DIR/data/media-server.db"
     [ -n "$SVC_USER" ] && chown "$SVC_USER:$SVC_USER" "$PROJECT_DIR/data/media-server.db"
+  fi
+  if [ -d "$TMP/data/secrets" ]; then        # 1.9+: restore the server key + sealed tokens with the database
+    rm -rf "$PROJECT_DIR/data/secrets"
+    cp -a "$TMP/data/secrets" "$PROJECT_DIR/data/secrets"
+    chmod 700 "$PROJECT_DIR/data/secrets"; chmod 600 "$PROJECT_DIR"/data/secrets/* 2>/dev/null || true
+    [ -n "$SVC_USER" ] && chown -R "$SVC_USER:$SVC_USER" "$PROJECT_DIR/data/secrets"
   fi
   "$VENV_PY" -m pip install --quiet -r "$PROJECT_DIR/requirements.txt" || true
   system_bits
@@ -264,6 +275,7 @@ ok "code mirrored (your .env, data/, backups/ and .venv untouched)"
 
 say "Python dependencies"
 "$VENV_PY" -m pip install --quiet -r "$PROJECT_DIR/requirements.txt"
+"$VENV_PY" -c 'import cryptography' 2>/dev/null || printf "    \033[33mWARN\033[0m %s\n" "python 'cryptography' did not install -- Connect Gmail is unavailable until it does (pip needs pypi.org)"
 ok "dependencies up to date"
 
 system_bits
@@ -272,6 +284,7 @@ mkdir -p "$PROJECT_DIR/data/thumbs" "$PROJECT_DIR/data/transcode" "$PROJECT_DIR/
 
 # 1.7.9: migrate() also writes data/media-server.db.pre-schema9 (mode 600) before the new
 # subtitle / prefetch / probe-cache tables. The tarball above already has a full DB snapshot.
+# 1.9: likewise data/media-server.db.pre-schema10 before roles, invites, activity and hashed sessions.
 say "Database upgrade"
 ( cd "$PROJECT_DIR" && run_as "$VENV_PY" -m app.cli init ) | grep -E '^database:' | sed 's/^/    /'
 find "$PROJECT_DIR" -path "$PROJECT_DIR/.venv" -prune -o -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true

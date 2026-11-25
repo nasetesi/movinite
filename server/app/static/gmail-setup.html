@@ -1,0 +1,252 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>Send invites from your Gmail - Movinite</title>
+<style>
+body{margin:0;background:#0d0a14;color:#e9e3f5;font:15px/1.6 "Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:820px;margin:0 auto;padding:28px 20px 60px}
+h3{color:#e9e3f5;font-size:16px;margin:20px 0 6px}h1{color:#fff;font-size:26px;margin:0 0 12px}h2{color:#B07CFF;font-size:19px;margin:30px 0 8px;border-top:1px solid #2a2140;padding-top:18px}
+a{color:#B07CFF}code{background:#1d1530;border:1px solid #2a2140;border-radius:6px;padding:1px 6px;font-size:13px;word-break:break-all}
+blockquote{margin:12px 0;border-left:3px solid #8424EA;background:#1d1530;padding:8px 14px;border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:14px}td,th{border:1px solid #2a2140;padding:8px;vertical-align:top;text-align:left}th{background:#1d1530}
+li{margin:3px 0}.back{display:inline-block;margin-bottom:14px}
+</style></head><body><main><a class="back" href="/#/settings/email">&larr; Back to Settings &gt; Email</a>
+<h1>Send invites from your Gmail (Movinite 1.9)</h1>
+<p>Movinite can email invites <strong>from your own Gmail address</strong>, so the person you invite sees your name and your
+address, and replies come straight back to you. The easy way is a Gmail <strong>app password</strong>: about 2 minutes, once.</p>
+<p>If you skip this, invites still work: Movinite gives you a link and a QR code to share yourself.</p>
+<h2>Gmail with an app password (recommended)</h2>
+<h3>1. Turn on 2-Step Verification</h3>
+<p>App passwords only exist when 2-Step Verification is on.</p>
+<ol>
+<li>Open <a target="_blank" rel="noopener" href="https://myaccount.google.com/security">https://myaccount.google.com/security</a> signed in as the Gmail account invites should come from.</li>
+<li>Under <strong>How you sign in to Google</strong>, open <strong>2-Step Verification</strong> and turn it on (a phone prompt or an
+   authenticator app is fine).</li>
+</ol>
+<h3>2. Create an app password</h3>
+<ol>
+<li>Open <a target="_blank" rel="noopener" href="https://myaccount.google.com/apppasswords">https://myaccount.google.com/apppasswords</a>.</li>
+<li>Type a name such as <code>Movinite</code> and press <strong>Create</strong>.</li>
+<li>Google shows a <strong>16-letter password</strong> in four groups (like <code>abcd efgh ijkl mnop</code>). Copy it. You'll only see it
+   once; if you lose it, delete it and make a new one.</li>
+</ol>
+<p>Don't paste it into chat or email. It only goes into Movinite.</p>
+<blockquote>
+<p>No "App passwords" page? It's hidden when 2-Step Verification is off, for some Google Workspace accounts where
+the admin turned it off, and for accounts using Advanced Protection. Use the advanced Connect Gmail option below,
+or another email provider.</p>
+</blockquote>
+<h3>3. Enter it in Movinite</h3>
+<ol>
+<li>Movinite &gt; <strong>Settings &gt; Email</strong> &gt; <strong>Send invites from your email</strong>.</li>
+<li><strong>Send with:</strong> Gmail (app password).</li>
+<li><strong>Gmail address:</strong> your full address, for example <code>you@gmail.com</code>.</li>
+<li><strong>App password:</strong> the 16 letters (spaces are fine).</li>
+<li><strong>From name:</strong> how you appear in the recipient's inbox. Use the name on your Google account so people know it's
+   you. It's prefilled with the name Movinite knows for you.</li>
+<li>Press <strong>Save</strong>, then <strong>Send test email to myself</strong>. A sample invite arrives in your own inbox within a minute
+   (check Spam the first time). The status changes to <strong>Working</strong>.</li>
+</ol>
+<p>Movinite sends through <code>smtp.gmail.com</code> port 587 with STARTTLS. The From address is always your Gmail address and
+replies go to it. The app password is stored encrypted on the server (<code>data/secrets/smtp.sealed</code>, readable only by
+the Movinite service) and is never shown again or written to logs.</p>
+<h3>Send an invite</h3>
+<p>Settings &gt; Users &gt; <strong>Invite by email</strong>: their address, a role, the libraries, an optional note, and when the link
+expires. Press <strong>Send invite</strong>. It's also in your Gmail <strong>Sent</strong> folder.</p>
+<h2>Other email providers (SMTP)</h2>
+<p><strong>Send with:</strong> Other email (SMTP server), then fill in what your provider documents:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Typical value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SMTP server</td>
+<td><code>smtp.example.com</code> (Outlook.com: <code>smtp-mail.outlook.com</code>; iCloud: <code>smtp.mail.me.com</code>; Fastmail: <code>smtp.fastmail.com</code>)</td>
+</tr>
+<tr>
+<td>Port / Security</td>
+<td><code>587</code> + STARTTLS, or <code>465</code> + SSL/TLS</td>
+</tr>
+<tr>
+<td>Username</td>
+<td>usually your full email address</td>
+</tr>
+<tr>
+<td>Password</td>
+<td>your provider's app password where it has them</td>
+</tr>
+<tr>
+<td>From address</td>
+<td>the address invites come from (most providers require it to be your own address)</td>
+</tr>
+</tbody>
+</table>
+<p>A relay on your own network that doesn't need a sign-in can leave Username empty and use Security <strong>None</strong>.</p>
+<h2>Limits</h2>
+<ul>
+<li>Movinite sends at most <strong>20 invites an hour</strong> and <strong>100 a day</strong> through the account (change in Settings &gt; Email).
+  Test emails count too. Past the limit the invite is still created and you get the link to share yourself.</li>
+<li>Gmail's own limit is about 500 messages a day for @gmail.com.</li>
+</ul>
+<h2>Turning it off</h2>
+<ul>
+<li>Settings &gt; Email &gt; <strong>Remove</strong> deletes the saved address and password from the server.</li>
+<li>To stop the password working everywhere, delete it at <a target="_blank" rel="noopener" href="https://myaccount.google.com/apppasswords">https://myaccount.google.com/apppasswords</a>.
+  Changing your Google password also revokes all app passwords.</li>
+</ul>
+<h2>Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Gmail didn't accept the address and app password (535)"</td>
+<td>Check the address; make a new app password and save it again. Your normal Gmail password doesn't work here.</td>
+</tr>
+<tr>
+<td>"Gmail needs an app password" (534)</td>
+<td>2-Step Verification is off or a normal password was used. Turn it on and create an app password.</td>
+</tr>
+<tr>
+<td>"temporarily refusing sign-ins" / "asked to try later" (421, 454)</td>
+<td>Too many tries or a burst of mail. Wait a few minutes.</td>
+</tr>
+<tr>
+<td>"daily sending limit was reached" (550 5.4.5)</td>
+<td>Gmail's daily limit. Share links until tomorrow.</td>
+</tr>
+<tr>
+<td>"Couldn't connect to smtp.gmail.com:587"</td>
+<td>The server can't reach the internet on port 587 (some ISPs and firewalls block mail ports). Try another network, or SSL/TLS on 465 under Other email.</td>
+</tr>
+<tr>
+<td>"missing the Python 'cryptography' package"</td>
+<td>Re-run <code>update.sh</code>; it installs it.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>Advanced: Connect Gmail with Google sign-in (OAuth)</h2>
+<p>Instead of an app password, Movinite can use Google sign-in with permission to <strong>send only</strong> (<code>gmail.send</code>); it
+can't read your mail and never sees your Google password. It takes about 10 minutes, once, in your own Google
+Cloud project. In Settings &gt; Email open <strong>Advanced: Connect Gmail</strong> and choose <strong>Connect Gmail</strong> as the method.
+The From name is the name on your Google account.</p>
+<h3>1. Create a Google Cloud project</h3>
+<ol>
+<li>Open <a target="_blank" rel="noopener" href="https://console.cloud.google.com/">https://console.cloud.google.com/</a> and sign in with the Google account you want invites to come from.</li>
+<li>Top bar &gt; project picker &gt; <strong>New project</strong>. Name it <code>Movinite</code> and press <strong>Create</strong>. Make sure it's selected.</li>
+</ol>
+<h3>2. Turn on the Gmail API</h3>
+<ol>
+<li>Go to <strong>APIs &amp; Services &gt; Library</strong> (<a target="_blank" rel="noopener" href="https://console.cloud.google.com/apis/library/gmail.googleapis.com">https://console.cloud.google.com/apis/library/gmail.googleapis.com</a>).</li>
+<li>Open <strong>Gmail API</strong> and press <strong>Enable</strong>.</li>
+</ol>
+<h3>3. Set up the consent screen (Google Auth Platform)</h3>
+<ol>
+<li>Go to <strong>APIs &amp; Services &gt; OAuth consent screen</strong> (newer consoles call it <strong>Google Auth Platform &gt; Branding</strong>).
+   Press <strong>Get started</strong> if asked.</li>
+<li>App name: <code>Movinite</code>. User support email: your address.</li>
+<li>Audience:</li>
+<li><strong>Internal</strong> if you use Google Workspace and only people in your organisation will connect. No review needed.</li>
+<li><strong>External</strong> for a normal @gmail.com account.</li>
+<li>Contact email: your address. Accept the policy and press <strong>Create</strong>.</li>
+<li><strong>Data access</strong> (or <strong>Scopes</strong>) &gt; <strong>Add or remove scopes</strong>. Add these four:</li>
+<li><code>openid</code></li>
+<li><code>.../auth/userinfo.email</code> (email)</li>
+<li><code>.../auth/userinfo.profile</code> (profile, used for the From name)</li>
+<li><code>https://www.googleapis.com/auth/gmail.send</code>
+   Save.</li>
+<li>External only, <strong>Audience</strong> page: either</li>
+<li>add yourself (and any other admin who will connect) under <strong>Test users</strong>, or</li>
+<li>press <strong>Publish app</strong> so its status is <strong>In production</strong>.</li>
+</ol>
+<blockquote>
+<p>Why publish? While an External app is in <strong>Testing</strong>, Google expires its sign-ins after <strong>7 days</strong> and
+Movinite will ask you to reconnect every week. <strong>In production</strong> keeps the connection until you remove it.
+Because Movinite asks for a sensitive scope, Google shows an "unverified app" warning for a personal project;
+it's your own app, so choose <strong>Advanced &gt; Go to Movinite (unsafe)</strong>. You don't need Google's verification
+for personal use (fewer than 100 users).</p>
+</blockquote>
+<h3>4. Create the OAuth client</h3>
+<ol>
+<li><strong>APIs &amp; Services &gt; Credentials &gt; Create credentials &gt; OAuth client ID</strong> (or <strong>Google Auth Platform &gt; Clients &gt; Create client</strong>).</li>
+<li>Application type: <strong>Web application</strong>. Name: <code>Movinite</code>.</li>
+<li><strong>Authorized redirect URIs</strong>: add the exact addresses Movinite shows in <strong>Settings &gt; Email</strong>. Usually:</li>
+<li><code>https://movies.example.com/api/gmail/callback</code> — your public https address followed by <code>/api/gmail/callback</code>.
+     Add one line for each public address you use (for example both <code>media.</code> and <code>movies.</code> names).</li>
+<li><code>http://localhost/movinite-gmail-callback</code> — the <strong>paste</strong> address, for servers that only have a LAN or http
+     address (Google only accepts https or localhost). Adding it is harmless even if you have an https address.</li>
+<li>Leave <strong>Authorized JavaScript origins</strong> empty. Press <strong>Create</strong>.</li>
+<li>Google shows the <strong>Client ID</strong> (ends in <code>.apps.googleusercontent.com</code>) and <strong>Client secret</strong> (starts with <code>GOCSPX-</code>).
+   Keep this window open, or download the JSON. Treat the secret like a password: don't email it or put it in chat.</li>
+</ol>
+<h3>5. Paste them into Movinite</h3>
+<ol>
+<li>Movinite &gt; <strong>Settings &gt; Email</strong>.</li>
+<li>(Optional) <strong>Public address</strong>: your https address, for example <code>https://movies.example.com</code>. Invite links and the
+   redirect address use it.</li>
+<li><strong>Client ID</strong> and <strong>Client secret</strong>: paste them and press <strong>Save</strong>. The secret is stored encrypted on the server
+   (<code>data/secrets/gmail.sealed</code>, readable only by the Movinite service) and is never shown again.</li>
+</ol>
+<h3>6. Connect</h3>
+<ul>
+<li><strong>Server with an https address:</strong> press <strong>Connect Gmail</strong>. Google's page opens; pick your account, leave
+  <strong>Send email on your behalf</strong> ticked, and press <strong>Continue</strong>. You land back on Settings &gt; Email showing
+  "Connected as Your Name <a href="&#109;&#97;&#105;&#108;&#116;&#111;&#58;&#121;&#111;&#117;&#64;&#103;&#109;&#97;&#105;&#108;&#46;&#99;&#111;&#109;">&#121;&#111;&#117;&#64;&#103;&#109;&#97;&#105;&#108;&#46;&#99;&#111;&#109;</a>".</li>
+<li><strong>LAN / http server (paste mode):</strong> press <strong>Connect Gmail (paste mode)</strong>. After you approve on Google's page, the
+  browser goes to <code>http://localhost/movinite-gmail-callback?...</code> and probably says <strong>This site can't be reached</strong>.
+  That's expected. Copy the <strong>whole address</strong> from the address bar, paste it into the box in Settings &gt; Email,
+  and press <strong>Finish</strong>. The code inside it works once and only for a few minutes.</li>
+</ul>
+<p>Press <strong>Send test email</strong> to send a sample invite to yourself (no real invite is created).</p>
+<h3>Limits</h3>
+<ul>
+<li>Movinite sends at most <strong>20 invites an hour</strong> and <strong>100 a day</strong> per connected account (change in Settings &gt; Email).
+  Past the limit the invite is still created and you get the link to share yourself.</li>
+<li>Gmail's own limits apply too (about 500 messages a day for @gmail.com).</li>
+</ul>
+<h3>Disconnecting</h3>
+<ul>
+<li>Settings &gt; Email &gt; <strong>Disconnect</strong> revokes Movinite's access at Google and deletes the stored token.</li>
+<li>You can also remove it from Google: <a target="_blank" rel="noopener" href="https://myaccount.google.com/connections">https://myaccount.google.com/connections</a> &gt; Movinite &gt; <strong>Delete all connections</strong>.
+  Movinite then shows "Reconnect Gmail" and falls back to links.</li>
+<li>Changing the client ID or secret disconnects every admin's Gmail (their sign-ins belong to the old client).</li>
+</ul>
+<h3>Troubleshooting</h3>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>redirect_uri_mismatch</code> (Google error page)</td>
+<td>The redirect URI in Google Cloud must match the one in Settings &gt; Email exactly: <code>https</code>, host, no trailing slash. Changes in Google Cloud can take a few minutes.</td>
+</tr>
+<tr>
+<td>"Access blocked: Movinite has not completed the Google verification process"</td>
+<td>External app in Testing and your account isn't a test user. Add it under Audience &gt; Test users, or publish the app.</td>
+</tr>
+<tr>
+<td>"Google didn't return a long-lived sign-in"</td>
+<td>Remove Movinite at <a target="_blank" rel="noopener" href="https://myaccount.google.com/connections">https://myaccount.google.com/connections</a> and connect again.</td>
+</tr>
+<tr>
+<td>Reconnect every 7 days</td>
+<td>The app is still in Testing. Publish it (In production).</td>
+</tr>
+<tr>
+<td>"missing the Python 'cryptography' package"</td>
+<td>Re-run <code>update.sh</code>; it installs it.</td>
+</tr>
+</tbody>
+</table>
+</main></body></html>

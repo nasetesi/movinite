@@ -4,6 +4,7 @@
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -59,7 +60,7 @@ def main():
           "forced keyframes use SEG")
 
     print("schema 9")
-    check("SCHEMA_VERSION = 9" in dbpy, "SCHEMA_VERSION is 9")
+    check(int(re.search(r"SCHEMA_VERSION = (\d+)", dbpy).group(1)) >= 9, "SCHEMA_VERSION is 9 or later")
     check("CREATE TABLE IF NOT EXISTS subtitle_cache" in dbpy, "subtitle_cache table")
     check("CREATE TABLE IF NOT EXISTS prefetch_cache" in dbpy, "prefetch_cache table")
     check('("items", "rotation"' in dbpy and '("items", "color_transfer"' in dbpy,
@@ -68,8 +69,8 @@ def main():
     check("status='retry'" in dbpy, "old empty keyframe rows become retryable")
 
     db.migrate()
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] == "9",
-          "fresh install is schema 9")
+    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] in ("9", "10"),
+          "fresh install is schema 9 or later")
     check(db.row("SELECT name FROM sqlite_master WHERE type='table' AND name='subtitle_cache'"),
           "subtitle_cache exists")
     check(db.row("SELECT name FROM sqlite_master WHERE type='table' AND name='prefetch_cache'"),
@@ -82,8 +83,8 @@ def main():
     bak = data / "media-server.db.pre-schema9"
     check(bak.is_file(), "schema 8 -> 9 writes media-server.db.pre-schema9")
     check(oct(bak.stat().st_mode & 0o777) == "0o600", "pre-schema9 mode is 600 (got %s)" % oct(bak.stat().st_mode & 0o777))
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] == "9",
-          "migrate stamps schema 9")
+    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] in ("9", "10"),
+          "migrate stamps schema 9 or later")
 
     print("playlist / kickoff / remux cache")
     it = film()

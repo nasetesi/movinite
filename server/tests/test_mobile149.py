@@ -29,5 +29,5 @@ check(".set-tabs{flex-wrap:nowrap;overflow-x:auto" in css and "scroll-snap-type:
 check(".set-tabs button{flex:none;min-height:44px" in css, "tabs: 44 px tap targets")
 check("width:100%!important;max-width:none!important;min-height:44px" in css, "inputs full width, 44 px")
 check("table.stack-tbl tr.thead-row{display:none}" in css and "content:attr(data-label)" in css, "tables become cards")
-check('<label class="chk"><input type="checkbox" id="te"' in js and '<label class="chk"><input type="checkbox" id="nua"' in js, "checkbox text is tappable")
+check('<label class="chk"><input type="checkbox" id="te"' in js and ('<label class="chk"><input type="checkbox" id="nua"' in js or '<select id="nur">' in js), "checkbox text is tappable (1.9: the admin checkbox became a role picker)")
 print("FAILS:", fails); sys.stdout.flush(); os._exit(1 if fails else 0)

@@ -1,7 +1,13 @@
 # Changelog
 
-The full server history (1.0 to 1.8.1) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
+The full server history (1.0 to 1.9) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
+
+## 1.9 -- 2026-11-25
+
+Server 1.9 adds email invites, roles, per-library access, a device list, Settings > Activity, and a fix for sign-in lockouts behind a proxy (schema 10). The Android app is unchanged (its WebView uses the same JS). Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.9 — invite people from your Gmail, roles, Activity, and the real visitor address:** Settings > Users can invite someone by email as a Viewer or Viewer + Downloads, with optional library limits. Invites are sent from your own Gmail with a 16-letter app password (Connect Gmail remains under Advanced). Without email, you get a one-time link and a QR code. My account lists signed-in devices with remote sign-out. Settings > Activity shows who is playing and a filterable timeline. Behind a reverse proxy, list the proxy under Settings > System > Trusted proxies so lockouts and Activity use the real client address instead of treating every visitor as the proxy. Existing accounts keep their access; sessions stay signed in (tokens are now stored hashed).
 
 ## 1.8.1 -- 2026-11-25
 
