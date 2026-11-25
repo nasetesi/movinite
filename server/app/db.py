@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from . import config
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 -- 1.4: categories
@@ -161,6 +161,33 @@ CREATE TABLE IF NOT EXISTS progress (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, item_id)
 );
+-- 1.7.9: extracted WebVTT (library scan + idle queue). status: ready | pending | retry
+CREATE TABLE IF NOT EXISTS subtitle_cache (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    mtime REAL,
+    status TEXT NOT NULL,
+    path TEXT,
+    checked_at INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (item_id, key)
+);
+CREATE INDEX IF NOT EXISTS subtitle_cache_status ON subtitle_cache(status, checked_at);
+-- 1.7.9: opening-clip cache (first ~6s at 1080p). status: ready | pending | retry
+CREATE TABLE IF NOT EXISTS prefetch_cache (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    start_t REAL NOT NULL DEFAULT 0,
+    mtime REAL,
+    profile TEXT NOT NULL DEFAULT '1080p',
+    dir TEXT,
+    size INTEGER,
+    last_access INTEGER,
+    status TEXT,
+    checked_at INTEGER,
+    PRIMARY KEY (item_id, kind, start_t)
+);
+CREATE INDEX IF NOT EXISTS prefetch_cache_lru ON prefetch_cache(last_access);
 """
 
 _local = threading.local()
@@ -218,6 +245,12 @@ ADDED_COLUMNS = [
     ("libraries", "sort_order", "INTEGER"),             # 1.6: admin-set display order (see liborder.py)
     ("items", "art_poster", "TEXT"),                    # 1.7.3: folder poster (see folderart.py)
     ("items", "art_tmdb", "INTEGER"),                   # 1.7.3: TMDB id named by the folder .nfo
+    ("items", "rotation", "INTEGER"),                    # 1.7.9: display rotation degrees (0 if none)
+    ("items", "color_transfer", "TEXT"),                 # 1.7.9: smpte2084 / arib-std-b67 / ...
+    ("keyframes", "status", "TEXT"),                     # 1.7.9: ok | partial | retry
+    ("keyframes", "checked_at", "INTEGER"),
+    ("keyframes", "attempts", "INTEGER"),
+
     # 1.4: categories (collection / franchise, age rating; cat_v = version of the category fields fetched)
     ("metadata", "collection_id", "INTEGER"),
     ("metadata", "collection_name", "TEXT"),
@@ -237,6 +270,8 @@ def migrate():
             old_pre = None
         if old_pre and int(old_pre[0]) < 8:
             _backup_db(c, 8)              # 1.7.6: snapshot before playlists (idempotent)
+        if old_pre and int(old_pre[0]) < 9:
+            _backup_db(c, 9)              # 1.7.9: snapshot before start-cache tables (idempotent)
         c.executescript(SCHEMA)
         for table, col, typ in ADDED_COLUMNS:
             have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}
@@ -254,6 +289,11 @@ def migrate():
         c.execute("CREATE INDEX IF NOT EXISTS ix_items_tmdb ON items(tmdb_id)")      # 1.7: versions / copies of a film
         from . import liborder
         liborder.assign_missing(c)      # 1.6: first run orders the libraries Movies, TV, Other videos, Music
+        # 1.7.9: a null keyframes row used to mean "never remux this file". Treat those as retryable.
+        c.execute("UPDATE keyframes SET status='retry', checked_at=0 WHERE (data IS NULL OR data='null') "
+                  "AND (status IS NULL OR status='' OR status='failed')")
+        c.execute("UPDATE keyframes SET status='ok' WHERE data IS NOT NULL AND data!='null' AND "
+                  "(status IS NULL OR status='')")
         c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
         c.commit()
     finally:

@@ -38,7 +38,7 @@ def film(w, h, codec="hevc"):
 def main():
     check(tuple(int(x) for x in __version__.split(".")) >= (1, 7, 8), "version is 1.7.8 or later")
     ver = (HERE.parent / "app/version.py").read_text()
-    check('__version__ = "1.7.8"' in ver, "version.py is 1.7.8")
+    check(tuple(int(x) for x in __version__.split(".")) >= (1, 7, 8), "version.py is 1.7.8 or later")
     ch = (HERE.parent / "CHANGELOG.md").read_text()
     check("## 1.7.8" in ch and "capped" in ch.lower() and "highest_done" in ch, "CHANGELOG has a 1.7.8 entry")
     js = (HERE.parent / "app/static/app.js").read_text()
@@ -54,8 +54,8 @@ def main():
           "quality menu / stats show Auto-capped to …")
     check("capQuery" in js and "disp=" in js and "nocap=1" in js, "playlist and item requests send disp / dec / nocap")
     check("device_cap" in srv and "clamp_profile" in srv, "item detail and HLS clamp to the device cap")
-    check("SCHEMA_VERSION = 8" in (HERE.parent / "app/db.py").read_text(),
-          "schema stays at 8 (cap is per-device, not a new table)")
+    check(__import__("app.db", fromlist=["SCHEMA_VERSION"]).SCHEMA_VERSION >= 8,
+          "schema is 8 or later (1.7.8 cap needed no bump; 1.7.9 adds start-cache tables)")
 
     # --- quality cap ---
     check(transcode.device_cap_base(1920) == "1080p", "1920x1200 tablet (longer side 1920) caps at 1080p")

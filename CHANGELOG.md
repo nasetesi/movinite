@@ -1,7 +1,13 @@
 # Changelog
 
-The full server history (1.0 to 1.7.8) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
+The full server history (1.0 to 1.7.9) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
+
+## 1.7.9 -- 2026-11-25
+
+Server 1.7.3 through 1.7.9 were not published as separate GitHub releases. This update brings the repository to **server 1.7.9**. The Android app is unchanged. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.7.9 — faster first picture, and caches:** the first HLS clip is 2 seconds (with matching keyframes) instead of 6, and ffmpeg starts when the playlist is requested. Subtitles, remux cut points, rotation and HDR colour info are prepared in the background. Recently added titles and Continue Watching can have their first 6 seconds pre-made at 1080p (Settings → Transcoding, default 2 GB cache). The GPU encoder is warmed after a restart. Versioned app files are cached for a year; API and HLS are not. Schema 9 (a backup of the database is written first).
 
 ## 1.7.8 -- 2026-11-25
 

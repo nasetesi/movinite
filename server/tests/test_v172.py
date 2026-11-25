@@ -89,7 +89,8 @@ def main():
     check("const V='%s'" % __version__ in swb or 'const V="%s"' % __version__ in swb, "sw.js carries this version")
     check("skipWaiting()" in swb and "clients.claim()" in swb, "new worker takes over immediately")
     check("cache:'no-store'" in swb or 'cache:"no-store"' in swb, "SW fetches HTML and JS/CSS with cache no-store")
-    check(r"app\.js" in swb and r"style\.css" in swb, "SW intercepts app.js and style.css")
+    check("app.js" in swb and "style.css" in swb and ("ASSETS" in swb or "caches.open" in swb),
+          "SW precaches app.js and style.css")
 
     import threading, time, urllib.request
     import uvicorn

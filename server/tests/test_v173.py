@@ -107,10 +107,10 @@ def main():
 
     print("the 1.7.1 situation: matched by hand, but the old folder poster still wins (art not checked yet)")
     reset(RIGHT, "manual")
-    d = server.item_detail(2052, U)
+    d = server.item_detail(2052, u=U)
     check(d["poster"] == LOCAL and not d.get("poster_large"),
           "reproduced: Sunset copy shows the folder poster of the old match and no large TMDB poster")
-    check(server.item_detail(30, U)["poster"] == right, "while the Waimea copy (no folder poster picked up) is right")
+    check(server.item_detail(30, u=U)["poster"] == right, "while the Waimea copy (no folder poster picked up) is right")
 
     print("startup backfill (existing libraries) fixes it without touching the share")
     before = {p: p.stat().st_mtime_ns for p in list(d1.iterdir()) + list(d2.iterdir())}
@@ -118,7 +118,7 @@ def main():
     check(n >= 1, "backfill checked %d movie(s)" % n)
     r = db.row("SELECT poster, art_poster, art_tmdb FROM items WHERE id=2052")
     check(r["art_poster"] == LOCAL and r["art_tmdb"] == OLD, "Sunset copy: art_poster kept, art_tmdb = %s (from movie.nfo)" % r["art_tmdb"])
-    d = server.item_detail(2052, U)
+    d = server.item_detail(2052, u=U)
     check(d["poster"] == right, "details page now shows Adoration's TMDB poster")
     check(d.get("poster_large") == "/api/items/2052/poster-large?v=%s" % right, "large poster offered with ?v=: %s" % d.get("poster_large"))
     check(before == {p: p.stat().st_mtime_ns for p in before} and len(list(d2.iterdir())) == 3,
@@ -127,11 +127,11 @@ def main():
 
     print("Fix match on pre-1.7.3 data takes effect immediately (no backfill needed)")
     reset(OLD, "matched")
-    check(server.item_detail(2052, U)["poster"] == LOCAL, "old match: the folder poster (it is that film's) is shown")
+    check(server.item_detail(2052, u=U)["poster"] == LOCAL, "old match: the folder poster (it is that film's) is shown")
     r = server.match_item(30, {"tmdb_id": RIGHT}, U)       # matched from the OTHER copy, like the user did
     check(r.get("ok") and r.get("matched"), "Fix match from the Waimea copy succeeded")
     for iid in (30, 2052):
-        d = server.item_detail(iid, U)
+        d = server.item_detail(iid, u=U)
         check(d["tmdb_id"] == RIGHT and d["poster"] == right and (d.get("poster_large") or "").endswith("?v=" + right),
               "item %d: Adoration + its TMDB poster + cache-busted large poster" % iid)
 
@@ -145,17 +145,17 @@ def main():
 
     print("matching back to the film the folder art is for shows the folder poster again; unmatched keeps it")
     server.match_item(2052, {"tmdb_id": OLD}, U)
-    check(server.item_detail(2052, U)["poster"] == LOCAL, "match = .nfo film -> folder poster")
+    check(server.item_detail(2052, u=U)["poster"] == LOCAL, "match = .nfo film -> folder poster")
     server.match_item(2052, {"unmatch": True}, U)
     check(db.row("SELECT poster FROM items WHERE id=2052")["poster"] == LOCAL, "use file names -> folder poster kept")
 
     print("folder poster with a matching / no .nfo is still preferred over TMDB")
     (d2 / "movie.nfo").write_text(own_nfo(RIGHT, "Adoration"), encoding="utf-8")
     server.match_item(2052, {"tmdb_id": RIGHT}, U)
-    check(server.item_detail(2052, U)["poster"] == LOCAL, ".nfo names the current match -> folder poster wins")
+    check(server.item_detail(2052, u=U)["poster"] == LOCAL, ".nfo names the current match -> folder poster wins")
     (d2 / "movie.nfo").unlink()
     server.match_item(2052, {"tmdb_id": OLD}, U)
-    check(server.item_detail(2052, U)["poster"] == LOCAL, "no .nfo -> folder poster wins (as before 1.7.3)")
+    check(server.item_detail(2052, u=U)["poster"] == LOCAL, "no .nfo -> folder poster wins (as before 1.7.3)")
     (d2 / "movie.nfo").write_text(own_nfo(OLD), encoding="utf-8")
 
     print("scanner records the folder art for new files")

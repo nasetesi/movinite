@@ -267,9 +267,11 @@ say "Python dependencies"
 ok "dependencies up to date"
 
 system_bits
-mkdir -p "$PROJECT_DIR/data/thumbs" "$PROJECT_DIR/data/transcode"
+mkdir -p "$PROJECT_DIR/data/thumbs" "$PROJECT_DIR/data/transcode" "$PROJECT_DIR/data/prefetch" "$PROJECT_DIR/data/subs"
 [ -n "$SVC_USER" ] && chown -R "$SVC_USER:$SVC_USER" "$PROJECT_DIR/data"
 
+# 1.7.9: migrate() also writes data/media-server.db.pre-schema9 (mode 600) before the new
+# subtitle / prefetch / probe-cache tables. The tarball above already has a full DB snapshot.
 say "Database upgrade"
 ( cd "$PROJECT_DIR" && run_as "$VENV_PY" -m app.cli init ) | grep -E '^database:' | sed 's/^/    /'
 find "$PROJECT_DIR" -path "$PROJECT_DIR/.venv" -prune -o -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true

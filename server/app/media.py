@@ -243,6 +243,21 @@ def summarize_probe(p):
                    pix_fmt=v.get("pix_fmt"))
         if not res["duration"]:
             res["duration"] = _f(v.get("duration"))
+        res["color_transfer"] = (v.get("color_transfer") or "").strip() or None
+        rot = 0
+        for sd in v.get("side_data_list") or []:
+            if sd.get("rotation") not in (None, ""):
+                try:
+                    rot = int(round(float(sd["rotation"]))) % 360
+                except (TypeError, ValueError):
+                    pass
+        tags_v = {k.lower(): val for k, val in (v.get("tags") or {}).items()}
+        if not rot and tags_v.get("rotate"):
+            try:
+                rot = int(round(float(tags_v["rotate"]))) % 360
+            except (TypeError, ValueError):
+                pass
+        res["rotation"] = rot
     auds, subs = [], []
     for s in streams:
         t = {k.lower(): val for k, val in (s.get("tags") or {}).items()}

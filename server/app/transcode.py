@@ -21,10 +21,13 @@ from . import config, db, hwaccel
 
 log = logging.getLogger("media-server.transcode")
 
-SEG = 6.0
+SEG = 2.0                 # 1.7.9: short segments so the first picture can appear sooner
 IDLE_KILL_S = 90          # no segment requests for this long -> kill + delete session
-AHEAD_PAUSE = 25          # pause ffmpeg when it is this many segments ahead of the player
-AHEAD_RESUME = 12
+AHEAD_PAUSE_S = 150.0     # pause ffmpeg when it is this far (seconds) ahead of the player
+AHEAD_RESUME_S = 72.0
+AHEAD_PAUSE = AHEAD_PAUSE_S   # name kept; value is seconds (was a 6s-segment count)
+AHEAD_RESUME = AHEAD_RESUME_S
+RESTART_AHEAD_S = 60.0    # restart ffmpeg only if the request is this far past the produced tip
 HW_STALL_S = 20          # 1.5.2: a GPU run that makes no segment in this long falls back
 HW_RETRY_MAX = 1          # 1.7.7: one extra hardware launch after an unexpected VAAPI/NVENC exit
 HW_RETRY_BACKOFF_S = 1.5  # wait before that retry so we never tight-loop
@@ -191,11 +194,23 @@ def hires_ok(item, base):
 _hdr_cache = {}
 
 
+def _hdr_from_transfer(t):
+    t = (t or "").strip().rstrip(",")
+    return "HDR10" if t == "smpte2084" else "HLG" if t == "arib-std-b67" else ""
+
+
 def hdr_info(item):
-    """'HDR10' / 'HLG' / '' for a video item (10-bit sources only; one ffprobe, cached per path + mtime)."""
+    """'HDR10' / 'HLG' / '' for a video item (10-bit sources only).
+
+    1.7.9: prefer color_transfer saved at library-scan time so play does not ffprobe the NAS.
+    """
     pf = item.get("pix_fmt") or ""
-    if item.get("media_type") != "video" or "10" not in pf and "12" not in pf:
+    if item.get("media_type") != "video" or ("10" not in pf and "12" not in pf):
         return ""
+    if item.get("color_transfer"):
+        v = _hdr_from_transfer(item.get("color_transfer"))
+        _hdr_cache[(item.get("path"), item.get("mtime"))] = v
+        return v
     key = (item.get("path"), item.get("mtime"))
     if key in _hdr_cache:
         return _hdr_cache[key]
@@ -205,7 +220,13 @@ def hdr_info(item):
                             "stream=color_transfer", "-of", "csv=p=0", item["path"]], capture_output=True, timeout=20)
         t = o.stdout.decode(errors="replace").strip().splitlines()
         t = t[0].strip().rstrip(",") if t else ""
-        v = "HDR10" if t == "smpte2084" else "HLG" if t == "arib-std-b67" else ""
+        v = _hdr_from_transfer(t)
+        if t and item.get("id") and v:
+            try:
+                with db.tx() as c:
+                    c.execute("UPDATE items SET color_transfer=? WHERE id=?", (t, item["id"]))
+            except Exception:
+                pass
     except (OSError, subprocess.TimeoutExpired):
         v = ""
     if len(_hdr_cache) > 2000:
@@ -247,7 +268,7 @@ class Session:
         self.rot = 0
         self.stages = ["full", "enc", "cpu"] if self.hw[0] else ["cpu"]
         if self.hw[0]:
-            self.rot = hwaccel.rotation(item.get("path"))
+            self.rot = hwaccel.rotation(item)
             if self.rot and self.hw[0] == "nvenc":
                 self.stages = ["enc", "cpu"]     # no GPU rotate filter for CUDA frames in ffmpeg 6.1
         if self.hevc:
@@ -569,7 +590,7 @@ class Session:
             if not self.running():
                 # Do not relaunch the same failing GPU stage in a loop (that flipped the badge).
                 self._handle_not_running(n)
-            elif n < self.start_seg or n > max(hi, self.start_seg) + 4:
+            elif n < self.start_seg or (n - max(hi, self.start_seg)) * SEG > RESTART_AHEAD_S:
                 self.start(n)
             self._resume_if_needed()
         deadline = time.time() + timeout
@@ -627,14 +648,15 @@ class Session:
             return
         hi = self.highest_done()
         try:
-            if not self.paused and hi - self.last_req > AHEAD_PAUSE:
+            ahead_s = (hi - self.last_req) * SEG if hi >= 0 else 0
+            if not self.paused and ahead_s > AHEAD_PAUSE_S:
                 os.killpg(self.proc.pid, signal.SIGSTOP)
                 self.paused = True
-                log.info("transcode %s pause (ahead %d segs, last_req %d)", self.sid, hi - self.last_req, self.last_req)
-            elif self.paused and hi - self.last_req < AHEAD_RESUME:
+                log.info("transcode %s pause (ahead %.0fs, last_req %d)", self.sid, ahead_s, self.last_req)
+            elif self.paused and ahead_s < AHEAD_RESUME_S:
                 os.killpg(self.proc.pid, signal.SIGCONT)
                 self.paused = False
-                log.info("transcode %s resume (ahead %d segs, last_req %d)", self.sid, hi - self.last_req, self.last_req)
+                log.info("transcode %s resume (ahead %.0fs, last_req %d)", self.sid, ahead_s, self.last_req)
         except Exception:
             pass
         for f in self.dir.glob("seg*." + self.ext):
@@ -742,6 +764,25 @@ def get_session(item, profile, audio_idx, user_id, player_id=""):
         return s
 
 
+def kickoff(session, start_seg=0):
+    """1.7.9: start ffmpeg at start_seg (after copying any opening-clip cache) without waiting for output."""
+    if session is None or session.failed or getattr(session, "destroyed", False):
+        return
+    start_seg = max(0, min(int(start_seg or 0), max(0, session.nseg - 1)))
+    try:
+        from . import preload
+        preload.apply_to_session(session, start_seg)
+    except Exception:
+        log.exception("prefetch apply")
+    if session.running() or session.failed or getattr(session, "destroyed", False):
+        return
+    first = start_seg
+    while session._ready(first) and first < session.nseg - 1:
+        first += 1
+    if not session._ready(start_seg) or (first < session.nseg and not session._ready(first)):
+        session.start(first)
+
+
 def stop_session(sid, reason="client_close"):
     with _slock:
         s = _sessions.pop(sid, None)
@@ -845,48 +886,74 @@ def remux_eligible(item):
 def probe_bounds(path, duration, start_time=0.0):
     """Segment start times at real keyframes, about every SEG seconds.
 
-    Asks ffprobe to seek to 0, 6, 12, ... and report the first video packet after each seek: with an
-    indexed container that is the keyframe at or before the target, which is exactly where ffmpeg will
-    land when we later start a run there. Returns None if the container does not seek to keyframes.
+    Asks ffprobe to seek to 0, SEG, 2*SEG, ... and report the first video packet after each seek.
+    1.7.9: seeks are issued in chunks with a short pause so a long film does not hammer the NAS;
+    a non-keyframe at one seek is skipped so irregular GOPs can still get a partial plan.
     """
     import subprocess
-    n = max(1, int(math.ceil(duration / SEG)))
-    intervals = ",".join("%.3f%%+#1" % (i * SEG) for i in range(n))
-    try:
-        out = subprocess.run([config.FFPROBE, "-v", "error", "-select_streams", "v:0", "-read_intervals", intervals,
-                              "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", path],
-                             capture_output=True, timeout=180, check=False)
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-    if out.returncode != 0:
-        return None
+    n = max(1, int(math.ceil((duration or 0) / SEG)))
     pts = []
-    for line in out.stdout.decode(errors="replace").splitlines():
-        parts = line.strip().split(",")
-        if len(parts) < 2 or parts[0] in ("", "N/A"):
-            continue
-        if not parts[1].startswith("K"):
-            return None          # landed on a non-keyframe: container can't be cut precisely
+    chunk = 40
+    for off in range(0, n, chunk):
+        intervals = ",".join("%.3f%%+#1" % ((off + i) * SEG) for i in range(min(chunk, n - off)))
         try:
-            pts.append(float(parts[0]) - (start_time or 0.0))
-        except ValueError:
-            return None
+            out = subprocess.run([config.FFPROBE, "-v", "error", "-select_streams", "v:0",
+                                  "-read_intervals", intervals, "-show_entries", "packet=pts_time,flags",
+                                  "-of", "csv=p=0", path],
+                                 capture_output=True, timeout=60, check=False)
+        except (subprocess.TimeoutExpired, OSError):
+            break
+        if out.returncode != 0:
+            break
+        for line in out.stdout.decode(errors="replace").splitlines():
+            parts = line.strip().split(",")
+            if len(parts) < 2 or parts[0] in ("", "N/A"):
+                continue
+            if not parts[1].startswith("K"):
+                continue
+            try:
+                pts.append(float(parts[0]) - (start_time or 0.0))
+            except ValueError:
+                continue
+        if off + chunk < n:
+            time.sleep(0.25)
     if not pts:
         return None
     ks = sorted({round(max(0.0, p), 3) for p in pts})
     bounds = [0.0]
     for k in ks:
-        if k - bounds[-1] >= 3.0 and k < duration - 0.5:
+        if k - bounds[-1] >= 3.0 and k < (duration or 0) - 0.5:
             bounds.append(k)
+    if len(bounds) < 2:
+        return None
     return bounds
 
 
-def remux_bounds(item):
-    """Cached per item (+mtime). Returns list or None."""
-    row = db.row("SELECT mtime, data FROM keyframes WHERE item_id=?", (item["id"],))
+def remux_bounds(item, probe=False):
+    """Cached per item (+mtime). Returns list or None.
+
+    The play path must pass probe=False (the default): a missing or stale cache is a
+    miss, not a 180s ffprobe on the NAS. The idle preload job fills the cache with probe=True.
+    Failures are stored as status=retry, never as a permanent empty row.
+    """
+    row = db.row("SELECT mtime, data, status, checked_at, attempts FROM keyframes WHERE item_id=?", (item["id"],))
     if row and row["mtime"] == item.get("mtime"):
-        return json.loads(row["data"]) if row["data"] else None
+        if row.get("data") and row["data"] != "null":
+            try:
+                b = json.loads(row["data"])
+                if isinstance(b, list) and len(b) >= 2:
+                    return b
+            except (TypeError, ValueError):
+                pass
+        if not probe:
+            return None
+        # retry backoff: 15 min, then 1 h, then 6 h
+        delay = {0: 0, 1: 900, 2: 3600}.get(int(row.get("attempts") or 0), 21600)
+        if row.get("checked_at") and time.time() - float(row["checked_at"] or 0) < delay:
+            return None
     if not remux_eligible(item):
+        return None
+    if not probe:
         return None
     start_time = 0.0
     try:
@@ -896,8 +963,16 @@ def remux_bounds(item):
         start_time = float(o.stdout.decode().strip() or 0)
     except (ValueError, OSError, Exception):
         start_time = 0.0
-    bounds = probe_bounds(item["path"], item["duration"], start_time)
+    bounds = probe_bounds(item["path"], item["duration"] or 0, start_time)
+    now = int(time.time())
+    attempts = int((row or {}).get("attempts") or 0) + 1
+    if bounds:
+        status = "ok" if len(bounds) >= max(2, int(((item.get("duration") or 0) / max(SEG, 1)) * 0.5)) else "partial"
+        payload = json.dumps(bounds)
+    else:
+        status, payload = "retry", None
     with db.tx() as c:
-        c.execute("INSERT OR REPLACE INTO keyframes(item_id, mtime, data) VALUES(?,?,?)",
-                  (item["id"], item.get("mtime"), json.dumps(bounds) if bounds else None))
+        c.execute("INSERT OR REPLACE INTO keyframes(item_id, mtime, data, status, checked_at, attempts) "
+                  "VALUES(?,?,?,?,?,?)",
+                  (item["id"], item.get("mtime"), payload, status, now, attempts if not bounds else 0))
     return bounds

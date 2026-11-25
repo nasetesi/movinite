@@ -48,7 +48,7 @@ class Command(unittest.TestCase):
         self.assertIn("scale_vaapi=w=3840:h=1610:format=nv12", c)
         self.assertEqual(c[c.index("-muxdelay") + 1], "0")
         self.assertEqual(c[c.index("-muxpreload") + 1], "0")
-        self.assertEqual(c[c.index("-output_ts_offset") + 1], "528.000")
+        self.assertEqual(c[c.index("-output_ts_offset") + 1], "%.3f" % (88 * t.SEG))
 
     def test_cpu_fallback_keeps_rate_unscaled(self):
         c = _session(ITEM, "2160p", stage="cpu")._cmd(0)
