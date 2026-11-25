@@ -165,6 +165,10 @@ narrower than 600 px (swipe the row) and small and subtle on tablets.
 From v1.4.7 Home posters are up to 330 px wide, and posters everywhere pop out on mouse hover or keyboard focus
 (Tab to a poster, Enter opens it). "Reduce motion" in the operating system turns the movement off.
 
+## Android TV remote (1.9.1)
+
+The web app (including the Android 1.5 WebView on a television) can be driven with a D-pad: arrow keys move a large purple focus ring across the sidebar, rows, posters and player controls; OK or Enter opens the focused item; Back closes the player or goes back. Televisions are detected automatically. On a browser you can turn it on with `localStorage.msTvMode = 1` and reload (set it to `0` to turn it off).
+
 ## Phones and admin-only tools (v1.4.9)
 
 Settings work on phones: there is one swipeable line of tabs, each panel is a single column, tables become cards
@@ -408,9 +412,8 @@ python3-certbot-nginx && sudo certbot --nginx -d media.example.com`.
 
 ## Building a new release (developers)
 
-In the Git repository the server code is in `server/`. Bump `app/version.py` (and CHANGELOG.md), then run
-`bash scripts/pack-server.sh /path/to/output` -> `media-server-verX.Y.Z.tar.gz` + `.sha256`. Pushing a `vX.Y.Z` tag
-builds the same files (plus the Android APK) with GitHub Actions and attaches them to a GitHub Release.
+The source lives in `src/` of the project folder. Bump `app/version.py` (and CHANGELOG.md), then run
+`bash src/pack.sh /path/to/output` -> `media-server-verX.Y.tar.gz` + `.sha256`.
 
 ## Handy commands
 
@@ -646,7 +649,7 @@ and is signed in. They can also sign in with their email address.
 **Email.** Settings > Email: your Gmail address plus a Google **app password** (turn on 2-Step Verification, then
 create one at https://myaccount.google.com/apppasswords), and the From name. Press **Send test email to myself**.
 Any other SMTP provider works too. The password is stored encrypted in `data/secrets/`. Step by step:
-[`docs/gmail-setup.md`](../docs/gmail-setup.md). Advanced: **Connect Gmail** with Google sign-in (OAuth) instead, which
+[`docs/gmail-setup.md`](docs/gmail-setup.md). Advanced: **Connect Gmail** with Google sign-in (OAuth) instead, which
 needs your own Google Cloud project; redirect URIs `https://<your public address>/api/gmail/callback` and
 `http://localhost/movinite-gmail-callback` (paste mode).
 

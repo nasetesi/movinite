@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.1 -- 2026-11-25
+Builds on 1.9, plus TV remote navigation for the web app (and the Android 1.5 WebView):
+
+- **TV mode (D-pad / spatial navigation).** The Android TV remote could move around the chrome, but it skipped the library list and the movie rows: those posters live in a horizontal scroller, and the WebView's built-in D-pad nav jumps over overflow rows. Library tiles and poster cards are now explicitly focusable (`tabindex=0`). 1.9.1 detects a television (the Android app's `isTv()` bridge, common TV user-agent strings, or the installed app / an Android WebView on a large screen — including when the UA still says `Mobile`) and turns the arrows into spatial focus. Left and Right stay inside a poster row (the row scrolls as you go; the row's own < > buttons are not D-pad targets). Right from the sidebar enters the first poster or library tile; Down from a row heading enters that row. A large purple focus ring follows the selection; OK / Enter opens the focused item; Back closes the player, a dialog, or goes back a page. Hover-only overlays stay visible on the focused poster. The player arrows move between Play, seek, quality and the other controls (Left/Right still skip when the seek bar is focused).
+- No database schema change. Settings and libraries are untouched.
+
 ## 1.9 -- 2026-11-25
 Builds on 1.8.1, plus invites, roles, per-library access, a device list, and Settings > Activity (schema 10):
 

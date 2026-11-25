@@ -3,6 +3,12 @@
 The full server history (1.0 to 1.9) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
 
+## 1.9.1 -- 2026-11-25
+
+Server 1.9.1 is a quick fix on 1.9. The Android app is unchanged (its WebView uses the same JS); a Leanback launcher and `isTv()` bridge are planned for app 2.0. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.9.1 — TV remote / D-pad navigation:** library tiles and movie posters are focusable, so an Android TV remote no longer skips the library list and the movie rows. Arrow keys move a large purple focus ring within and between rows; OK or Enter opens the focused item; Back closes the player or goes back. Televisions are detected automatically.
+
 ## 1.9 -- 2026-11-25
 
 Server 1.9 adds email invites, roles, per-library access, a device list, Settings > Activity, and a fix for sign-in lockouts behind a proxy (schema 10). The Android app is unchanged (its WebView uses the same JS). Details are in [server/CHANGELOG.md](server/CHANGELOG.md).

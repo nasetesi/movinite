@@ -152,7 +152,7 @@ def db_bytes():
 
 def main():
     print("version / docs / UI")
-    check(__version__ == "1.9", "version is 1.9")
+    check(__version__ == "1.9" or __version__.startswith("1.9."), "version is 1.9")
     ch = (ROOT / "CHANGELOG.md").read_text()
     check(ch.find("## 1.9") != -1 and ch.find("## 1.9") < ch.find("## 1.8.1"), "CHANGELOG has 1.9 above 1.8.1")
     check((ROOT / "docs/gmail-setup.md").is_file() and (ROOT / "app/static/gmail-setup.html").is_file(),

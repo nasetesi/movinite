@@ -438,6 +438,7 @@ async function boot() {
   $("#whoami").textContent = ME.username; $("#ver").textContent = "v" + ME.version;
   syncTopH();
   MOB.setup();
+  if (window.TV) TV.init();
   SFX.load(ME.username);
   $("#sndbtn").onclick = () => SFX.toggle();
   await refreshLibs();
@@ -668,6 +669,7 @@ async function route() {
     if (e.message !== "Not signed in") v.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`;
   }
   v.scrollTop = route._keepScroll ? v.scrollTop : 0; route._keepScroll = false;
+  if (window.TV) TV.afterRoute();
 }
 
 // ---------------------------------------------------------------- cards
@@ -1798,7 +1800,7 @@ async function viewLibraries() {
   const sub = { movies: "Movies", tv: "TV shows", music: "Music", other: "Videos" };
   let html = `<h2 class="pg-h">Libraries</h2>`;
   if (!LIBS.length) html += `<div class="empty">No libraries yet.${ME.is_admin ? ` <a href="#/settings/libraries">Add one in Settings</a>` : ""}</div>`;
-  else html += `<div class="lib-list">${libGroups().map(g => (libsGrouped() ? `<div class="lib-grp-h" data-grp="${g.key}"><span class="ng-ic" aria-hidden="true">${g.share ? ICO_SHARE : ICO_LOCAL}</span>${esc(g.name)}${g.share && groupHealthLib(g) ? shareDot(groupHealthLib(g)) : ""}</div>` : "") + g.libs.map(l => `<a class="lib-li" data-lib="${l.id}" href="#/library/${l.id}"><span class="lib-ic" aria-hidden="true">${KIND_ICON[l.kind] || KIND_ICON.other}</span>
+  else html += `<div class="lib-list">${libGroups().map(g => (libsGrouped() ? `<div class="lib-grp-h" data-grp="${g.key}"><span class="ng-ic" aria-hidden="true">${g.share ? ICO_SHARE : ICO_LOCAL}</span>${esc(g.name)}${g.share && groupHealthLib(g) ? shareDot(groupHealthLib(g)) : ""}</div>` : "") + g.libs.map(l => `<a class="lib-li" tabindex="0" data-lib="${l.id}" href="#/library/${l.id}"><span class="lib-ic" aria-hidden="true">${KIND_ICON[l.kind] || KIND_ICON.other}</span>
       <span class="lib-tx"><b>${esc(l.name)}<span class="ldot-slot">${shareDot(l)}</span></b><span class="muted">${sub[l.kind] || esc(l.kind)} · ${libCountText(l)}${l.health && l.health.state === "offline" ? ` · <span class="ldot-txt off">share offline</span>` : l.health && (l.health.state === "stuck" || l.health.state === "slow") ? ` · <span class="ldot-txt warn">share ${l.health.state === "slow" ? "slow" : "not responding"}</span>` : ""}</span></span><span class="chev" aria-hidden="true">&rsaquo;</span></a>`).join("")).join("")}</div>`;
   $("#view").innerHTML = html;
 }
@@ -4376,6 +4378,300 @@ window.__msVizSet = function (on) { VIZ.on = !!on; vizSave(); vizStart(); };
 window.__msVizInject = function (arr, t) { VIZ.mock = arr ? new Uint8Array(arr) : null; if (arr) vizDraw(t != null ? t : performance.now()); };
 window.__msVizTick = function () { vizDraw(performance.now()); };
 window.openPlaylistSheet = openPlaylistSheet;
+
+/* 1.9.1: Android TV / remote spatial navigation.
+   Cards already have tabindex=0 and Enter-to-open (1.4.7), but a TV remote sends
+   arrow keys, not Tab, and nothing moved focus between posters, the sidebar, or
+   the player bar. This module turns those arrows into spatial focus, with a large
+   purple focus ring, OK to select, and Back to go back. */
+const TV = {
+  on: false,
+  _bound: false,
+  detect() {
+    try { if (window.MSAndroid && typeof MSAndroid.isTv === "function" && MSAndroid.isTv()) return true; } catch (e) {}
+    try { if (localStorage.getItem("msTvMode") === "1") return true; } catch (e) {}
+    const ua = navigator.userAgent || "";
+    if (/AndroidTV|Android TV|GoogleTV|Google TV|BRAVIA|AFT[A-Z0-9]|SHIELD Android TV|SmartTV|Smart-TV|HbbTV|CrKey|AppleTV|FireTV|TV Safari/i.test(ua)) return true;
+    // Android WebView on a TV often includes "Mobile" in the UA, so don't require its absence.
+    // The installed app identifies itself as MediaServerAndroid. A short phone side is under 500px.
+    const app = /MediaServerAndroid|MoviniteAndroid/i.test(ua);
+    const android = /Android/i.test(ua);
+    const noHover = window.matchMedia && window.matchMedia("(hover: none)").matches;
+    const wide = Math.max(window.innerWidth || 0, (screen && screen.width) || 0) >= 900;
+    const shortSide = Math.min(window.innerWidth || 0, window.innerHeight || 0, (screen && Math.min(screen.width, screen.height)) || 9999);
+    if ((app || (android && noHover)) && wide && shortSide >= 500) return true;
+    return false;
+  },
+  prepare() {
+    this.on = this.detect();
+    document.documentElement.classList.toggle("tv-mode", this.on);
+  },
+  init() {
+    this.prepare();
+    if (!this.on || this._bound) return;
+    this._bound = true;
+    document.addEventListener("keydown", (e) => this.onKey(e), true);
+    window.addEventListener("resize", () => { const was = this.on; this.prepare(); if (this.on && !was) this.afterRoute(); });
+  },
+  typing(e) {
+    const t = e.target;
+    if (!t || !t.tagName) return false;
+    const tag = t.tagName;
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const ty = (t.type || "text").toLowerCase();
+      return !/^(button|submit|reset|checkbox|radio|range|file|color|hidden)$/.test(ty);
+    }
+    return t.isContentEditable;
+  },
+  visible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
+    if (el.closest("[hidden]")) return false;
+    // treat our .hidden utility, but not a class that only happens to contain the letters
+    let n = el;
+    while (n && n !== document.documentElement) {
+      if (n.classList && n.classList.contains("hidden")) return false;
+      n = n.parentElement;
+    }
+    const st = window.getComputedStyle(el);
+    if (st.display === "none" || st.visibility === "hidden" || st.opacity === "0") return false;
+    const r = el.getBoundingClientRect();
+    return r.width >= 2 && r.height >= 2;
+  },
+  candidates() {
+    const playerOn = $("#player") && !$("#player").classList.contains("hidden");
+    const modalOn = $("#modal") && !$("#modal").classList.contains("hidden");
+    const authOn = $("#auth") && !$("#auth").classList.contains("hidden");
+    let sel;
+    if (authOn) sel = "#auth button, #auth input, #auth a, #auth [tabindex='0']";
+    else if (modalOn) sel = "#modal button, #modal a, #modal input, #modal select, #modal [tabindex='0'], #modal [data-href]";
+    else if (playerOn) sel = "#player .pl-big, #player .pl-cb:not(.hidden), #player #pl-seek, #player #pl-close, #player .pl-bar button:not(.hidden), #player .pl-bar [tabindex='0'], #player .pl-top button, #player [role='menu'] button, #player .pl-menu button";
+    else sel = [
+      ".side nav a", "#navlibs a",
+      "#tabbar a",
+      "#view .card", "#view .lib-li", "#view .person", "#view [data-href]", "#view .gchip", "#view .btn:not([disabled])",
+      "#view .set-tabs button", "#view .libtabs a", "#view .li[data-href]", "#view .see-all", "#view .rh-a",
+      "#view .pli-row", "#view .iconbtn", "#view select",
+      "#menubtn", "#sndbtn", "#ss-pill", "#m-avatar", "#m-search", "#search",
+      "#acct-menu:not(.hidden) a, #acct-menu:not(.hidden) button",
+      "#audiobar:not(.hidden) button, #audiobar:not(.hidden) [tabindex='0']",
+      "#pip-chip:not(.hidden) button"
+    ].join(",");
+    return [...document.querySelectorAll(sel)].filter((el) => this.visible(el));
+  },
+  overlap(a1, a2, b1, b2) { return Math.max(0, Math.min(a2, b2) - Math.max(a1, b1)); },
+  nearest(cur, items, dir) {
+    const a = cur.getBoundingClientRect();
+    const acx = a.left + a.width / 2, acy = a.top + a.height / 2;
+    let best = null, bestScore = Infinity;
+    for (const el of items) {
+      if (el === cur) continue;
+      const b = el.getBoundingClientRect();
+      const bcx = b.left + b.width / 2, bcy = b.top + b.height / 2;
+      let primary, secondary, ov;
+      if (dir === "right") {
+        if (bcx <= acx + 4 && b.left <= a.left + 4) continue;
+        primary = Math.max(0, b.left - a.right);
+        if (b.left < a.right) primary = Math.max(8, bcx - acx);
+        secondary = Math.abs(bcy - acy);
+        ov = this.overlap(a.top, a.bottom, b.top, b.bottom);
+      } else if (dir === "left") {
+        if (bcx >= acx - 4 && b.right >= a.right - 4) continue;
+        primary = Math.max(0, a.left - b.right);
+        if (a.left < b.right) primary = Math.max(8, acx - bcx);
+        secondary = Math.abs(bcy - acy);
+        ov = this.overlap(a.top, a.bottom, b.top, b.bottom);
+      } else if (dir === "down") {
+        if (bcy <= acy + 4 && b.top <= a.top + 4) continue;
+        primary = Math.max(0, b.top - a.bottom);
+        if (b.top < a.bottom) primary = Math.max(8, bcy - acy);
+        secondary = Math.abs(bcx - acx);
+        ov = this.overlap(a.left, a.right, b.left, b.right);
+      } else {
+        if (bcy >= acy - 4 && b.bottom >= a.bottom - 4) continue;
+        primary = Math.max(0, a.top - b.bottom);
+        if (a.top < b.bottom) primary = Math.max(8, acy - bcy);
+        secondary = Math.abs(bcx - acx);
+        ov = this.overlap(a.left, a.right, b.left, b.right);
+      }
+      const axis = (dir === "left" || dir === "right") ? Math.min(a.height, b.height) : Math.min(a.width, b.width);
+      const ovRatio = axis ? ov / axis : 0;
+      const score = primary + (ovRatio > 0.25 ? secondary * 0.15 : secondary * 1.35) + (ovRatio > 0.25 ? 0 : 80);
+      if (score < bestScore) { bestScore = score; best = el; }
+    }
+    return best;
+  },
+  focus(el) {
+    if (!el) return;
+    try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+    const r = el.getBoundingClientRect();
+    const pad = 80;
+    if (r.top < pad || r.bottom > window.innerHeight - pad || r.left < 20 || r.right > window.innerWidth - 20) {
+      el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    }
+    // horizontal rows (Home strips, library grids)
+    const strip = el.closest(".strip, .hs, .cast-strip");
+    if (strip && typeof strip.scrollLeft === "number") {
+      const sr = strip.getBoundingClientRect(), er = el.getBoundingClientRect();
+      if (er.left < sr.left + 16) strip.scrollLeft += er.left - sr.left - 16;
+      else if (er.right > sr.right - 16) strip.scrollLeft += er.right - sr.right + 16;
+    }
+  },
+  preferredStart(items) {
+    if (!items.length) return null;
+    const cur = document.activeElement;
+    if (cur && items.includes(cur)) return cur;
+    const playerOn = $("#player") && !$("#player").classList.contains("hidden");
+    if (playerOn) return $("#pl-pp") || $("#pl-bplay") || items[0];
+    const home = items.find((el) => el.matches && el.matches("#view .card, #view .lib-li"));
+    if (home) return home;
+    const lib = items.find((el) => el.matches && el.matches(".side nav a[data-nav^='lib'], #navlibs a"));
+    const firstNav = items.find((el) => el.matches && el.matches(".side nav a, #tabbar a"));
+    return home || lib || firstNav || items[0];
+  },
+  move(dir) {
+    const items = this.candidates();
+    if (!items.length) return false;
+    const cur = document.activeElement && items.includes(document.activeElement) ? document.activeElement : null;
+    if (!cur) { this.focus(this.preferredStart(items)); return true; }
+    const stripSel = ".strip, .hs, .cast-strip, .grid";
+    // Stay inside a horizontal movie/library row first, so the remote cannot skip the posters
+    // and land on a row's < > button, "See all", or the next heading.
+    const strip = cur.closest && cur.closest(stripSel);
+    if (strip && (dir === "left" || dir === "right")) {
+      const inStrip = items.filter((el) => strip.contains(el));
+      const next = this.nearest(cur, inStrip, dir);
+      if (next) { this.focus(next); return true; }
+    }
+    // Right from the sidebar (Home / library list) should enter the first poster or library tile, not jump over it.
+    if (dir === "right" && cur.closest && cur.closest(".side")) {
+      const content = items.filter((el) => el.closest("#view"));
+      const preferred = content.filter((el) => el.matches && el.matches(".card, .lib-li, .person, .li[data-href]"));
+      const next = this.nearest(cur, preferred.length ? preferred : content, dir) || preferred[0];
+      if (next) { this.focus(next); return true; }
+    }
+    // Down from a row heading or "See all" should enter that row's posters.
+    if (dir === "down" && cur.closest && (cur.closest(".row-head") || cur.classList.contains("rh-a") || cur.classList.contains("see-all"))) {
+      let row = cur.closest(".hrow") || cur.closest(".row-head");
+      let st = row && (row.querySelector(stripSel) || (row.nextElementSibling && row.nextElementSibling.matches(stripSel) ? row.nextElementSibling : null) || (row.nextElementSibling && row.nextElementSibling.querySelector && row.nextElementSibling.querySelector(stripSel)));
+      if (!st && row && row.parentElement) {
+        const kids = [...row.parentElement.children];
+        const i = kids.indexOf(row);
+        st = kids.slice(i + 1).map((n) => (n.matches && n.matches(stripSel) ? n : n.querySelector && n.querySelector(stripSel))).find(Boolean);
+      }
+      if (st) {
+        const cards = items.filter((el) => st.contains(el));
+        if (cards.length) { this.focus(cards[0]); return true; }
+      }
+    }
+    const next = this.nearest(cur, items, dir);
+    if (next) { this.focus(next); return true; }
+    return true; // eat the key so the page doesn't just scroll away
+  },
+  activate(el) {
+    if (!el) return false;
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") { el.focus(); return true; }
+    if (el.classList && el.classList.contains("card") && el.dataset.href) { el.click(); return true; }
+    el.click();
+    return true;
+  },
+  back() {
+    if (!this.on) return false;
+    const d = document;
+    const player = d.getElementById("player");
+    if (player && !player.classList.contains("hidden")) {
+      const c = d.getElementById("pl-close"); if (c) c.click(); else if (typeof closePlayer === "function") closePlayer();
+      return true;
+    }
+    if (typeof BAR !== "undefined" && BAR.popOpen && BAR.popOpen()) { BAR.closePop(); return true; }
+    if (typeof abVolPop !== "undefined" && abVolPop) { if (typeof abSetVolPop === "function") abSetVolPop(false); return true; }
+    const m = d.getElementById("modal");
+    if (m && !m.classList.contains("hidden") && !m.dataset.locked) { m.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); return true; }
+    const sd = d.querySelector(".side.open"); if (sd) { sd.classList.remove("open"); return true; }
+    const mm = d.getElementById("more-menu"); if (mm && !mm.hidden) { mm.hidden = true; return true; }
+    const am = d.getElementById("acct-menu");
+    if (am && !am.classList.contains("hidden")) { const av = d.getElementById("m-avatar"); if (av) av.click(); else am.classList.add("hidden"); return true; }
+    if (typeof MLS !== "undefined" && MLS.el) { if (typeof mlClose === "function") mlClose(); return true; }
+    const h = location.hash.replace(/^#\/?/, "");
+    if (h && h !== "home" && h !== "") {
+      if (h.startsWith("item/") || h.startsWith("show/") || h.startsWith("album/") || h.startsWith("person/")) {
+        history.length > 1 ? history.back() : (location.hash = "#/home");
+      } else if (h.startsWith("library/")) {
+        location.hash = "#/home";
+      } else if (h.startsWith("settings/") && h !== "settings") {
+        location.hash = "#/settings";
+      } else {
+        location.hash = "#/home";
+      }
+      return true;
+    }
+    return false;
+  },
+  onKey(e) {
+    if (!this.on || e.altKey || e.ctrlKey || e.metaKey) return;
+    const playerOn = $("#player") && !$("#player").classList.contains("hidden");
+    const key = e.key;
+    const center = key === "Enter" || key === "Go" || key === "Select" || e.keyCode === 23;
+    if (key === "Escape" || key === "BrowserBack" || e.keyCode === 4) {
+      if (this.typing(e) && key === "Escape") return;
+      if (this.back()) { e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
+    if (this.typing(e) && !center) return;
+    if (key === "ArrowRight" || key === "ArrowLeft" || key === "ArrowUp" || key === "ArrowDown") {
+      // In the player, arrows move between controls. Left/Right on the seek bar still skip.
+      if (playerOn && typeof OV !== "undefined") OV.show();
+      const onSeek = document.activeElement && document.activeElement.id === "pl-seek";
+      if (playerOn && onSeek && (key === "ArrowLeft" || key === "ArrowRight")) return; // existing skip handler
+      const items = this.candidates();
+      const focused = document.activeElement && items.includes(document.activeElement);
+      if (playerOn && !focused) {
+        e.preventDefault(); e.stopPropagation();
+        this.focus(this.preferredStart(items));
+        return;
+      }
+      const dir = key === "ArrowRight" ? "right" : key === "ArrowLeft" ? "left" : key === "ArrowDown" ? "down" : "up";
+      if (this.move(dir)) { e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
+    if (center) {
+      if (this.typing(e)) return;
+      const el = document.activeElement;
+      const items = this.candidates();
+      if (el && items.includes(el)) {
+        e.preventDefault(); e.stopPropagation();
+        this.activate(el);
+      } else if (items.length) {
+        e.preventDefault(); e.stopPropagation();
+        this.focus(this.preferredStart(items));
+      }
+    }
+  },
+  ensureFocusable() {
+    // Library tiles are <a class="lib-li"> (no data-href). Poster cards already have tabindex=0.
+    // Re-apply so nothing in a row or the library list is skipped by the WebView's own D-pad nav.
+    $$("#view .card, #view .lib-li, #view .person, #view .li[data-href], #navlibs a, #view .rh-a, #view .see-all").forEach((el) => {
+      if (!el.hasAttribute("tabindex")) el.tabIndex = 0;
+    });
+  },
+  afterRoute() {
+    if (!this.on) return;
+    this.ensureFocusable();
+    const typ = document.activeElement && this.typing({ target: document.activeElement });
+    if (typ) return;
+    const items = this.candidates();
+    if (!items.length) return;
+    if (document.activeElement && items.includes(document.activeElement) && this.visible(document.activeElement)) {
+      this.focus(document.activeElement);
+      return;
+    }
+    this.focus(this.preferredStart(items));
+  }
+};
+window.TV = TV;
+window.__msTvBack = () => TV.back();
+TV.prepare();
 
 boot();
 })();

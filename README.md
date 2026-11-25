@@ -29,8 +29,8 @@ On servers with a supported video card, transcoding can run on the GPU.
 | ![Email settings with a Gmail app password](docs/screenshots/web-email.png) | ![Activity with Now playing and a timeline](docs/screenshots/web-activity.png) |
 | **Signed-in devices** | **Join from an invite** |
 | ![Signed-in devices](docs/screenshots/web-account-devices.png) | ![Join page](docs/screenshots/web-join.png) |
-| **Trusted proxies** | |
-| ![Trusted proxies in System](docs/screenshots/web-system-proxies.png) | |
+| **Trusted proxies** | **Android TV remote** |
+| ![Trusted proxies in System](docs/screenshots/web-system-proxies.png) | ![Home on a TV with the purple D-pad focus ring on a poster](docs/screenshots/tv-home-focus-1920x1080.png) |
 
 <p>
 <img src="docs/screenshots/phone-home.png" width="200" alt="Phone home">
@@ -55,7 +55,7 @@ On servers with a supported video card, transcoding can run on the GPU.
 <img src="docs/screenshots/phone-join.png" width="200" alt="Phone join page">
 </p>
 
-*The screenshots use generated test media, placeholder posters, and made-up names at example.com. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p. The 1.9 shots show Users and Invite, Email (Gmail app password), Activity, signed-in devices, Trusted proxies, and the join page, with documentation addresses such as 192.0.2.10.*
+*The screenshots use generated test media, placeholder posters, and made-up names at example.com. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p. The 1.9 shots show Users and Invite, Email (Gmail app password), Activity, signed-in devices, Trusted proxies, and the join page, with documentation addresses such as 192.0.2.10. The 1.9.1 shot shows the Home row on a 1920×1080 television with the purple D-pad focus ring on a poster.*
 
 ## Features
 
@@ -67,7 +67,7 @@ On servers with a supported video card, transcoding can run on the GPU.
 - **Playback in the browser:** direct play, remux (including HEVC to fMP4) or HLS transcode with quality choices (360p to 1080p, plus 2K/4K with a GPU). Auto quality prefers direct play or remux over a transcode. Subtitles (`.srt`, embedded) are see-through and stay on after a seek or quality change; pinch to fit or fill the picture on a phone. The music player has a beat-reactive visualizer, playlists with Play and Shuffle (and play-from-track), mute and a reachable volume control, and a 10-band equalizer with presets (including Dynamic). The top bar, mini player and phone tab bar use the same frosted glass as the server status popup.
 - **Hardware transcoding:** Intel VAAPI/QSV (plus AMD VAAPI and NVIDIA NVENC, both untested). Video cards are detected on install. Concurrent 4K streams use extra GPU surfaces and the card's low-power encoder; a stream that cannot stay on the GPU falls back once and stays there, with the reason logged. The same account can play on more than one device at a time.
 - **Home rows** (Continue watching, Recently added, Recommended), My List, search, genres, decades, tags and collections.
-- **Phone layout** with a bottom tab bar and filter sheets, plus an installable web app (PWA) and a native **Android app**.
+- **Phone layout** with a bottom tab bar and filter sheets, plus an installable web app (PWA) and a native **Android app**. On a television, a D-pad moves a purple focus ring across libraries, poster rows and player controls (1.9.1).
 - **Multiple users** with Admin, Viewer, and Viewer + Downloads roles, per-library access, email invites sent from your own Gmail (or a copyable link and QR code), a signed-in device list, and Settings > Activity (now playing and a timeline). Existing accounts keep their access after the update. A themed server status panel shows CPU and RAM icons and rings, disks, idle GPU, and background cache jobs that pause when you press play.
 
 ## Requirements

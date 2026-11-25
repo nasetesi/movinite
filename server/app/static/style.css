@@ -1493,3 +1493,46 @@ details.adv-mail[open]>summary::before{transform:rotate(90deg)}
 details.adv-mail .panel{background:transparent;border-color:var(--line);box-shadow:none;margin:12px 0 0}
 .mm-pick{display:flex;flex-direction:column;gap:6px}
 .mm-pick .chk{display:flex;gap:8px;align-items:center;color:var(--text)}
+
+/* 1.9.1: Android TV / D-pad spatial navigation. Large purple focus rings work with
+   :focus as well as :focus-visible, because WebView D-pad focus often doesn't
+   match :focus-visible. Hover-only overlays stay visible on the focused card. */
+html.tv-mode,html.tv-mode *{cursor:none}
+html.tv-mode .card:focus,html.tv-mode .card:focus-visible{z-index:5;outline:none}
+html.tv-mode .card:focus .art,html.tv-mode .card:focus-visible .art{
+  transform:translateY(-6px) scale(1.08);border-color:var(--acc);filter:brightness(1.08);
+  box-shadow:0 22px 44px rgba(0,0,0,.6),0 0 0 4px var(--acc),0 0 32px rgba(var(--acc-rgb),.55)}
+html.tv-mode .card:focus .hov,html.tv-mode .card:focus-visible .hov{display:flex;opacity:1;transform:none}
+html.tv-mode .card:focus .art .qplay,html.tv-mode .card:focus-visible .art .qplay{display:flex;opacity:1;transform:scale(1)}
+html.tv-mode .side nav a:focus,html.tv-mode .side nav a:focus-visible,
+html.tv-mode #navlibs a:focus,html.tv-mode #navlibs a:focus-visible,
+html.tv-mode #tabbar a:focus,html.tv-mode #tabbar a:focus-visible{
+  outline:3px solid var(--acc);outline-offset:2px;background:var(--panel2);color:var(--acc-text)}
+html.tv-mode .btn:focus,html.tv-mode .btn:focus-visible,
+html.tv-mode .iconbtn:focus,html.tv-mode .iconbtn:focus-visible,
+html.tv-mode .gchip:focus,html.tv-mode .gchip:focus-visible,
+html.tv-mode .set-tabs button:focus,html.tv-mode .set-tabs button:focus-visible,
+html.tv-mode .libtabs a:focus,html.tv-mode .libtabs a:focus-visible,
+html.tv-mode .hnav:focus,html.tv-mode .hnav:focus-visible,
+html.tv-mode .avatar:focus,html.tv-mode .avatar:focus-visible,
+html.tv-mode .ss-pill:focus,html.tv-mode .ss-pill:focus-visible,
+html.tv-mode .li[data-href]:focus,html.tv-mode .li[data-href]:focus-visible,
+html.tv-mode .pli-row:focus,html.tv-mode .pli-row:focus-visible{
+  outline:3px solid var(--acc);outline-offset:3px}
+html.tv-mode .pl-big:focus,html.tv-mode .pl-big:focus-visible,
+html.tv-mode .pl-cb:focus,html.tv-mode .pl-cb:focus-visible,
+html.tv-mode #pl-close:focus,html.tv-mode #pl-close:focus-visible,
+html.tv-mode #pl-seek:focus,html.tv-mode #pl-seek:focus-visible{
+  outline:4px solid var(--acc);outline-offset:4px}
+html.tv-mode .side{display:flex!important;position:relative!important;transform:none!important;inset:auto!important;width:230px!important;z-index:5!important}
+html.tv-mode .tabbar,html.tv-mode #menubtn,html.tv-mode .top-brand,html.tv-mode .m-ico{display:none!important}
+html.tv-mode .top #search,html.tv-mode .top .snd-btn{display:block!important}
+
+html.tv-mode #search:focus,html.tv-mode #search:focus-visible,
+html.tv-mode input:focus,html.tv-mode select:focus{outline:3px solid var(--acc);outline-offset:2px;border-color:var(--acc)}
+
+html.tv-mode .lib-li:focus,html.tv-mode .lib-li:focus-visible,
+html.tv-mode .person:focus,html.tv-mode .person:focus-visible,
+html.tv-mode .see-all:focus,html.tv-mode .see-all:focus-visible,
+html.tv-mode .rh-a:focus,html.tv-mode .rh-a:focus-visible{
+  outline:3px solid var(--acc);outline-offset:3px;border-color:var(--acc)}
