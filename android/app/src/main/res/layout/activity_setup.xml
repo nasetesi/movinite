@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/setup_root" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/bg">
+<ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
+        android:gravity="center_horizontal" android:paddingLeft="24dp" android:paddingRight="24dp" android:paddingTop="56dp" android:paddingBottom="32dp">
+        <ImageView android:layout_width="84dp" android:layout_height="84dp" android:src="@drawable/logo" android:contentDescription="@null" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="18dp"
+            android:text="@string/app_name" android:textColor="@color/text" android:textSize="26sp" android:textStyle="bold" />
+        <TextView android:id="@+id/subtitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp"
+            android:gravity="center" android:text="Server settings" android:textColor="@color/muted" android:textSize="15sp" />
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="30dp"
+            android:orientation="vertical" android:background="@drawable/panel" android:padding="18dp">
+            <TextView android:id="@+id/current" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="14dp"
+                android:textColor="@color/text" android:textSize="14sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Server address"
+                android:textColor="@color/muted" android:textSize="13sp" />
+            <EditText android:id="@+id/url" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="8dp"
+                android:background="@drawable/input" android:paddingLeft="14dp" android:paddingRight="14dp" android:singleLine="true"
+                android:inputType="textUri" android:imeOptions="actionGo" android:textColor="@color/text" android:textColorHint="@color/muted"
+                android:textSize="16sp" android:hint="https://movies.example.com" android:importantForAutofill="no" />
+            <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                android:minHeight="20dp" android:textColor="@color/muted" android:textSize="14sp" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:orientation="horizontal">
+                <Button android:id="@+id/test" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                    android:text="Test" android:textAllCaps="false" android:textSize="16sp" android:textColor="@color/text" android:background="@drawable/btn_ghost" />
+                <View android:layout_width="12dp" android:layout_height="1dp" />
+                <Button android:id="@+id/connect" android:layout_width="0dp" android:layout_weight="1" android:layout_height="52dp"
+                    android:text="Connect" android:textAllCaps="false" android:textSize="16sp" android:textStyle="bold" android:textColor="#FFFFFF" android:background="@drawable/btn_primary" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView android:id="@+id/help" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="22dp"
+            android:lineSpacingMultiplier="1.25" android:textColor="@color/muted" android:textSize="13sp"
+            android:text="@string/setup_help" />
+    </LinearLayout>
+</ScrollView>
+    <ImageButton android:id="@+id/close" android:layout_width="48dp" android:layout_height="48dp" android:layout_gravity="top|start"
+        android:layout_marginTop="8dp" android:layout_marginStart="8dp" android:src="@drawable/ic_back" android:scaleType="center"
+        android:background="@drawable/icon_btn" android:contentDescription="Back" android:tooltipText="Back" />
+</FrameLayout>

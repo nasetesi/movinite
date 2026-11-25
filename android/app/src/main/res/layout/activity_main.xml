@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/bg">
+
+    <WebView android:id="@+id/web" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/bg" />
+
+    <ProgressBar android:id="@+id/progress" style="@android:style/Widget.Material.ProgressBar.Horizontal"
+        android:layout_width="match_parent" android:layout_height="3dp" android:layout_gravity="top"
+        android:max="100" android:progressTint="@color/acc" android:progressBackgroundTint="@color/bg" android:visibility="gone" />
+
+    <!-- first load -->
+    <LinearLayout android:id="@+id/loading" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:background="@color/bg" android:gravity="center" android:orientation="vertical" android:clickable="true">
+        <ImageView android:layout_width="96dp" android:layout_height="96dp" android:src="@drawable/logo" android:contentDescription="@null" />
+        <ProgressBar android:layout_width="36dp" android:layout_height="36dp" android:layout_marginTop="28dp" android:indeterminateTint="@color/acc" />
+        <TextView android:id="@+id/loading_text" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginTop="14dp" android:textColor="@color/muted" android:textSize="14sp" android:text="Connecting..." />
+    </LinearLayout>
+
+    <!-- offline / server unreachable -->
+    <LinearLayout android:id="@+id/error" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:background="@color/bg" android:gravity="center" android:orientation="vertical" android:padding="28dp"
+        android:visibility="gone" android:clickable="true">
+        <ImageView android:layout_width="72dp" android:layout_height="72dp" android:src="@drawable/logo" android:alpha="0.55" android:contentDescription="@null" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="22dp"
+            android:text="Can't reach your Movinite server" android:textColor="@color/text" android:textSize="20sp" android:textStyle="bold" />
+        <TextView android:id="@+id/error_text" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+            android:gravity="center" android:textColor="@color/muted" android:textSize="14sp" />
+        <Button android:id="@+id/retry" android:layout_width="220dp" android:layout_height="52dp" android:layout_marginTop="26dp"
+            android:text="Retry" android:textAllCaps="false" android:textSize="16sp" android:textStyle="bold" android:textColor="#FFFFFF"
+            android:background="@drawable/btn_primary" />
+        <Button android:id="@+id/change_server" android:layout_width="220dp" android:layout_height="52dp" android:layout_marginTop="12dp"
+            android:text="Server settings" android:textAllCaps="false" android:textSize="15sp" android:textColor="@color/text"
+            android:background="@drawable/btn_ghost" />
+    </LinearLayout>
+
+    <FrameLayout android:id="@+id/fullscreen" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:background="#000000" android:visibility="gone" />
+</FrameLayout>

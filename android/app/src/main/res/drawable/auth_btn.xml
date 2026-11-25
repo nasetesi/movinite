@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.5: web .btn: #8424EA, white text, 8px corners; darker when pressed / disabled -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33FFFFFF">
+    <item><selector>
+        <item android:state_enabled="false"><shape android:shape="rectangle"><solid android:color="@color/acc_dark" /><corners android:radius="8dp" /></shape></item>
+        <item android:state_pressed="true"><shape android:shape="rectangle"><solid android:color="@color/acc_dark" /><corners android:radius="8dp" /></shape></item>
+        <item><shape android:shape="rectangle"><solid android:color="@color/acc_fill" /><corners android:radius="8dp" /></shape></item>
+    </selector></item>
+</ripple>

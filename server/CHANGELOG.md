@@ -1,0 +1,536 @@
+# Changelog
+
+## 1.5.3 -- 2026-11-24
+Builds on 1.5.2, plus:
+- **Tidier library pages on phones** (<= 820 px, browser and Android app; the desktop is unchanged, checked
+  pixel by pixel), laid out like the Plex app:
+  - **Header:** the title and a grey count (`N of M` while filtered), then icons for search, filters (with a badge
+    showing how many are on) and sort, plus a ⋯ menu for admins with *Select movies to tag* and *Scan library*.
+  - **Categories** (All / Top / Collections / genres...) sit in one row you swipe sideways.
+  - **Filter sheet:** a bottom sheet with chips for genres, decade, rating, tag and show (plus sort, and the view for
+    music). *Apply* and *Reset* buttons; it closes on the backdrop, Esc, the Back button or a drag down.
+  - Active filters show as removable chips, and the grid has 3 columns.
+  - TV, music, smart and collection pages get the same header.
+- **2K and 4K quality.** With hardware transcoding on, the player's quality menu adds *4K (2160p)* and
+  *2K (1440p)*:
+  - Only sizes up to the source are offered, never upscaled. A 3840x1600 scope film counts as 4K and stays
+    3840x1600; 2K of it is 2560x1066.
+  - On servers without a video card both entries are shown greyed out ("needs GPU transcoding") and the API
+    answers 409.
+  - The default quality is still 1080p or direct play.
+  - **HEVC** is used when the device can play it (`hvc1` support, e.g. Safari, Edge, Android TV/phones with HEVC);
+    otherwise H.264. HEVC is sent as fragmented-MP4 HLS, because hls.js can't play HEVC in MPEG-TS. If HEVC fails
+    on a device, the player steps down to H.264 at the same size by itself, then to 1080p.
+  - **Bitrates:** H.264 4K 25 Mbps / 2K 12 Mbps; HEVC 4K 16 Mbps / 2K 8 Mbps. They are capped at 1.2x the
+    source's bitrate (minimum 6 Mbps), so a 7 Mbps 4K file is sent at about 8 Mbps instead of 25.
+  - **HDR:** HDR10/HLG films are converted without tone-mapping, so colours can look flat. The player's status
+    says so.
+  - **Preliminary benchmark on the Arc A310** (a short read-only run; the full test is deferred): up to **6 x 4K, 10 x 2K or 12 x 1080p**
+    simultaneous transcodes with >= 10 % headroom, in H.264 or HEVC, using about one CPU thread per stream.
+    HEVC 10-bit/HDR10 decoding runs on the card. The full table is in the README.
+- **Add library -> Existing connection.** When a share has already been set up, *Add library* offers *Existing
+  connection* first. It lists the shares (server + share, the SMB username, which libraries use them; never the
+  password), next to the usual *Folder* / *SMB* / *NFS* choices.
+  - Pick one and press **Browse**: the folder picker opens straight on that share. There is no login to type.
+  - Go **Up** to see every share on that server and browse any of them with the same login.
+  - The password never comes back to the browser. The root mount helper reads it from the root-only credentials
+    file, using the new helper actions `add-as`, `browse-as` and `shares-as`.
+  - **The same share** (or a folder in it): the new library uses the existing mount; nothing is mounted again.
+    The mount is removed only when the *last* library using it is deleted.
+  - **Another share on the same server:** a new mount, and the helper copies the login into that share's own
+    credentials file. Deleting either library never breaks the other.
+  - Changing a login later (Edit share) applies to every library on that one share, not to copies made for
+    other shares. A saved login can't be used for a different server.
+  - Admin only (`GET /api/connections`; `/api/browse` and `POST /api/libraries` accept
+    `{"type": "existing", "share_id": N, "remote": "//server/share"}`).
+  - Listing the shares of a server needs `smbclient` on the server, as before; if it is missing, type
+    `//server/Share` in the Share field.
+- No database schema change. Rollback works as before.
+
+## 1.5.2 -- 2026-11-24
+Builds on 1.5.1, plus:
+- **Hardware transcoding on a video card.** Videos that have to be converted (HEVC, 10-bit, AVI, ...) can now be
+  encoded on the GPU: **VAAPI** (Intel incl. Arc, AMD), **Intel QSV** and **NVIDIA NVENC**. Each stream first tries
+  the full GPU path (GPU decode + scale + H.264 encode; phone videos are rotated on the GPU), then CPU decode +
+  GPU encode, and finally the CPU (libx264, as before). The switch happens by itself within a few seconds (a run
+  that exits without output, or makes no segment in 20 s) and is written to the log; after a stream had to go all
+  the way back to the CPU that method is paused for 10 minutes. Same 6-second HLS segments, qualities and seeking.
+- **Settings -> Transcoding (admins):** Hardware transcoding = Auto / Intel QSV / VAAPI / NVIDIA NVENC / Off (CPU),
+  which video card to use, the detected cards (PCI id, driver, render node, methods; e.g. the Matrox BMC chip shows
+  "no video encoder"), a **Test** button per method (a 2 s 1080p -> 720p encode, shows passed + fps or the ffmpeg
+  error and the fix), **Scan for video cards again**, what is in use now, who set it up (install / first start /
+  you) and the last fallback. Auto tries VAAPI, then QSV, then NVENC. New admin-only API: `GET/PUT /api/hw`,
+  `POST /api/hw/test`, `POST /api/hw/scan`.
+- **GPU badge:** while a stream runs on the card the server-status pill shows a purple **GPU** badge (a purple ring
+  around the dot on phones), the status popover gets a "Transcoding: GPU VAAPI - 1 stream" row, the player's status
+  pill shows GPU, and Settings -> System lists each stream's encoder.
+- **install.sh** (new step 7) scans for video cards (sysfs / lspci, /dev/dri, nvidia-smi), installs the drivers best
+  effort -- Intel: intel-media-va-driver-non-free (or intel-media-va-driver), vainfo, libvpl2, libmfx-gen1.2; AMD:
+  mesa-va-drivers, vainfo; NVIDIA: a hint to install the driver if nvidia-smi is missing -- adds the service user to
+  the video + render groups, runs a test encode and saves the first method that works (or Off) in Settings. It never
+  fails the install. The logic lives in the new `hwsetup.sh` (shared with update.sh).
+- **update.sh** does the same scan only when nothing is saved yet; a value saved by install or in Settings is never
+  changed ("kept your setting"). Servers updated with an OLDER update.sh (1.5.1 and before, e.g. now) get the scan at
+  the **first start of 1.5.2** instead (no package installs then; the GPU server already has the VAAPI driver).
+- Machines without a video card (the VM) stay on the CPU exactly as before (setting saved as Off).
+- Verified on the real Arc A310 (ffmpeg 6.1.1, iHD 24.1): VAAPI full and CPU-decode paths, incl. a 4K60 phone video
+  (rotated) -> 1080p using ~2 s of CPU per 30 s of video instead of ~70 s with libx264. Two fixes came from that:
+  single-threaded GPU decoding (otherwise the last ~15 frames failed at the end of a file) and GPU rotation.
+- `MS_HWACCEL` in .env (decode-only, experimental since 1.0) is superseded by the setting; it is still honoured on
+  the CPU path. No database schema change (three new rows in settings). Rollback works as before.
+
+## 1.5.1 -- 2026-11-24
+Builds on 1.5.0, plus:
+- **Phone layout like the Plex app.** On phones and small tablets (<= 820 px, browser and Android app) the menu
+  button is replaced by a fixed **bottom tab bar** (icon + label, 62 px + the phone's safe area): Home, Libraries,
+  Search, My List, Settings (Account for non-admins); the active tab is Movinite purple. It hides while the player is
+  open (back when the film is minimised to PiP or closed); the audio bar, PiP chip and messages sit above it.
+- **Slim top bar on phones:** M logo, a search icon (opens the Search tab, which has its own search box), the
+  server-status dot (tap = CPU / RAM, as before) and a round avatar with your initial. Tap the avatar for
+  My account, Settings, Interface sounds on/off and Sign out (closes on a tap outside, Esc / Back or navigation).
+- **New Libraries tab** (each library with its item count, plus Collections / Recommended / Recently added / Top
+  movies) and **My List tab** (Continue watching + Watched, newest first) backed by the new `GET /api/mylist`
+  (signed-in users, 401 otherwise; it shares the continue-watching query with /api/home).
+- **Home rows on phones:** bold 21 px titles with a ">" that opens the full list, the library (or library + count)
+  in gray underneath, about 2.3 posters across (swipe), 8 px rounded posters, title + year under each poster, a thin
+  rounded progress bar inset at the bottom and a check in a dark square for watched films.
+- **Row arrows:** hidden on phones under 600 px wide (swipe instead), small (34 px) and subtle on tablets
+  (600-820 px). In 1.4.9 they were 44 px on phones; this follows the Plex layout you asked for.
+- **Desktop unchanged** (pixel-compared against 1.5.0: only the version label differs).
+- **Android app 1.5** (`movinite-android-v1.5.apk`, versionCode 6, same package + signing key, installs over 1.4):
+  the native Sign in screen now matches the web sign-in page -- the full Movinite logo with the MOVINITE wordmark
+  (300 dp, in the card), the purple glow on near-black, the translucent card with the purple border, the same
+  fields (purple border when focused) and the full-width purple button; max 380 dp wide on tablets / landscape.
+  Back closes the phone account menu. Gear (Server settings), PiP and rotation unchanged. Launcher icon / splash
+  stay the M mark without wording.
+- No database change; install.sh / update.sh unchanged. Update and rollback work as for 1.5.0.
+
+## 1.5.0 -- 2026-11-24  (Movinite)
+Builds on 1.4.13, plus:
+- **New name: Movinite.** The web app, sign-in page, browser tab, home-screen icon, installer / updater messages and
+  the Android app are now called Movinite and use the official Movinite logo: the full logo on the sign-in page,
+  a compact M + MOVINITE logo in the menu, the M mark in the phone top bar, and the M as favicon (16/32/48 + .ico),
+  Apple touch icon and installable-app (PWA) icons (incl. a maskable one). The app can be added to a phone's home
+  screen. **Behind the scenes nothing is renamed:** the service is still `media-server`, the folder
+  `/opt/media-server`, the port 8099, the tarball `media-server-verX.Y.Z.tar.gz`, so updates and rollback work as before.
+- **Purple theme.** The accent colour is the logo's purple (#9637FA); buttons are #8424EA with white text (6.1:1,
+  WCAG AA), purple text on the dark panels is #B07CFF (>= 5.9:1). Warnings and errors stay amber / red.
+- **Browse a share's folders in Settings -> Libraries.** Add library -> SMB / NFS / Local folder now has a
+  **Browse** button: after entering the share login it lists the server's shares, then the folders (with the number
+  of videos in each), and you click through and **Select** the media folder instead of typing the sub-folder.
+  Wrong password, unreachable server, missing share and "access denied" are shown as plain messages, with
+  "Edit the login" / "Try again". Edit library has the same browser ("Change folder", rescans afterwards).
+  Works on phones (full-screen sheet, big rows) with the see-through look. The library type is suggested from the
+  folder name (Movies / TV Shows / Music). Admin only; the login is never logged or sent back; ".." and other
+  escapes are refused; browsing never changes existing mounts. SMB is browsed with `smbclient` (new dependency,
+  installed by install.sh and, best effort, by update.sh); NFS (and SMB without smbclient) via a temporary read-only
+  mount by the mount helper.
+- **Turn the phone sideways = full screen.** While a film plays on a phone or tablet, turning it sideways makes the
+  player full screen and turning it upright leaves full screen. If the browser refuses full screen without a tap,
+  the player fills the screen anyway and the next tap makes it real full screen. Leaving full screen by hand is
+  respected until the next rotation. Never on desktop.
+- **Android app 1.4** (`movinite-android-v1.4.apk`, installs over 1.3, same signing key): called Movinite, purple,
+  the M logo (no wording) as launcher icon (adaptive + themed), on the Sign in screen and the splash. While the player
+  is open the app follows the phone's rotation: sideways hides the status and navigation bars (immersive full
+  screen), upright brings them back.
+- No database change. Updating from 1.4.12 or 1.4.13 keeps all data; `update.sh --rollback` restores the previous
+  version. The share's write setting is unchanged.
+
+## 1.4.13 -- 2026-11-24
+Builds on 1.4.12, plus:
+- **New bottom control bar in the player.** The browser's own controls are replaced by the player's bar, so Quality,
+  Subtitles and picture in picture sit at the bottom as their own buttons (not inside the ⋯ menu):
+  - left: play/pause, -10 s, +10 s, volume / mute (remembered), current / total time;
+  - right: **Quality** (gear + current choice, e.g. "Original" or "720p"; the menu also has playback speed
+    0.5×-2×), **Subtitles** (CC; lit while subtitles are on; language codes shown as names, e.g. "English (en)"),
+    **Audio** (only for films with more than one audio track), **PiP**, **Full screen**;
+  - above them a seek bar with the buffered range, a draggable knob and the time under the mouse. Seeking works for
+    direct play, remux and transcoded (HLS) streams and saves the resume point.
+  - The top bar keeps only close and the title.
+- **See-through look.** No solid bar: a soft gradient from clear to 45% black at the very bottom, buttons as
+  translucent blurred circles / pills with white shadowed icons (like the status pill and the round skip buttons),
+  menus as frosted glass, and text shadows so labels stay readable on bright scenes.
+- Everything fades with the overlay ~3 s after the last tap / mouse move / key, and stays while a menu is open, while
+  dragging the seek bar or while paused. A click beside an open menu just closes it. Esc closes a menu first.
+- Subtitles move up above the bar while it shows and drop back when it fades.
+- Works in full screen, on phones (compact icons, 44 px targets, menus as bottom sheets) and in the Android app
+  (hidden in Android's PiP window). New key: m = mute. The empty status label no longer shows as a dark dot.
+- No database change. Updating from 1.4.11 or 1.4.12 keeps all data; `update.sh --rollback` restores the previous
+  version. The share's write setting is unchanged.
+
+## 1.4.12 -- 2026-11-24
+Builds on 1.4.11 (on-screen skip buttons and the see-through status pill), plus:
+- **The player's top bar fades away too.** The close button, the title, the Original / quality picker, the audio and
+  subtitles pickers and the full-screen button now float over the picture and fade out together with the round
+  buttons and the status pill: about 3 s after the last tap, mouse move or key press while the film plays. They
+  come back on a tap, a mouse move or any key, and stay while the film is paused. The fade is smooth, and hidden
+  controls can't be clicked by accident, so a tap on the picture always just brings them back. Works the same in
+  and out of full screen, on desktop and on phones.
+  - The bar stays up while you use it: while a picker's list is open or focused, or while the mouse rests on the bar.
+  - On desktop the mouse pointer disappears with the controls and comes back when you move the mouse.
+  - The see-through status pill sits just under the bar, whatever its height (it wraps to two lines on phones).
+- **Picture in picture.** A new PiP button in the top bar (or the P key) pops the film out into a small
+  always-on-top window (Chrome, Edge, Safari, Chrome on Android).
+  - The player steps aside so you can keep browsing the library. A small bar at the bottom right shows what's
+    playing, with **Back to player** and **✕** (stop and close).
+  - Closing the PiP window with its own buttons brings the full player back. Closing the player, or starting
+    another film, ends PiP cleanly.
+  - Playback, the resume point and transcoded (HLS) streams keep working in PiP. Interface sounds stay silent while
+    a film plays in PiP, and the player's keyboard shortcuts leave the page alone while you browse.
+  - Firefox has no PiP option for web pages. There the button explains Firefox's own PiP (Ctrl+Shift+], or
+    Cmd+Option+Shift+] on a Mac, or the PiP toggle on the video). Where PiP isn't possible at all, the button is hidden.
+  - In the Android app (v1.3 or later) the button uses Android's own picture in picture, and pressing Home while a
+    film plays does the same. Older app versions simply don't show the button.
+- No database change. Updating from 1.4.10 or 1.4.11 keeps all data; `update.sh --rollback` restores the previous
+  version. The share's write setting is unchanged.
+
+## 1.4.11 -- 2026-11-24
+- **On-screen skip buttons in the player.** Tap (or click) the picture while a film plays and three large round
+  buttons appear in the middle: **↺ 10** (back 10 s), **Play/Pause** and **↻ 10** (forward 10 s). They are
+  see-through (dark glass), at least 64 px on phones and 76-92 px on bigger screens.
+  - The buttons, the browser's seek bar and the title bar fade out on their own after about 3 s of playback.
+    Tap again to hide them sooner. They stay up while the film is paused. Moving the mouse over the picture also
+    shows them.
+  - Tapping a button never also pauses or hides the film.
+  - **Double-tap** the left or right side of the picture to jump back or forward 10 s, YouTube style. A "−10s" or
+    "+10s" bubble shows the jump, and quick repeated taps add up ("+20s", "+30s").
+  - Skipping works for direct play and for transcoded (HLS) streams, and the resume point is saved right away.
+  - Keyboard: Left/Right (or J/L) = ∓10 s, Space (or K) = pause/play, F = full screen, Esc = close (Esc only
+    leaves full screen when the film is full screen).
+- **See-through server status in the player.** A small translucent pill at the top right of the picture shows
+  "CPU x% · RAM used/total GB" (amber/red when busy). It appears and fades together with the buttons. It reuses
+  the top-bar status check (every 4 s), so the player adds no extra server requests, and it stops when the player
+  closes. It follows the existing "Show server status" setting.
+- **Full screen keeps the buttons and the status.** The new full-screen button (top right of the player, or F)
+  makes the whole player full screen instead of the bare video, so the overlay is still there. On phones it also
+  turns to landscape where the browser allows it. This works in the Android app too.
+- Interface sounds stay silent while a film is open.
+- No database change. Updating from 1.4.10 keeps all data; `update.sh --rollback` restores the previous version.
+  The share's write setting is unchanged.
+
+## 1.4.10 -- 2026-11-24
+- **Settings cards on phones read cleanly.** In 1.4.9 a value made of several parts was squeezed into narrow
+  side-by-side columns that broke mid-word. That affected a library's Source (share, "mounted" badge and folder),
+  Last scan (time and result) and Auto scan (interval and next run). Now:
+  - **Multi-part or long values** get their label on top, use the full card width, and stack their parts
+    underneath: share, then badge, then folder; "4 h ago", then "added 1, updated 0, ..."; "Every 6 hours", then
+    "next in 2 h". Short values (Type, Items, Role, Created) keep the label on the left and the value on the right.
+  - **The badge** is a compact pill that never wraps: "mounted · writable" / "mounted · read-only" (was
+    "mounted (writable)").
+  - **Paths and share addresses** wrap only after a "/" (or at a hyphen), never inside a folder name. This covers
+    the library folder, the share and the System data folder. Previously library paths and System values were
+    allowed to break anywhere.
+  - **Action buttons** sit in a tidy grid of 44 px buttons: Scan / Full rescan, Remount / Credentials, Artwork /
+    Edit. Remove (and Delete for users) is on its own full-width row at the end. The Users and Metadata buttons
+    are tidied the same way.
+  - Checked on every card table: Libraries, Metadata > Libraries, Users and System > Active transcodes, plus the
+    System details. Tested at 360, 390 and 430 px with an SMB and an NFS share library.
+  - The desktop table is unchanged apart from the new pill text.
+- No database change. Updating from 1.4.8 or 1.4.9 keeps all data; `update.sh --rollback` restores the previous
+  version. The share's write setting is unchanged.
+
+## 1.4.9 -- 2026-11-24
+- **The ⋯ menu on the movie page is for admins only.** Non-admin users no longer see the button, so they have no
+  Download file and no File info. Play, Mark watched, the description, cast and similar movies are unchanged.
+  The server enforces this too:
+  - Downloading a file (`/api/items/{id}/file?download=1`) now needs an admin (403 otherwise). Streaming for
+    playback is unchanged.
+  - Non-admins no longer get the file name; the folder and path were already hidden from them.
+  - Fix match, Home rows, tags and settings already required an admin.
+- **< and > row buttons on phones and tablets too.** They are 44 px touch targets placed just inside the screen
+  edge and centred on the posters. They light up while pressed, with no "stuck" hover, and are hidden when a row
+  fits. Swiping the rows still works and keeps the buttons in step.
+- **Mobile-friendly Settings.** On narrow screens (820 px and below):
+  - **Tab bar:** the tabs sit on one line that you can swipe sideways (no wrapping), each tab is at least 44 px
+    tall, the open tab is scrolled into view, and the edges fade where there are more tabs.
+  - **Panels** (Libraries, Scan activity, Metadata, My account incl. Sounds, Users, System) use one column, with
+    full-width inputs (16 px text, so iPhones don't zoom in).
+  - **Tap targets:** every button, input, checkbox row and switch row is at least 44 px. The checkbox labels can
+    be tapped.
+  - **Tables** (libraries, users, metadata, transcodes) become one card per row, with each value labelled.
+  - System details are stacked with long paths wrapping, so nothing needs sideways scrolling. Tested at 360,
+    375, 390 and 430 px wide.
+  - Non-admins only see the My account tab; before, there was a Libraries tab that just showed My account.
+- No database change. Updating from 1.4.7 or 1.4.8 keeps all data; `update.sh --rollback` restores the previous
+  version. The share's write setting is unchanged.
+
+## 1.4.8 -- 2026-11-24
+- **Interface sounds.** Short, quiet sounds made in the browser (Web Audio; no sound files):
+  - **Hover:** a soft tick when the mouse moves onto a poster or you Tab to one. Its pitch varies a little each
+    time, and when you sweep quickly across a row you get at most one tick every 70 ms. Moving around inside the
+    same poster stays silent.
+  - **Select:** an airy whoosh and a two-note chime when you open a movie (click or Enter).
+  - **Play / Resume** (and the quick-play button on posters): a soft low thump and a rising three-note tone.
+  - **< and > row buttons:** a quick swish, up for > and down for <.
+- **Never during playback:** no sounds play while the video player is open.
+- **On by default at a low volume (30%).**
+- **Speaker button** in the top bar, next to the server status: one click mutes or unmutes. A chime confirms
+  that sound is back on.
+- **Settings > My account > Sounds:**
+  - Interface sounds on/off.
+  - Separate switches for hover sounds and for select sounds (select also covers play and arrows).
+  - A volume slider.
+  - A Test button.
+  - Settings are saved for each user in that browser.
+- **Browser rules:** browsers only allow sound after you click or press a key, so the audio starts at your first
+  click or key press (for example signing in). Before that nothing is played and no errors are shown.
+- **Phones and tablets:** no hover sounds, and tap sounds are off by default. You can turn select sounds on in
+  Settings.
+- No database change. Updating from 1.4.6 or 1.4.7 keeps all data, and `update.sh --rollback` restores the
+  previous version. The share's write setting is unchanged.
+
+## 1.4.7 -- 2026-11-24
+- **330 px posters on Home.** Every Home row (Continue watching, Recommended, Recently released, Recently added,
+  Top movies, genre rows) shows posters 330 px wide on large windows (from about 1600 px; was 150 px). They shrink
+  with the window: about 297 px at 1440, 227 px at 1100, 156 px on a phone (was 120). TV rows with landscape
+  pictures grow too (up to 440 px, was 240). The 500 px TMDB posters already cached are used, so they stay sharp.
+  The < > buttons stay centred.
+- **Posters pop out on hover.** With a mouse, a poster grows a little (8%), lifts, gets a bigger shadow and a soft
+  gold glow, brightens slightly, and fades in the title, year and TMDB score plus the play button. The animation
+  takes 0.2 s. Rows have extra room so the enlarged poster isn't cut off, and the posters next to it don't move.
+  It works everywhere posters appear: Home, the Movies grid, Collections, Similar movies, actor pages and search.
+- **Keyboard:** posters can be reached with Tab and get the same pop-out; Enter opens the movie.
+- If "reduce motion" is turned on in the operating system, posters just get the highlight without moving. Phones
+  and tablets have no hover effect; tapping a poster opens it as before.
+- No database change. Updating from 1.4.5 or 1.4.6 keeps all data; `update.sh --rollback` restores the previous
+  version. The share's write setting is unchanged.
+
+## 1.4.6 -- 2026-11-24
+- **Bigger movie details page.** All sizes are on-screen widths:
+  - **Poster: 550 px** on large windows (from about 1600 px wide; 1.4.5 maxed out at 340 px). It shrinks with
+    the window (about 495 px at 1440, 380 px at 1100) so the title and description still fit beside it; phones
+    get about 270 px, centred (was 250).
+  - **Description: 19 px** text with 1.6 line spacing (was 15.5 px). Tagline 17 px and Directed by / Written by
+    16 px (were about 14 px); title up to 38 px (was 28). Phones: 17 px description.
+  - **Cast photos: 186 x 279 px** (was 124 x 186, so 1.5x), same portrait style and < > buttons; 130 px on phones (was 100).
+  - **Similar movies posters: 330 px** on large windows (was 215), shrinking on smaller ones (about 297 px at
+    1440); about 170 px on phones. The < > buttons stay centred.
+- **Sharper artwork for the bigger sizes.** The details poster now uses TMDB's 780 px-wide poster (the cached one is
+  500 px). It is downloaded the first time a movie's page is opened and then kept in `data/thumbs`; the 500 px
+  poster shows until it arrives, or if TMDB can't be reached. Cast photos use TMDB's 632 px-tall image (was 185 px
+  wide); photos cached by 1.4.3-1.4.5 are upgraded the first time they are shown (old ones stay if TMDB is down).
+  About 150 KB extra per movie page and 40 KB per actor, only for pages people open.
+- No database change. Updating from 1.4.4 or 1.4.5 keeps all data; `update.sh --rollback` restores the previous
+  version. The share's write setting is unchanged.
+
+## 1.4.5 -- 2026-11-24
+- **Cleaner movie details page.** The "File & playback" section and the "Admin" card are gone from the page.
+  Their actions moved into a small **...** (more) button next to Play / Mark watched. It opens a menu with:
+  - for admins: **Fix match** (with a small "Needs review" badge when the match is flagged, plus "Accept
+    suggestion" / "Match looks right" when they apply), **Home rows**, **+ Tag**, **Artwork settings**
+  - for everyone: **Download file**, **TMDB**, **File info**
+  **File info** opens a small window with the file name, folder, size, container, resolution, video and audio
+  codecs, subtitles, bitrate and whether it plays directly or is converted. Other users see only Download, TMDB and
+  File info. The menu works with the keyboard (Enter / arrow keys / Esc) and opens as a sheet at the bottom on phones.
+  The same applies to TV episode, video and music track pages.
+- **Bigger Similar movies posters:** about 215 px wide on a large screen (was 150), still with the < > buttons;
+  about 155 px on a phone (was 120). The Cast row keeps its size.
+- Fix: the resolution label uses the width as well, so a 1920x800 widescreen film shows 1080p (was 720p).
+- No database change. Updating from 1.4.3 or 1.4.4 keeps all data; `update.sh --rollback` restores the previous
+  version. The share's write setting is unchanged.
+
+## 1.4.4 -- 2026-11-24
+- **Rows scroll with < and > buttons instead of a sideways scrollbar.** Every horizontal row (Home rows,
+  Recommended, Cast, Similar movies, ...) has round < and > buttons in the middle of the posters, left and right.
+  Each click moves one screen-width of posters with a smooth slide. < is hidden at the start, > at the end, and
+  both when the whole row fits. The scrollbar is gone. Keyboard: Tab to a button and press Enter, or use the
+  Left/Right arrow keys on a row. Phones and tablets keep swiping (the buttons are hidden on touch screens).
+- **Blurred background on the movie details page.** The movie's backdrop (or its poster if it has none) fills
+  the whole page behind the details, softly blurred and darkened so text stays readable. It stays in place while
+  you scroll, and goes away when you leave the page. Movies with no artwork keep the plain dark background.
+- **Bigger poster on the details page:** about 330 px wide on a large screen (was 240), scaling down on smaller
+  windows; on a phone it is centred above the title (about 250 px, was 150). Same 2:3 shape, sharp image.
+- No database change. Updating from 1.4.2 or 1.4.3 keeps all data; `update.sh --rollback` restores the
+  previous version. The share's write setting is unchanged.
+
+## 1.4.3 -- 2026-11-24
+- **Clicking a movie opens its details page instead of playing.** This applies everywhere: Home rows, Continue
+  watching, the Movies grid, Collections, search and the new actor pages. Hovering a poster shows a small round
+  play button for quick play (it resumes where you stopped); phones and tablets just open the details.
+- **New details page layout:**
+  - backdrop, poster, title, year, age rating, runtime, genres, TMDB score and tagline
+  - big **Resume from mm:ss** / **Play from start** (or **Play**) buttons, plus Mark watched
+  - "Directed by / Written by", then the description
+  - **Cast**: the top-billed actors (up to 20) with photo, name and character, scrolling sideways. Click an actor
+    (or the director / writer) to see the other movies in your library they are in
+  - **Similar movies** from your library: TMDB's recommendations first, then the same collection, then movies
+    sharing the most genres. Each one says why, and clicking it opens its details
+  - **File & playback** (resolution, codec, audio, subtitles, download) collapsed at the bottom
+  - an **Admin** box with Fix match, Home rows, + Tag, Artwork settings and the TMDB link (admins only)
+- **Cast & crew from TMDB.** They are read in the same details request as categories (no extra calls). After
+  updating, the background pass runs once more for movies you already have; the top bar shows "Fetching cast &
+  details". It takes about one request per movie, 2-4 minutes for 2,000 movies, and can be resumed. Pages work
+  during the pass and say the cast is on its way. Actor photos are downloaded the first time someone opens a
+  page that shows them, then served from the local cache.
+- Database schema 6 (people, movie_cast, movie_crew). Updating from 1.4.x keeps all data;
+  `update.sh --rollback` restores the previous version and database. The share's write setting is unchanged.
+
+## 1.4.2 -- 2026-11-24
+- **Server status in the top-right corner** of every page: live CPU % with a small sparkline and RAM used/total
+  with a bar (e.g. "CPU 12% · RAM 6.2/31 GB"). Green normally, amber from 60% CPU / 75% RAM, red from 85% / 90%.
+  Refreshes every 4 s and stops while the browser tab is hidden. Sits next to the scan pill without
+  overlapping; on a phone it shrinks to a coloured dot.
+- Hover (or click to keep it open) for details: CPU overall and per core, load average, memory and swap,
+  free space on the data disk and each mounted share, uptime, active streams and running ffmpeg processes,
+  and the media server's own memory.
+- New `GET /api/system/status`. Reads /proc directly (no new dependencies); a small sampler refreshes the
+  numbers every 2 s only while someone is watching and every client shares the same cached result.
+- Admin-only by default. Settings > System > **Show server status to all users** lets everyone see it.
+- No database schema change; nothing else changed.
+
+## 1.4.1 -- 2026-11-24
+- Home is reorganised. Order: **Continue watching** (only when something is part-watched), **Recommended for
+  you**, **Recently released**, **Recently added**, **Top movies**, then the genre rows. Every row has
+  "See all"; the same lists are tabs on the Movies page (All movies / Recommended / Recently released /
+  Recently added / Top movies / Collections).
+  - Continue watching: movies (and episodes) you started but did not finish, most recent first, with a
+    progress bar and "N min left"; clicking a poster resumes where you stopped.
+  - Recommended (per user): built from your watch history -- TMDB's "people who liked this also liked" list
+    for the movies you watched, shared genres and collections, weighted toward what you watched most recently,
+    plus the next film of a franchise after you finish one ("Next in The Matrix Collection"). Each poster says
+    why ("Because you watched Heat"). Finished and started movies are left out. With no history yet it shows
+    well-known, highly rated movies mixed across your top genres. The list is cached and only changes when
+    you watch something, the library changes, or the day changes.
+  - Recently released: newest TMDB release date first, last 2 years, never future dates (topped up with the
+    next-newest when the library has fewer than 12 recent films).
+  - Recently added: newest additions to the library.
+  - Top movies: TMDB score weighted by number of votes (IMDb's formula, m = 500 votes, at least 50 votes), so a
+    film with three 10/10 votes does not top the list; unreleased films are left out.
+- Admins: "Home rows" on a movie page pins a movie to Recommended or Top movies (always include, shown first)
+  or keeps it out; "Automatic" undoes it.
+- TMDB recommendations are read in the same request as the 1.4 categories (no extra calls). After updating,
+  the background "Fetching categories" pass runs once more: about one request per movie, 2-4 minutes for
+  2,000 movies, resumable. Rows work right away and get more personal when it finishes.
+- Fix: closing the player when a stream never started no longer resets the movie's resume position.
+- Database schema 5 (movie_recs, home_pins, rec_cache). Updating from 1.3.x or 1.4 keeps all data;
+  `update.sh --rollback` restores the previous version and database.
+
+## 1.4 -- 2026-11-23
+- Movie categories. For every matched movie Media Server now keeps its TMDB genres, collection / franchise
+  (e.g. "The Matrix Collection"), age rating (your TMDB language's country, else US), runtime and TMDB score.
+  - Right after the update, genres work at once (built from what is already cached, no TMDB calls). The rest
+    is fetched in the background: one TMDB request per movie (posters are already cached), at most 20/s with
+    4 lookups at a time, resumable across restarts. The top-bar pill and Settings -> Scan activity show
+    "Fetching categories ... done / total".
+  - New matches get the categories straight away; Fix match choices are kept exactly as they are.
+- Movies page: a **Movies / Collections** switch and a category bar.
+  - Genre chips with counts -- pick several to narrow down (movies that have all of them); counts follow
+    what you picked. Decade, age rating and tag menus. **Clear** resets them. Choices are remembered while
+    the tab is open.
+  - Everything combines with search, the sort menu (new: TMDB score), Needs review / No match / Special
+    editions, and Posters first.
+  - Collections: a poster grid of the franchises you own (movie count and years); open one to see its
+    movies in release order.
+- Home: after "Recently added", a row for each of the library's biggest genres (best rated first) with
+  "See all" opening the filtered library.
+- Movie page: genres are links to the filtered library; age rating chip; "Part of <collection>" link.
+- Your own tags (admins): "+ Tag" on a movie page, or **Select** on the Movies page to tag many movies at once
+  (Select all shown / Add tag / Remove tag). Filter by tag from the category bar. Tags vanish when no movie
+  uses them.
+- Database schema 4 (new tables movie_genres, collections, tags, item_tags; four new metadata columns).
+  Updating keeps all data; rolling back to 1.3.x with `update.sh --rollback` restores the old database.
+- Unchanged: artwork saving stays off, share writing stays off, matching rules are the same.
+
+## 1.3.1 -- 2026-11-23
+- Redesigned the "Artwork in movie folders" dialog (Settings -> Libraries -> Artwork): a short intro and three
+  clear steps -- 1 Share access (switch + Read-only / Writable badge, the fine print under "Details"),
+  2 What to save (aligned switches with a one-line hint each: poster, fanart, .nfo, how files are named,
+  save automatically for new matches, overwrite existing), 3 Run (Preview is secondary; "Write artwork" is
+  the only primary button and stays disabled until the share is writable and your settings are saved;
+  preview results show inline with paths relative to the library). Wider (680px), 14px+ text, better
+  contrast, scrolls inside on small screens, works on phones.
+- Libraries table: action buttons wrap neatly in two rows instead of running off the edge; long share paths
+  wrap; the table scrolls sideways on narrow screens.
+- No behaviour changes: same defaults (artwork saving and share writing stay off), same files written.
+
+## 1.3 -- 2026-11-23
+- Better automatic TMDB matching for movies:
+  - Edition words in file names (Director's Cut / DIRECTORS CUT / DC, Unrated, Extended, "EXTENDED and UNRATED",
+    Remastered, Theatrical, IMAX, Final Cut, Special Edition, {edition-...}) are no longer searched for; they
+    show as a small edition label on the card and the movie page (filter: "Special editions").
+  - Results from the file's year win; an exact title that is more than a year off is never applied
+    automatically -- it is offered as a suggestion under "Needs review".
+  - Retries with shorter titles: without "The Movie", without "Episode IV -", each side of a dash or colon,
+    the series name for sequels ("Die Hard 3", "Iron Man Three" -> picked by year), and spelling slips
+    ("Dinosour", "The Matrx") when the year agrees. When several films share a title, the better-known one
+    wins near-ties.
+  - Library sorting and search use the TMDB title once a movie is matched.
+  - Your Fix match choices are never changed by automatic matching or "Refresh metadata".
+- "Needs review" filter in movie libraries (with counts), plus "No TMDB match" and "Special editions".
+  Unsure matches get a "?" badge; the movie page says why and offers **Accept** (switch to the suggested
+  film) or **Looks right** (keep it).
+- Save artwork into the movie folders (off by default, per library: Settings -> Libraries -> **Artwork**):
+  poster.jpg, optional fanart.jpg and a Kodi / Jellyfin / Plex-compatible movie.nfo. Movies that share a
+  folder with other movies (or sit in the library root) get `<file name>-poster.jpg` / `-fanart.jpg` /
+  `<file name>.nfo` instead. Existing artwork / .nfo files are never replaced unless you tick Overwrite (and
+  then only our own file names, rewritten in place so owner and permissions stay). **Preview (dry run)**
+  lists every file first; **Write artwork for all matched items now** runs in the background with progress
+  in the top pill and Settings -> Scan activity; new matches are written automatically while the option is on.
+- Shares: per-share **Allow writing (artwork only)** switch that remounts the share read-write (shares stay
+  read-only by default). A read-only share or a NAS that refuses writes stops the run with a clear message
+  instead of failing file by file.
+- Database schema 3 (applied automatically on update; existing titles with edition words are split and
+  re-matched once, manual matches are kept).
+
+## 1.2.1 -- 2026-11-23
+- Fix: TMDB matching that was interrupted (e.g. by the update restart right after saving the key) or never
+  started now resumes by itself -- at startup and every 5 minutes, whenever titles are still waiting for a
+  lookup. Before, it only restarted after the next scan, so posters stopped filling in and the "Fetching
+  posters" pill never appeared.
+- Posters first: library grids default to titles with real artwork (TMDB poster or local poster.jpg) first,
+  then the rest under "Without a poster yet"; as TMDB finds posters, titles move up live without losing your
+  scroll position. Sort menu: Posters first / Title (A-Z) / Recently added / Year (also for TV); the choice is
+  remembered per library. Home's "Recently added" shows titles with posters first.
+- Faster matching: 4 lookups in flight (`MS_TMDB_WORKERS`), still within the 20 req/s limit; the pill shows
+  time left.
+- Settings -> Metadata: "N not looked up yet" per library and a "Match missing" button (looks up only what
+  is missing; "Refresh metadata" still re-downloads everything).
+- index.html stamps every JS/CSS URL with the running version automatically, so browsers always load the new
+  code after an update.
+
+## 1.2 -- 2026-11-23
+- Scan progress you can see: a live pill at the top of every page ("Scanning Movies -- 312 / 2,021 · ETA ·
+  current file"), a "Discovering files... N found" phase, "Fetching posters" for TMDB, and a pop-up when a
+  scan finishes (added / updated / removed / errors).
+- Settings -> Scan activity: per-library phase, counts, speed, ETA, files in progress, last error, recent
+  log lines, and a Cancel scan button (keeps what was found; the next scan resumes).
+- Movies show up while the scan runs: items are saved in small batches, the library grid and Home update
+  every few seconds without losing your scroll position, posters fill in as TMDB matches (matching now
+  also runs during the scan, not only at the end).
+- Faster scans of big SMB libraries: folder walk and processing run at the same time, a bounded worker pool
+  (MS_SCAN_WORKERS), thumbnails from a single keyframe (~10x less CPU on 4K/HEVC), unreadable files are not
+  re-probed on every scan, and nothing is removed if some folders couldn't be read.
+- Libraries with more than 1,000 items now list everything (was capped at 1,000); posters load lazily.
+- "Recently added" uses the time each file was added, not the scan start.
+
+## 1.1 -- 2026-11-23
+- TMDB metadata for movies and TV shows: posters, backdrops, description, tagline, genres, rating,
+  episode titles and stills. Key (v3 API key or v4 read token) in Settings -> Metadata or `MS_TMDB_KEY`
+  in .env. Automatic matching after each scan, "Fix match" on movie/show pages (search, pick, use file
+  name, automatic), Refresh metadata per library, throttled requests with 429 handling, everything
+  cached locally, works without a key exactly like 1.0. TMDB attribution in the UI.
+- Remux: MKV/MP4/MOV with H.264 video and audio the browser can't play (AC3, DTS, TrueHD, multichannel)
+  or another audio track -> the video is copied into HLS and only the audio is converted. Seeking works;
+  falls back to transcoding automatically.
+- Automatic library scans: Off / Hourly / Every 6 hours / Daily, with the next scan time in Settings.
+- File-name parsing: titles containing words like "Web", "Remux", "Proper" (e.g. "Charlotte's Web") are no
+  longer cut short; "1917.2019.mkv" and "Blade Runner 2049 (2017)" get the right title and year.
+  Already-scanned files keep their old title until a Full rescan (TMDB matching corrects most of them anyway).
+- README: Caddy and nginx HTTPS reverse-proxy examples.
+- Database schema 2 (migrated automatically by update.sh; existing data kept).
+
+## 1.0 -- 2026-11-23
+First release.
+- Libraries: Movies, TV shows, Music, Other videos from a local folder or an SMB / NFS share mounted
+  from the UI (read-only systemd mount units, root-only credentials file, sudo-restricted helper).
+- Scanner: filename parsing (title/year, SxxEyy / 1x01 / season folders, track numbers), ffprobe
+  (duration, codecs, resolution, audio/subtitle tracks, tags), ffmpeg thumbnails, local poster/cover
+  images, embedded album art, external subtitles, incremental rescans, scheduled rescans, safe against
+  an offline share (items are kept).
+- Web UI: home (continue watching, recently added), poster grids, shows -> seasons -> episodes,
+  albums -> tracks, search, item details, settings (libraries, shares, users, account, system).
+- Playback: direct play with HTTP range/seeking; HLS transcode fallback (1080p/720p/480p/360p) with
+  seek-anywhere; audio-track and subtitle selection; music player with queue; resume + watched state.
+- Users: admin created at install with a random password (forced change at first sign-in),
+  extra admin/viewer users, reset-admin.sh.
+- install.sh / update.sh (backup, mirror, migrate, health check, auto-restore, --rollback) / status.sh.

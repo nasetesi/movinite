@@ -1,0 +1,28 @@
+# build output
+dist/
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+
+# secrets -- never commit these
+android/keystore/
+*.jks
+*.keystore
+keystore.properties
+.env
+ADMIN_PASSWORD
+.creds
+*.pem
+*.key
+
+# runtime / dev data
+server/.venv/
+server/data/
+server/backups/
+server/tests/testmedia/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+.DS_Store

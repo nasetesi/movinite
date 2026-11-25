@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+#
+# media-server-mount -- the ONLY thing the media-server service may run as root (via sudoers).
+# It creates / removes read-only systemd mount units for SMB (CIFS) and NFS shares added in the web UI.
+#
+#   media-server-mount add <id> smb  '//host/share[/sub]' [opts] [ro|rw]  (reads username/password/domain on stdin)
+#   media-server-mount add <id> nfs  'host:/export'       [opts] [ro|rw]
+#   media-server-mount access <id> ro|rw        (1.3: switch an existing share; rw is used ONLY to save artwork)
+#   media-server-mount remove <id>
+#   media-server-mount status <id>
+#   media-server-mount remount <id>
+#   media-server-mount browse smb|nfs <remote> [opts] [relpath]  (1.4.14: list folders through a short read-only
+#                      temporary mount in a private dir under /run; nothing is kept. SMB login on stdin.)
+#   1.5.3 "use an existing connection" -- the SMB login of share <src> is read from its root-only credentials file,
+#   so the web app never needs (or sees) the password again:
+#   media-server-mount add-as <id> <src> smb|nfs <remote> [opts] [ro|rw]   (new share, its OWN copy of src's login)
+#   media-server-mount browse-as <src> smb|nfs <remote> [opts] [relpath]
+#   media-server-mount shares-as <src> <host> [opts]                       (smbclient -L with src's login)
+#
+# Shares are mounted READ-ONLY under $SHARES_DIR/<id> unless an admin turned on "Allow writing (artwork only)"
+# for that share (then rw, files owned by the service user, mode 0644 / dirs 0755 on CIFS). SMB passwords are written to
+# /etc/media-server/credentials/share-<id>.cred (root:root 600) and never appear in a unit file or ps.
+set -euo pipefail
+umask 077
+
+CONF=/etc/media-server/mount.conf
+SHARES_DIR=/srv/media-server/shares
+SVC_USER=media-server
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && . "$CONF"
+CRED_DIR=/etc/media-server/credentials
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+
+valid_id() { [[ "$1" =~ ^[0-9]{1,9}$ ]] || die "bad share id"; }
+valid_access() { [[ "$1" == ro || "$1" == rw ]] || die "access must be ro or rw"; }
+no_ctrl() { [[ "$1" != *[[:cntrl:]]* ]] || die "control characters not allowed"; }
+
+unit_for() {
+  local where="$SHARES_DIR/$1"
+  systemd-escape -p --suffix=mount "$where"
+}
+
+# whitelist of extra mount options: key=value pairs with safe characters, from a fixed key list
+filter_opts() {
+  local kind="$1" in="$2" out="" o key
+  IFS=',' read -ra parts <<< "$in"
+  for o in "${parts[@]}"; do
+    o="${o// /}"; [ -z "$o" ] && continue
+    [[ "$o" =~ ^[A-Za-z0-9_.=:-]+$ ]] || die "bad mount option: $o"
+    key="${o%%=*}"
+    if [ "$kind" = smb ]; then
+      case "$key" in vers|sec|iocharset|cache|actimeo|rsize|wsize|seal|nounix|noserverino|nobrl|port) ;; *) die "option not allowed: $key" ;; esac
+    else
+      case "$key" in vers|nfsvers|proto|port|timeo|retrans|rsize|wsize|hard|soft|nolock|actimeo|sec) ;; *) die "option not allowed: $key" ;; esac
+    fi
+    out="${out:+$out,}$o"
+  done
+  echo "$out"
+}
+
+cmd_add() {
+  local id="$1" kind="$2" remote="$3" extra="${4:-}" access="${5:-ro}"
+  valid_id "$id"; no_ctrl "$remote"; no_ctrl "$extra"; valid_access "$access"
+  local fmode=0444 dmode=0555
+  if [ "$access" = rw ]; then fmode=0644; dmode=0755; fi
+  local where="$SHARES_DIR/$id" unit what type opts uid gid
+  unit="$(unit_for "$id")"
+  uid="$(id -u "$SVC_USER")"; gid="$(id -g "$SVC_USER")"
+  extra="$(filter_opts "$kind" "$extra")"
+  case "$kind" in
+    smb)
+      # shellcheck disable=SC2016
+      local smb_re='^//[A-Za-z0-9._:-]+/[^/"$`\\][^"$`\\]*$'
+      [[ "$remote" =~ $smb_re ]] || die "SMB path must look like //server/share"
+      command -v mount.cifs >/dev/null || die "cifs-utils is not installed (apt install cifs-utils)"
+      local user="" pass="" domain="" line
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          username=*) user="${line#username=}" ;;
+          password=*) pass="${line#password=}" ;;
+          domain=*)   domain="${line#domain=}" ;;
+        esac
+      done
+      no_ctrl "$user"; no_ctrl "$pass"; no_ctrl "$domain"
+      mkdir -p "$CRED_DIR"; chmod 700 "$CRED_DIR"
+      local cred="$CRED_DIR/share-$id.cred"
+      if [ -n "$user" ]; then
+        { echo "username=$user"; echo "password=$pass"; if [ -n "$domain" ]; then echo "domain=$domain"; fi; } > "$cred"
+        chmod 600 "$cred"
+        opts="$access,credentials=$cred"
+      else
+        rm -f "$cred"
+        opts="$access,guest"
+      fi
+      opts="$opts,uid=$uid,gid=$gid,file_mode=$fmode,dir_mode=$dmode,iocharset=utf8,noperm,_netdev,nofail"
+      type=cifs
+      ;;
+    nfs)
+      # shellcheck disable=SC2016
+      local nfs_re='^[][A-Za-z0-9._:-]+:/[^"$`\\]*$'
+      [[ "$remote" =~ $nfs_re ]] || die "NFS path must look like server:/export/path"
+      command -v mount.nfs >/dev/null || die "nfs-common is not installed (apt install nfs-common)"
+      opts="$access,_netdev,nofail,soft,timeo=150,retrans=3"
+      type=nfs
+      ;;
+    *) die "kind must be smb or nfs" ;;
+  esac
+  [ -n "$extra" ] && opts="$opts,$extra"
+  # the rest of the line is taken literally (spaces are fine); % starts a systemd specifier -> %%
+  what="${remote//%/%%}"
+  mkdir -p "$where"
+  chmod 755 "$SHARES_DIR" "$where" 2>/dev/null || true
+  # stop an old unit for this id before rewriting it
+  systemctl stop "$unit" >/dev/null 2>&1 || true
+  cat > "/etc/systemd/system/$unit" <<UNIT
+# Managed by media-server (share id $id). Edit in the web UI, not by hand.
+[Unit]
+Description=Media Server share $id
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What=$what
+Where=$where
+Type=$type
+Options=$opts
+TimeoutSec=30
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  chmod 644 "/etc/systemd/system/$unit"
+  systemctl daemon-reload
+  systemctl enable "$unit" >/dev/null 2>&1 || true
+  if ! systemctl start "$unit"; then
+    echo "ERROR: mount failed:" >&2
+    journalctl -u "$unit" -n 8 --no-pager -o cat 2>/dev/null | tail -n 8 >&2 || true
+    exit 2
+  fi
+  # systemctl can report success without a mount (e.g. inside a container) -- verify
+  for _ in 1 2 3 4 5; do findmnt -rn "$where" >/dev/null 2>&1 && break; sleep 1; done
+  if ! findmnt -rn "$where" >/dev/null 2>&1; then
+    echo "ERROR: $where is not mounted after starting $unit" >&2
+    journalctl -u "$unit" -n 8 --no-pager -o cat 2>/dev/null | tail -n 8 >&2 || true
+    exit 2
+  fi
+  echo "mounted $remote at $where"
+}
+
+cmd_remove() {
+  local id="$1"; valid_id "$id"
+  local unit; unit="$(unit_for "$id")"
+  systemctl disable --now "$unit" >/dev/null 2>&1 || true
+  umount -l "$SHARES_DIR/$id" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/$unit" "$CRED_DIR/share-$id.cred"
+  systemctl daemon-reload
+  rmdir "$SHARES_DIR/$id" 2>/dev/null || true
+  echo "removed share $id"
+}
+
+cmd_status() {
+  local id="$1"; valid_id "$id"
+  if findmnt -rn "$SHARES_DIR/$id" >/dev/null 2>&1; then echo mounted; else echo "not mounted"; exit 3; fi
+}
+
+cmd_access() {
+  local id="$1" access="$2"; valid_id "$id"; valid_access "$access"
+  local unit f; unit="$(unit_for "$id")"; f="/etc/systemd/system/$unit"
+  [ -f "$f" ] || die "no mount unit for share $id"
+  local cur; cur="$(sed -n 's/^Options=\(r[ow]\),.*/\1/p' "$f")"
+  [ -n "$cur" ] || die "unexpected mount unit format for share $id"
+  if [ "$cur" != "$access" ]; then
+    if [ "$access" = rw ]; then
+      sed -i -e 's/^Options=ro,/Options=rw,/' -e '/^Options=/s/file_mode=0444/file_mode=0644/' -e '/^Options=/s/dir_mode=0555/dir_mode=0755/' "$f"
+    else
+      sed -i -e 's/^Options=rw,/Options=ro,/' -e '/^Options=/s/file_mode=0644/file_mode=0444/' -e '/^Options=/s/dir_mode=0755/dir_mode=0555/' "$f"
+    fi
+    systemctl daemon-reload
+  fi
+  if ! systemctl restart "$unit"; then
+    journalctl -u "$unit" -n 8 --no-pager -o cat >&2 || true
+    die "could not remount share $id (is something playing from it? try again in a moment)"
+  fi
+  findmnt -rn "$SHARES_DIR/$id" >/dev/null 2>&1 || die "not mounted after switching to $access"
+  local now; now="$(findmnt -rn -o OPTIONS "$SHARES_DIR/$id" | cut -d, -f1)"
+  echo "share $id mounted $now"
+}
+
+cmd_remount() {
+  local id="$1"; valid_id "$id"
+  local unit; unit="$(unit_for "$id")"
+  [ -f "/etc/systemd/system/$unit" ] || die "no mount unit for share $id"
+  systemctl restart "$unit" || { journalctl -u "$unit" -n 8 --no-pager -o cat >&2 || true; exit 2; }
+  findmnt -rn "$SHARES_DIR/$id" >/dev/null 2>&1 || die "not mounted after restart"
+  echo "mounted"
+}
+
+# 1.4.14: list the sub-folders of <remote>/<relpath> for the "Browse" button in Add library, then unmount.
+# Output: NUL-separated records  "V\t<videos here>"  "D\t<videos in it>\t<name>"  ("T" = list cut at 500).
+# Errors on stderr start with BROWSE-AUTH / BROWSE-DENIED / BROWSE-NOTFOUND / BROWSE-UNREACHABLE / BROWSE-BAD.
+cmd_browse() {
+  local kind="$1" remote="$2" extra="${3:-}" rel="${4:-}"
+  no_ctrl "$remote"; no_ctrl "$extra"
+  [[ "$rel" != *[[:cntrl:]]* ]] || { echo "BROWSE-BAD control characters" >&2; exit 4; }
+  rel="${rel#/}"; rel="${rel%/}"
+  case "/$rel/" in */../*|*/./*) echo "BROWSE-BAD no .. allowed" >&2; exit 4 ;; esac
+  extra="$(filter_opts "$kind" "$extra")"
+  local base=/run/media-server-browse; mkdir -p "$base"; chmod 700 "$base"
+  local tmp; tmp="$(mktemp -d "$base/b.XXXXXXXX")"
+  local mnt="$tmp/m" cred="$tmp/cred" opts out rc
+  mkdir "$mnt"
+  # shellcheck disable=SC2064
+  trap "umount -l '$mnt' >/dev/null 2>&1 || true; rm -rf '$tmp'" EXIT
+  case "$kind" in
+    smb)
+      local smb_re='^//[A-Za-z0-9._:-]+/[^/"$`\\][^"$`\\]*$'
+      [[ "$remote" =~ $smb_re ]] || { echo "BROWSE-BAD SMB path must look like //server/share" >&2; exit 4; }
+      command -v mount.cifs >/dev/null || { echo "BROWSE-UNREACHABLE cifs-utils is not installed" >&2; exit 4; }
+      local user="" pass="" domain="" line
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in username=*) user="${line#username=}" ;; password=*) pass="${line#password=}" ;; domain=*) domain="${line#domain=}" ;; esac
+      done
+      no_ctrl "$user"; no_ctrl "$pass"; no_ctrl "$domain"
+      if [ -n "$user" ]; then
+        { echo "username=$user"; echo "password=$pass"; if [ -n "$domain" ]; then echo "domain=$domain"; fi; } > "$cred"; chmod 600 "$cred"
+        opts="ro,credentials=$cred"
+      else opts="ro,guest"; fi
+      opts="$opts,uid=$(id -u "$SVC_USER"),gid=$(id -g "$SVC_USER"),file_mode=0444,dir_mode=0555,iocharset=utf8,noperm"
+      [ -n "$extra" ] && opts="$opts,$extra"
+      set +e; out="$(timeout 30 mount -t cifs -o "$opts" "$remote" "$mnt" 2>&1)"; rc=$?; set -e
+      rm -f "$cred"
+      ;;
+    nfs)
+      local nfs_re='^[][A-Za-z0-9._:-]+:/[^"$`\\]*$'
+      [[ "$remote" =~ $nfs_re ]] || { echo "BROWSE-BAD NFS path must look like server:/export/path" >&2; exit 4; }
+      command -v mount.nfs >/dev/null || { echo "BROWSE-UNREACHABLE nfs-common is not installed" >&2; exit 4; }
+      opts="ro,soft,timeo=100,retrans=2"; [ -n "$extra" ] && opts="$opts,$extra"
+      set +e; out="$(timeout 30 mount -t nfs -o "$opts" "$remote" "$mnt" 2>&1)"; rc=$?; set -e
+      ;;
+    *) echo "BROWSE-BAD kind must be smb or nfs" >&2; exit 4 ;;
+  esac
+  if [ "$rc" -ne 0 ]; then
+    case "$out" in
+      *"error(13)"*|*"Permission denied"*) if [ "$kind" = smb ]; then echo "BROWSE-AUTH $out" >&2; else echo "BROWSE-DENIED $out" >&2; fi ;;
+      *"access denied"*) echo "BROWSE-DENIED $out" >&2 ;;
+      *"error(2)"*|*"No such file"*) echo "BROWSE-NOTFOUND $out" >&2 ;;
+      *) [ "$rc" -eq 124 ] && out="timed out"; echo "BROWSE-UNREACHABLE $out" >&2 ;;
+    esac
+    exit 4
+  fi
+  local dir="$mnt"; [ -n "$rel" ] && dir="$mnt/$rel"
+  local real; real="$(realpath -e "$dir" 2>/dev/null)" || { echo "BROWSE-NOTFOUND no such folder" >&2; exit 4; }
+  case "$real/" in "$mnt"/*) ;; *) echo "BROWSE-BAD outside the share" >&2; exit 4 ;; esac
+  [ -d "$real" ] || { echo "BROWSE-NOTFOUND not a folder" >&2; exit 4; }
+  local vre='.*\.\(mkv\|mp4\|m4v\|avi\|mov\|wmv\|flv\|webm\|ts\|m2ts\|mts\|mpg\|mpeg\|vob\|3gp\|ogv\|divx\|asf\)'
+  local n; n="$(timeout 20 find "$real" -mindepth 1 -maxdepth 1 -type f -iregex "$vre" 2>/dev/null | wc -l)"
+  printf 'V\t%s\0' "$n"
+  local count=0 d c
+  while IFS= read -r -d '' d; do
+    count=$((count + 1)); [ "$count" -gt 500 ] && { printf 'T\0'; break; }
+    c="$(timeout 5 find "$real/$d" -mindepth 1 -maxdepth 1 -type f -iregex "$vre" 2>/dev/null | wc -l)" || c=""
+    printf 'D\t%s\t%s\0' "$c" "$d"
+  done < <(timeout 20 find "$real" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\0' 2>/dev/null | sort -z)
+}
+
+# 1.5.3: the login of an existing share as stdin for add / browse (guest share: no file -> empty login)
+cred_of() { local src="$1"; valid_id "$src"; local f="$CRED_DIR/share-$src.cred"; if [ -f "$f" ]; then cat "$f"; fi; }
+
+cmd_shares_as() {
+  local src="$1" host="$2" extra="${3:-}"
+  valid_id "$src"; no_ctrl "$extra"
+  [[ "$host" =~ ^[A-Za-z0-9._:-]+$ ]] || { echo "BROWSE-BAD bad server name" >&2; exit 4; }
+  extra="$(filter_opts smb "$extra")"
+  command -v smbclient >/dev/null || { echo "BROWSE-UNREACHABLE smbclient is not installed" >&2; exit 4; }
+  local base=/run/media-server-browse; mkdir -p "$base"; chmod 700 "$base"
+  local tmp; tmp="$(mktemp -d "$base/s.XXXXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
+  local args=(-L "//$host" -g -t 15) o
+  IFS=',' read -ra parts <<< "$extra"
+  for o in "${parts[@]}"; do
+    case "$o" in
+      port=*) args+=(-p "${o#port=}") ;;
+      vers=1.0) args+=("--option=client min protocol=NT1" "--option=client max protocol=NT1") ;;
+      vers=2.0) args+=("--option=client max protocol=SMB2_02") ;;
+      vers=2.1) args+=("--option=client max protocol=SMB2_10") ;;
+      vers=3.0) args+=("--option=client max protocol=SMB3_00") ;;
+      vers=3.1.1) args+=("--option=client max protocol=SMB3_11") ;;
+    esac
+  done
+  local cred="$CRED_DIR/share-$src.cred"
+  if [ -f "$cred" ]; then
+    sed -n 's/^\(username\|password\|domain\)=/\1 = /p' "$cred" > "$tmp/auth"; chmod 600 "$tmp/auth"
+    args+=(-A "$tmp/auth")
+  else
+    args+=(-N)
+  fi
+  local rc=0
+  env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME="$tmp" LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout 30 smbclient "${args[@]}" < /dev/null 2>&1 || rc=$?
+  exit "$rc"
+}
+
+action="${1:-}"; shift || true
+case "$action" in
+  add)     [ $# -ge 3 ] && [ $# -le 5 ] || die "usage: add <id> <smb|nfs> <remote> [opts] [ro|rw]"; cmd_add "$@" ;;
+  access)  [ $# -eq 2 ] || die "usage: access <id> ro|rw"; cmd_access "$1" "$2" ;;
+  remove)  [ $# -eq 1 ] || die "usage: remove <id>"; cmd_remove "$1" ;;
+  status)  [ $# -eq 1 ] || die "usage: status <id>"; cmd_status "$1" ;;
+  remount) [ $# -eq 1 ] || die "usage: remount <id>"; cmd_remount "$1" ;;
+  browse)  [ $# -ge 2 ] && [ $# -le 4 ] || die "usage: browse <smb|nfs> <remote> [opts] [relpath]"; cmd_browse "$@" ;;
+  add-as)  [ $# -ge 4 ] && [ $# -le 6 ] || die "usage: add-as <id> <src> <smb|nfs> <remote> [opts] [ro|rw]"
+           id="$1"; src="$2"; shift 2; valid_id "$id"; valid_id "$src"; [ "$id" != "$src" ] || die "id and src must differ"
+           cmd_add "$id" "$@" < <(cred_of "$src") ;;
+  browse-as) [ $# -ge 3 ] && [ $# -le 5 ] || die "usage: browse-as <src> <smb|nfs> <remote> [opts] [relpath]"
+           src="$1"; shift; valid_id "$src"; cmd_browse "$@" < <(cred_of "$src") ;;
+  shares-as) [ $# -ge 2 ] && [ $# -le 3 ] || die "usage: shares-as <src> <host> [opts]"; cmd_shares_as "$@" ;;
+  *) die "usage: media-server-mount add|add-as|access|remove|status|remount|browse|browse-as|shares-as ..." ;;
+esac

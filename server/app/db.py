@@ -1,0 +1,259 @@
+"""SQLite access + schema (idempotent migrate)."""
+import sqlite3
+import threading
+from contextlib import contextmanager
+
+from . import config
+
+SCHEMA_VERSION = 6
+
+SCHEMA = """
+-- 1.4: categories
+CREATE TABLE IF NOT EXISTS movie_genres (tmdb_id INTEGER NOT NULL, genre TEXT NOT NULL, PRIMARY KEY (tmdb_id, genre));
+CREATE INDEX IF NOT EXISTS movie_genres_genre ON movie_genres(genre);
+CREATE TABLE IF NOT EXISTS collections (
+    id INTEGER PRIMARY KEY,         -- TMDB collection id
+    name TEXT NOT NULL,
+    poster_path TEXT, backdrop_path TEXT,
+    poster TEXT,                    -- cached file name in thumbs/
+    updated_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_at INTEGER);
+CREATE TABLE IF NOT EXISTS item_tags (item_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (item_id, tag_id));
+CREATE INDEX IF NOT EXISTS item_tags_tag ON item_tags(tag_id);
+-- 1.4.1: home rows
+CREATE TABLE IF NOT EXISTS movie_recs (tmdb_id INTEGER NOT NULL, rec_id INTEGER NOT NULL, rank INTEGER NOT NULL,
+    PRIMARY KEY (tmdb_id, rec_id));            -- TMDB "recommendations" for a movie (first page)
+CREATE INDEX IF NOT EXISTS movie_recs_rec ON movie_recs(rec_id);
+-- 1.4.3: cast & crew (from the same TMDB details request); photos downloaded on first view
+CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, profile_path TEXT, photo TEXT, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS movie_cast (tmdb_id INTEGER NOT NULL, person_id INTEGER NOT NULL, character TEXT, ord INTEGER NOT NULL,
+    PRIMARY KEY (tmdb_id, person_id));
+CREATE INDEX IF NOT EXISTS movie_cast_person ON movie_cast(person_id);
+CREATE TABLE IF NOT EXISTS movie_crew (tmdb_id INTEGER NOT NULL, person_id INTEGER NOT NULL, job TEXT NOT NULL,
+    PRIMARY KEY (tmdb_id, person_id, job));
+CREATE INDEX IF NOT EXISTS movie_crew_person ON movie_crew(person_id);
+CREATE TABLE IF NOT EXISTS home_pins (row TEXT NOT NULL, item_id INTEGER NOT NULL, mode INTEGER NOT NULL,
+    created_at INTEGER, PRIMARY KEY (row, item_id));   -- admin: mode 1 = always include, -1 = never
+CREATE TABLE IF NOT EXISTS rec_cache (user_id INTEGER NOT NULL, library_id INTEGER NOT NULL, sig TEXT NOT NULL,
+    computed_at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (user_id, library_id));
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    pw_hash TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    must_change_pw INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shares (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,            -- smb | nfs
+    remote TEXT NOT NULL,          -- //host/share  or  host:/export
+    username TEXT, domain TEXT,    -- smb only (password lives in the root-only credentials file)
+    options TEXT,                  -- e.g. vers=3.0
+    mount_point TEXT NOT NULL,
+    last_status TEXT, last_error TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS libraries (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,            -- movies | tv | music | other
+    path TEXT NOT NULL,
+    share_id INTEGER REFERENCES shares(id) ON DELETE SET NULL,
+    scan_interval_h INTEGER NOT NULL DEFAULT 6,
+    last_scan INTEGER, last_scan_result TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS items (
+    id INTEGER PRIMARY KEY,
+    library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    path TEXT NOT NULL UNIQUE,
+    media_type TEXT NOT NULL,      -- video | audio
+    kind TEXT NOT NULL,            -- movie | episode | track | video
+    title TEXT NOT NULL,
+    sort_title TEXT,
+    year INTEGER,
+    show TEXT, season INTEGER, episode INTEGER, episode_title TEXT,
+    artist TEXT, album TEXT, album_artist TEXT, track INTEGER, disc INTEGER, genre TEXT,
+    duration REAL,
+    container TEXT, vcodec TEXT, acodec TEXT, width INTEGER, height INTEGER,
+    bitrate INTEGER, pix_fmt TEXT,
+    audio_streams TEXT, subtitle_streams TEXT, external_subs TEXT,
+    size INTEGER, mtime REAL,
+    thumb TEXT, poster TEXT,
+    added_at INTEGER NOT NULL,
+    probed INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_items_lib ON items(library_id);
+CREATE INDEX IF NOT EXISTS ix_items_show ON items(library_id, show, season, episode);
+CREATE INDEX IF NOT EXISTS ix_items_album ON items(library_id, album_artist, album, disc, track);
+CREATE INDEX IF NOT EXISTS ix_items_added ON items(added_at);
+CREATE TRIGGER IF NOT EXISTS items_drop_tags AFTER DELETE ON items BEGIN DELETE FROM item_tags WHERE item_id=old.id; END;
+CREATE TRIGGER IF NOT EXISTS items_drop_pins AFTER DELETE ON items BEGIN DELETE FROM home_pins WHERE item_id=old.id; END;
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+-- TMDB metadata cache (v1.1)
+CREATE TABLE IF NOT EXISTS metadata (
+    kind TEXT NOT NULL,            -- movie | tv
+    tmdb_id INTEGER NOT NULL,
+    title TEXT, original_title TEXT, year INTEGER,
+    overview TEXT, tagline TEXT, genres TEXT,   -- genres: JSON list of names
+    rating REAL, vote_count INTEGER, runtime INTEGER,
+    poster TEXT, backdrop TEXT,    -- file names in data/thumbs
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, tmdb_id)
+);
+CREATE TABLE IF NOT EXISTS tmdb_episodes (
+    tv_id INTEGER NOT NULL, season INTEGER NOT NULL, episode INTEGER NOT NULL,
+    name TEXT, overview TEXT, still TEXT, still_path TEXT, air_date TEXT, runtime INTEGER, rating REAL,
+    PRIMARY KEY (tv_id, season, episode)
+);
+CREATE TABLE IF NOT EXISTS show_matches (
+    library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    show TEXT NOT NULL,
+    tmdb_id INTEGER,               -- NULL = no match
+    status TEXT NOT NULL,          -- matched | nomatch | manual | unmatched (user said: use file names)
+    checked_at INTEGER NOT NULL,
+    PRIMARY KEY (library_id, show)
+);
+CREATE TABLE IF NOT EXISTS keyframes (
+    item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+    mtime REAL, data TEXT          -- JSON list of segment boundary times (seconds), or "null" = not remuxable
+);
+CREATE TABLE IF NOT EXISTS progress (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position REAL NOT NULL DEFAULT 0,
+    duration REAL,
+    watched INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, item_id)
+);
+"""
+
+_local = threading.local()
+
+
+def connect():
+    conn = sqlite3.connect(str(config.DB_PATH), timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
+
+
+def get():
+    c = getattr(_local, "conn", None)
+    if c is None:
+        c = connect()
+        _local.conn = c
+    return c
+
+
+@contextmanager
+def tx():
+    c = get()
+    try:
+        yield c
+        c.commit()
+    except Exception:
+        c.rollback()
+        raise
+
+
+# columns added after v1.0: (table, column, type)
+ADDED_COLUMNS = [
+    ("items", "tmdb_id", "INTEGER"),          # movies: matched TMDB movie id
+    ("items", "meta_status", "TEXT"),         # movies: matched | nomatch | manual | unmatched
+    ("items", "meta_checked_at", "INTEGER"),
+    # 1.3
+    ("items", "edition", "TEXT"),             # "Director's Cut", "Extended", ... (from the file name)
+    ("items", "file_title", "TEXT"),          # title as parsed from the file name (before edition stripping)
+    ("items", "meta_confidence", "REAL"),     # 0..1 for automatic matches
+    ("items", "meta_note", "TEXT"),           # why a match needs review / how it was found
+    ("items", "meta_candidate", "INTEGER"),   # TMDB id suggested for review (not applied)
+    ("metadata", "release_date", "TEXT"),
+    ("metadata", "imdb_id", "TEXT"),
+    ("metadata", "poster_path", "TEXT"),      # TMDB image paths (for full-size artwork saved to folders)
+    ("metadata", "backdrop_path", "TEXT"),
+    ("metadata", "extra", "TEXT"),            # JSON: countries, studios, collection, original language
+    ("shares", "allow_write", "INTEGER DEFAULT 0"),
+    ("libraries", "art_write", "INTEGER DEFAULT 0"),
+    ("libraries", "art_fanart", "INTEGER DEFAULT 0"),
+    ("libraries", "art_nfo", "INTEGER DEFAULT 0"),
+    ("libraries", "art_overwrite", "INTEGER DEFAULT 0"),
+    # 1.4: categories (collection / franchise, age rating; cat_v = version of the category fields fetched)
+    ("metadata", "collection_id", "INTEGER"),
+    ("metadata", "collection_name", "TEXT"),
+    ("metadata", "certification", "TEXT"),
+    ("metadata", "cat_v", "INTEGER"),
+]
+
+
+def migrate():
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    c = connect()
+    try:
+        c.execute("PRAGMA journal_mode=WAL")
+        c.executescript(SCHEMA)
+        for table, col, typ in ADDED_COLUMNS:
+            have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}
+            if col not in have:
+                c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, typ))
+        old = c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        if old and int(old[0]) < 3:
+            _upgrade_3(c)
+        if old and int(old[0]) < 4:
+            _upgrade_4(c)
+        c.execute("CREATE INDEX IF NOT EXISTS metadata_collection ON metadata(collection_id)")
+        c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
+        c.commit()
+    finally:
+        c.close()
+
+
+def _upgrade_4(c):
+    """1.4: genre index from the genres already cached (no TMDB calls). Collections and age ratings are
+    filled in by the background category pass (tmdb.CAT_VERSION)."""
+    import json
+    for tid, g in c.execute("SELECT tmdb_id, genres FROM metadata WHERE kind='movie' AND genres IS NOT NULL").fetchall():
+        try:
+            names = [x for x in json.loads(g or "[]") if isinstance(x, str) and x.strip()]
+        except ValueError:
+            continue
+        for n in names:
+            c.execute("INSERT OR IGNORE INTO movie_genres(tmdb_id, genre) VALUES(?,?)", (tid, n.strip()))
+
+
+def _upgrade_3(c):
+    """1.3: split edition words off existing movie titles; sort matched movies by their TMDB title."""
+    from . import media
+    for iid, title in c.execute("SELECT id, title FROM items WHERE kind='movie'").fetchall():
+        t, ed = media.split_edition(title or "")
+        if ed and t:
+            c.execute("UPDATE items SET file_title=?, title=?, edition=?, sort_title=? WHERE id=?", (title, t, ed, media.sort_key(t), iid))
+            # titles that only failed because of the edition words get another automatic try
+            c.execute("UPDATE items SET meta_status=NULL WHERE id=? AND meta_status='nomatch'", (iid,))
+    c.execute("UPDATE items SET sort_title=(SELECT lower(m.title) FROM metadata m WHERE m.kind='movie' "
+              "AND m.tmdb_id=items.tmdb_id) WHERE kind='movie' AND tmdb_id IS NOT NULL AND "
+              "meta_status IN ('matched','manual') AND EXISTS(SELECT 1 FROM metadata m WHERE m.kind='movie' "
+              "AND m.tmdb_id=items.tmdb_id AND m.title IS NOT NULL)")
+    for iid, st in c.execute("SELECT id, sort_title FROM items WHERE kind='movie' AND tmdb_id IS NOT NULL").fetchall():
+        c.execute("UPDATE items SET sort_title=? WHERE id=?", (media.sort_key(st or ""), iid))
+
+
+def rows(sql, args=()):
+    return [dict(r) for r in get().execute(sql, args).fetchall()]
+
+
+def row(sql, args=()):
+    r = get().execute(sql, args).fetchone()
+    return dict(r) if r else None

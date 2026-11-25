@@ -1,0 +1,4 @@
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <!-- deep purple to near black, like the Movinite logo's background -->
+    <gradient android:angle="270" android:startColor="#1A0C2E" android:endColor="#06030C" />
+</shape>

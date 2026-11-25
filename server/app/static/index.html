@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Movinite</title>
+<meta name="theme-color" content="#0b0612">
+<meta name="application-name" content="Movinite">
+<meta name="apple-mobile-web-app-title" content="Movinite">
+<link rel="icon" href="/static/favicon.ico" sizes="48x48">
+<link rel="icon" href="/static/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="/static/favicon-16.png" type="image/png" sizes="16x16">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="stylesheet" href="/static/style.css?v=1.2.1">
+</head>
+<body>
+<div id="auth" class="auth hidden"></div>
+<div id="shell" class="shell hidden">
+  <aside class="side" id="side">
+    <a class="brand" href="#/home" aria-label="Movinite home"><img class="brand-logo" src="/static/logo-bar.png" alt="Movinite" width="190" height="30"></a>
+    <nav>
+      <a href="#/home" data-nav="home">&#8962; Home</a>
+      <div class="navhead">Libraries</div>
+      <div id="navlibs"></div>
+      <div class="navhead">Manage</div>
+      <a href="#/settings" data-nav="settings">&#9881; Settings</a>
+    </nav>
+    <div class="side-foot"><span id="whoami"></span> &middot; <a href="#" id="logout">Sign out</a><div class="ver" id="ver"></div></div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <button class="iconbtn menu" id="menubtn" title="Menu">&#9776;</button>
+      <a class="top-brand" href="#/home" aria-label="Movinite home"><img src="/static/logo-mark.png" alt="" width="40" height="26"></a>
+      <input id="search" type="search" placeholder="Search movies, shows, music..." autocomplete="off">
+      <div id="activity" class="activity hidden" role="status" aria-live="polite"></div>
+      <button class="iconbtn snd-btn" id="sndbtn" type="button" aria-pressed="true" aria-label="Interface sounds" title="Interface sounds"></button>
+      <!-- 1.5.1: phone top bar (search icon + account avatar); hidden on wide screens -->
+      <button class="iconbtn m-ico" id="m-search" type="button" aria-label="Search" title="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M15.5 15.5L21 21" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
+      <div id="sysstat" class="sysstat hidden"><button class="ss-pill" id="ss-pill" type="button" aria-haspopup="true" aria-expanded="false" title="Server status"></button><div class="ss-panel hidden" id="ss-panel" role="dialog" aria-label="Server status"></div></div>
+      <div class="acct-w"><button class="avatar" id="m-avatar" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Account" title="Account"></button>
+        <div class="acct-menu hidden" id="acct-menu" role="menu" aria-label="Account">
+          <div class="acct-who"><span class="avatar big" id="acct-ini"></span><div><b id="acct-name"></b><div class="muted" id="acct-role"></div></div></div>
+          <a role="menuitem" href="#/settings/account" id="acct-account">My account</a>
+          <a role="menuitem" href="#/settings" id="acct-settings">Settings</a>
+          <button role="menuitem" type="button" id="acct-sound">Interface sounds: on</button>
+          <button role="menuitem" type="button" id="acct-logout" class="danger-t">Sign out</button>
+          <div class="acct-ver muted" id="acct-ver"></div>
+        </div></div>
+    </header>
+    <main id="view"></main>
+    <!-- 1.5.1: phone bottom tab bar (replaces the menu button on phones) -->
+    <nav class="tabbar" id="tabbar" aria-label="Main">
+      <a href="#/home" data-tab="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10.5L12 3.5l8.5 7V20a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></svg><span>Home</span></a>
+      <a href="#/libraries" data-tab="libraries"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M10 4v16M15 4.5l4.5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>Libraries</span></a>
+      <a href="#/search" data-tab="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5L21 21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg><span>Search</span></a>
+      <a href="#/mylist" data-tab="mylist"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11a1 1 0 0 1 1 1V21l-6.5-4.5L5.5 21V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></svg><span>My List</span></a>
+      <a href="#/settings" data-tab="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 2.8l1.6 2.3 2.7-.7.7 2.7 2.3 1.6-1.2 2.5 1.2 2.5-2.3 1.6-.7 2.7-2.7-.7L12 21.2l-1.6-2.3-2.7.7-.7-2.7-2.3-1.6L5.9 12 4.7 9.5 7 7.9l.7-2.7 2.7.7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span id="tab-set-l">Settings</span></a>
+    </nav>
+  </div>
+</div>
+
+<div id="pip-chip" class="pip-chip hidden" role="status"><span class="dot"></span><span id="pip-chip-t">Playing in picture-in-picture</span><button class="btn small" id="pip-chip-back" type="button">Back to player</button><button class="iconbtn" id="pip-chip-close" type="button" title="Stop and close" aria-label="Stop and close">&#10005;</button></div>
+<div id="player" class="player hidden">
+  <div class="pl-top">
+    <button class="iconbtn" id="pl-close" title="Close (Esc)" aria-label="Close">&#10005;</button>
+    <div class="pl-title" id="pl-title"></div>
+    <!-- 1.4.13: the pickers live in the bottom bar (Quality / Subtitles / Audio buttons); these hidden selects keep the state -->
+    <div class="pl-opts" hidden>
+      <select id="pl-quality" title="Quality" tabindex="-1"></select>
+      <select id="pl-audio" title="Audio track" tabindex="-1"></select>
+      <select id="pl-subs" title="Subtitles" tabindex="-1"></select>
+    </div>
+  </div>
+  <div class="pl-stage" id="pl-stage">
+    <video id="video" playsinline controlslist="nofullscreen nodownload"></video>
+    <!-- 1.4.11: tap the picture to show / hide the big buttons; double-tap the left / right side to skip -->
+    <div class="pl-tap" id="pl-tap" aria-hidden="true"></div>
+    <div class="pl-ov" id="pl-ov">
+      <div class="pl-ctr">
+        <button class="pl-big" id="pl-back" type="button" title="Back 10 seconds (Left arrow)" aria-label="Back 10 seconds"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" d="M10.5 24a13.5 13.5 0 1 0 4-9.6"/><path fill="currentColor" d="M8 8.5v10h10z"/></svg><span>10</span></button>
+        <button class="pl-big pl-pp" id="pl-pp" type="button" title="Play / Pause (Space)" aria-label="Pause"><svg class="i-pause" viewBox="0 0 48 48" aria-hidden="true"><path fill="currentColor" d="M15 11h6v26h-6zM27 11h6v26h-6z"/></svg><svg class="i-play" viewBox="0 0 48 48" aria-hidden="true"><path fill="currentColor" d="M17 10.5v27l21-13.5z"/></svg></button>
+        <button class="pl-big" id="pl-fwd" type="button" title="Forward 10 seconds (Right arrow)" aria-label="Forward 10 seconds"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" d="M37.5 24a13.5 13.5 0 1 1-4-9.6"/><path fill="currentColor" d="M40 8.5v10H30z"/></svg><span>10</span></button>
+      </div>
+    </div>
+    <div class="pl-ss hidden" id="pl-ss" aria-live="off"></div>
+    <div class="pl-hint hidden" id="pl-hint" role="status"></div>
+    <div class="pl-rip left" id="pl-rip-l" aria-hidden="true"><b></b></div>
+    <div class="pl-rip right" id="pl-rip-r" aria-hidden="true"><b></b></div>
+    <div class="pl-status" id="pl-status"></div>
+    <!-- 1.4.13: our own see-through control bar (replaces the browser's): seek, time, play, skip, volume, then Quality, Subtitles, Audio, PiP, Full screen -->
+    <div class="pl-bar" id="pl-bar">
+      <div class="pl-seek" id="pl-seek" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <div class="pl-rail"><div class="pl-buf" id="pl-buf"></div><div class="pl-prog" id="pl-prog"></div></div>
+        <div class="pl-knob" id="pl-knob"></div>
+        <div class="pl-tip hidden" id="pl-tip">0:00</div>
+      </div>
+      <div class="pl-row">
+        <button class="pl-cb pl-bplay" id="pl-bplay" type="button" title="Play / Pause (Space)" aria-label="Pause"><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg></button>
+        <button class="pl-cb pl-wide-only" id="pl-bback" type="button" title="Back 10 seconds (Left arrow)" aria-label="Back 10 seconds"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5.5 12a6.5 6.5 0 1 0 2-4.7"/><path fill="currentColor" d="M4 3.5v5.5h5.5z"/></svg><span class="n">10</span></button>
+        <button class="pl-cb pl-wide-only" id="pl-bfwd" type="button" title="Forward 10 seconds (Right arrow)" aria-label="Forward 10 seconds"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M18.5 12a6.5 6.5 0 1 1-2-4.7"/><path fill="currentColor" d="M20 3.5v5.5h-5.5z"/></svg><span class="n">10</span></button>
+        <div class="pl-volw">
+          <button class="pl-cb" id="pl-mute" type="button" title="Mute (M)" aria-label="Mute"><svg class="i-vol" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 9.2a4 4 0 0 1 0 5.6M18.6 6.6a7.6 7.6 0 0 1 0 10.8"/></svg><svg class="i-muted" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></svg></button>
+          <input type="range" class="pl-vol" id="pl-vol" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+        </div>
+        <span class="pl-time" id="pl-time">0:00 / 0:00</span>
+        <span class="pl-sp"></span>
+        <button class="pl-cb pl-lbl hidden" id="pl-next" type="button" title="Next episode">Next &#9654;</button>
+        <button class="pl-cb pl-lbl" id="pl-bq" type="button" title="Quality and speed" aria-label="Quality and speed" aria-haspopup="menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg><span class="t" id="pl-bq-t">Original</span></button>
+        <button class="pl-cb" id="pl-bcc" type="button" title="Subtitles" aria-label="Subtitles" aria-haspopup="menu"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path fill="currentColor" d="M10.6 10.3a2.2 2.2 0 1 0 0 3.4l1 1.1a3.7 3.7 0 1 1 0-5.6zm6.5 0a2.2 2.2 0 1 0 0 3.4l1 1.1a3.7 3.7 0 1 1 0-5.6z"/></svg></button>
+        <button class="pl-cb hidden" id="pl-baud" type="button" title="Audio track" aria-label="Audio track" aria-haspopup="menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a8 8 0 0 0-8 8v6a3 3 0 0 0 3 3h1v-8H6v-1a6 6 0 0 1 12 0v1h-2v8h1a3 3 0 0 0 3-3v-6a8 8 0 0 0-8-8z"/></svg></button>
+        <button class="pl-cb pl-pip hidden" id="pl-pip" type="button" title="Picture in picture (P)" aria-label="Picture in picture"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v10h16V7H4zm8 4h7v5h-7v-5z"/></svg></button>
+        <button class="pl-cb pl-fsbtn" id="pl-fs" type="button" title="Full screen (F)" aria-label="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 5h5v2H7v3H5V5zm9 0h5v5h-2V7h-3V5zM5 14h2v3h3v2H5v-5zm12 3v-3h2v5h-5v-2h3z"/></svg></button>
+      </div>
+    </div>
+    <div class="pl-pop hidden" id="pl-pop" role="menu" aria-label="Options"></div>
+  </div>
+</div>
+
+<div id="audiobar" class="audiobar hidden">
+  <img id="ab-art" alt="">
+  <div class="ab-meta"><div id="ab-title"></div><div id="ab-sub" class="muted"></div></div>
+  <div class="ab-ctl">
+    <button class="iconbtn" id="ab-prev" title="Previous">&#9198;</button>
+    <button class="iconbtn" id="ab-play" title="Play/Pause">&#9654;</button>
+    <button class="iconbtn" id="ab-next" title="Next">&#9197;</button>
+  </div>
+  <div class="ab-seek"><span id="ab-cur">0:00</span><input type="range" id="ab-range" min="0" max="1000" value="0"><span id="ab-dur">0:00</span></div>
+  <input type="range" id="ab-vol" min="0" max="100" value="100" title="Volume">
+  <button class="iconbtn" id="ab-close" title="Stop">&#10005;</button>
+  <audio id="audio" preload="auto"></audio>
+</div>
+
+<div id="modal" class="modal hidden"><div class="modal-box" id="modal-box"></div></div>
+<div id="toast" class="toast hidden"></div>
+<script src="/static/hls.min.js"></script>
+<script src="/static/app.js?v=1.2.1"></script>
+</body>
+</html>

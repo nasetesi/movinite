@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Movinite</string>
+    <string name="server_settings">Server settings</string>
+    <string name="reload">Reload</string>
+    <string name="setup_help_first">Use the address you open Movinite with in a browser, for example https://movies.example.com, or a home-network address such as http://192.0.2.10:8099 (plain http is only allowed for the server you enter here). Tap Test to check it, then Connect and sign in.\n\nYou can change the server later with the gear icon at the top right of the sign-in screen.</string>
+    <string name="setup_help">Enter the address of your Movinite server, for example https://movies.example.com, or a home-network address such as http://192.0.2.10:8099 (plain http is only allowed for the server entered here). You will be asked to sign in to the new server.\n\nOpen this screen again with the gear icon at the top right of the sign-in screen (or long-press the logo, or long-press the app icon and choose Server settings).</string>
+</resources>

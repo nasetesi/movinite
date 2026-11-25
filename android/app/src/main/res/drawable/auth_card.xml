@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.5: the web .auth-box: rgba(18,14,26,.82), 1px rgba(acc,.22) border, 14px corners -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#D1120E1A" /><corners android:radius="14dp" /><stroke android:width="1dp" android:color="#389637FA" />
+</shape>

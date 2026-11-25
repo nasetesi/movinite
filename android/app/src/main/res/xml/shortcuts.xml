@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="server" android:enabled="true" android:icon="@drawable/ic_shortcut_settings"
+        android:shortcutShortLabel="@string/server_settings" android:shortcutLongLabel="@string/server_settings">
+        <intent android:action="org.movinite.app.SERVER_SETTINGS"
+            android:targetPackage="org.movinite.app" android:targetClass="org.movinite.app.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="reload" android:enabled="true" android:icon="@drawable/ic_shortcut_reload"
+        android:shortcutShortLabel="@string/reload" android:shortcutLongLabel="@string/reload">
+        <intent android:action="org.movinite.app.RELOAD"
+            android:targetPackage="org.movinite.app" android:targetClass="org.movinite.app.MainActivity" />
+    </shortcut>
+</shortcuts>

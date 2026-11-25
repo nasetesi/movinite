@@ -1,0 +1,46 @@
+plugins { id 'com.android.application' }
+
+// Release signing: keystore.properties (storeFile, storePassword, keyAlias, keyPassword).
+// Path comes from -PkeystoreProps=... or the KEYSTORE_PROPS env var (build-apk.sh sets it); never commit the passwords.
+def ksPropsPath = project.findProperty('keystoreProps') ?: System.getenv('KEYSTORE_PROPS')
+def ksProps = new Properties()
+if (ksPropsPath && file(ksPropsPath).exists()) { file(ksPropsPath).withInputStream { ksProps.load(it) } }
+// CI (GitHub Actions): the same four values can come from environment variables instead of a file.
+['storeFile': 'MOVINITE_KEYSTORE_FILE', 'storePassword': 'MOVINITE_KEYSTORE_PASSWORD',
+ 'keyAlias': 'MOVINITE_KEY_ALIAS', 'keyPassword': 'MOVINITE_KEY_PASSWORD'].each { k, env ->
+    if (!ksProps[k] && System.getenv(env)) ksProps[k] = System.getenv(env)
+}
+
+android {
+    namespace 'org.movinite.app'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'org.movinite.app'
+        minSdk 24
+        targetSdk 34
+        versionCode 7
+        versionName '1.6'
+    }
+    signingConfigs {
+        release {
+            if (ksProps['storeFile']) {
+                def sf = new File(ksProps['storeFile'])
+                storeFile (sf.isAbsolute() || !ksPropsPath) ? sf : new File(file(ksPropsPath).parentFile, ksProps['storeFile'])
+                storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']
+                keyPassword ksProps['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig ksProps['storeFile'] ? signingConfigs.release : null
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { abortOnError false; checkReleaseBuilds false }
+}

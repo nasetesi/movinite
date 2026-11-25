@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.5: laid out like the web sign-in page: purple glow on near-black, one translucent card with the full
+     Movinite logo (mark + MOVINITE wordmark) on top, "Sign in to continue", the two fields and a full-width purple button. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/login_root" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@drawable/login_bg">
+<ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
+        android:gravity="center" android:paddingLeft="20dp" android:paddingRight="20dp" android:paddingTop="56dp" android:paddingBottom="32dp">
+
+        <LinearLayout android:id="@+id/card" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:background="@drawable/auth_card" android:paddingLeft="24dp" android:paddingRight="24dp"
+            android:paddingTop="28dp" android:paddingBottom="28dp">
+            <!-- the same full logo as the web page (long-press: Server settings, the older shortcut) -->
+            <ImageView android:id="@+id/logo" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal"
+                android:maxWidth="300dp" android:adjustViewBounds="true" android:scaleType="fitCenter" android:src="@drawable/logo_full"
+                android:contentDescription="@string/app_name" android:longClickable="true" />
+            <TextView android:id="@+id/subtitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp"
+                android:gravity="center" android:text="Sign in to continue" android:textColor="@color/muted" android:textSize="14sp" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="Username"
+                android:textColor="@color/muted" android:textSize="13sp" />
+            <EditText android:id="@+id/username" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="6dp"
+                android:background="@drawable/auth_input" android:paddingLeft="12dp" android:paddingRight="12dp" android:singleLine="true"
+                android:inputType="text|textNoSuggestions" android:imeOptions="actionNext" android:textColor="@color/text"
+                android:textColorHint="@color/muted" android:textSize="16sp" android:autofillHints="username" android:importantForAutofill="yes"
+                android:textCursorDrawable="@null" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="Password"
+                android:textColor="@color/muted" android:textSize="13sp" />
+            <FrameLayout android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="6dp">
+                <EditText android:id="@+id/password" android:layout_width="match_parent" android:layout_height="match_parent"
+                    android:background="@drawable/auth_input" android:paddingLeft="12dp" android:paddingRight="68dp" android:singleLine="true"
+                    android:inputType="textPassword" android:imeOptions="actionDone" android:textColor="@color/text"
+                    android:textColorHint="@color/muted" android:textSize="16sp" android:autofillHints="password" android:importantForAutofill="yes"
+                    android:textCursorDrawable="@null" />
+                <TextView android:id="@+id/show" android:layout_width="60dp" android:layout_height="match_parent" android:layout_gravity="end"
+                    android:gravity="center" android:text="Show" android:textColor="@color/acc_text" android:textSize="14sp"
+                    android:background="?android:attr/selectableItemBackground" android:contentDescription="Show password" />
+            </FrameLayout>
+            <TextView android:id="@+id/error" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                android:minHeight="18dp" android:textColor="@color/bad" android:textSize="14sp" />
+            <FrameLayout android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="6dp">
+                <Button android:id="@+id/signin" android:layout_width="match_parent" android:layout_height="match_parent"
+                    android:text="Sign in" android:textAllCaps="false" android:textSize="16sp" android:textStyle="bold"
+                    android:textColor="#FFFFFF" android:background="@drawable/auth_btn" android:stateListAnimator="@null" />
+                <ProgressBar android:id="@+id/busy" android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center_vertical|end"
+                    android:layout_marginEnd="14dp" android:indeterminateTint="#FFFFFF" android:visibility="gone" android:elevation="4dp" />
+            </FrameLayout>
+        </LinearLayout>
+        <TextView android:id="@+id/server_line" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="20dp"
+            android:gravity="center" android:textColor="@color/muted" android:textSize="12sp" android:alpha="0.7" />
+    </LinearLayout>
+</ScrollView>
+    <!-- top-right gear: Server settings (status-bar inset added in code) -->
+    <ImageButton android:id="@+id/gear" android:layout_width="48dp" android:layout_height="48dp" android:layout_gravity="top|end"
+        android:layout_marginTop="8dp" android:layout_marginEnd="8dp" android:src="@drawable/ic_gear" android:scaleType="center"
+        android:background="@drawable/icon_btn" android:contentDescription="@string/server_settings" android:tooltipText="@string/server_settings" />
+</FrameLayout>
