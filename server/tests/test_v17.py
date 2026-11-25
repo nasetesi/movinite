@@ -213,7 +213,7 @@ def main():
     check('data-gup="' in js and "data-renshare" in js and "/api/shares/${s.id}/name" in js, "settings: move a share's group, rename its heading")
     check("src.dataset.grp !== tr.dataset.grp" in js, "drag and drop stays inside a group")
     check("function resBadge(" in js and ".rbadge" in css, "resolution badge on posters")
-    check('id="ver-sel"' in js and "function pickVersion(" in js and "playItem(id, 0, { exact })" in js, "version picker + version choice")
+    check('id="ver-sel"' in js and "function pickVersion(" in js and "playItem(id, 0, { exact" in js, "version picker + version choice")
     check("it.offline && it.fallback" in js, "offline share: plays the online copy")
     check('"4K" : w >= 2400 || h >= 1300 ? "2K"' in js, "2K in resName")
     check(tuple(int(x) for x in __version__.split(".")) >= (1, 7), "version is 1.7 or later")

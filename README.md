@@ -18,6 +18,7 @@ On servers with a supported video card, transcoding can run on the GPU.
 | **Add to a playlist** | **Phone libraries** |
 | ![Playlists](docs/screenshots/web-playlists.png) | ![Phone libraries](docs/screenshots/phone-libraries.png) |
 | ![Quality auto-capped to 1080p on a 1920×1200 tablet](docs/screenshots/tablet-player-quality-capped-1080p.png) | ![Settings: cap quality to this screen](docs/screenshots/web-settings-quality-cap.png) |
+| ![Settings: transcoding and opening-clip cache](docs/screenshots/web-settings-transcoding.png) | ![Opening-clip cache size](docs/screenshots/web-settings-opening-clip-cache.png) |
 
 <p>
 <img src="docs/screenshots/phone-home.png" width="200" alt="Phone home">

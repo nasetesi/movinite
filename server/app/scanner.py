@@ -361,6 +361,12 @@ def _finish(lib, st, state, error):
             log.exception("folder art")
     if state in ("done", "cancelled") and lib["kind"] in ("movies", "tv"):
         _kick_tmdb(lib["id"])
+    if state == "done" and lib["kind"] in ("movies", "tv", "other"):
+        try:
+            from . import preload
+            preload.enqueue_library(lib["id"])
+        except Exception:
+            log.exception("preload enqueue")
 
 
 def build_item(lib, root: Path, path: Path, size, mtime):
@@ -434,7 +440,8 @@ def build_item(lib, root: Path, path: Path, size, mtime):
     allowed = {"media_type", "kind", "title", "sort_title", "edition", "file_title", "year", "show", "season", "episode", "episode_title",
                "artist", "album", "album_artist", "track", "disc", "genre", "duration", "container", "vcodec",
                "acodec", "width", "height", "bitrate", "pix_fmt", "audio_streams", "subtitle_streams",
-               "external_subs", "size", "mtime", "thumb", "poster", "probed", "art_poster", "art_tmdb"}
+               "external_subs", "size", "mtime", "thumb", "poster", "probed", "art_poster", "art_tmdb",
+               "rotation", "color_transfer"}
     return {k: v for k, v in info.items() if k in allowed}
 
 

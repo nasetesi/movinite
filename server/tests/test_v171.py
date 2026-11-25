@@ -94,7 +94,7 @@ def main():
     tmdb.enrich([db.row("SELECT * FROM items WHERE id=11")])
     decoy = tmdb.cached("movie", 1099)
     check(decoy and decoy["poster"] and (config.THUMB_DIR / decoy["poster"]).is_file(), "decoy poster is cached")
-    before = server.item_detail(11, U)
+    before = server.item_detail(11, u=U)
     check(before["tmdb_id"] == 1099 and before["poster"] == decoy["poster"],
           "before: details page shows the (wrong) decoy poster")
     check(before.get("needs_review"), "before: flagged as needs review")
@@ -103,7 +103,7 @@ def main():
 
     r = server.match_item(11, {"tmdb_id": 1002}, U)
     check(r.get("ok") and r.get("matched"), "Fix match to TMDB 1002 succeeded")
-    after = server.item_detail(11, U)
+    after = server.item_detail(11, u=U)
     right = tmdb.cached("movie", 1002)
     check(right and right["poster"] and right["poster"] != decoy["poster"],
           "the correct film has a different cached poster file")
@@ -122,7 +122,7 @@ def main():
           "4K, 1080p and both copies on the other share now match 1002")
     check(rows[31]["tmdb_id"] is None and rows[31]["meta_status"] == "review", "the other film is untouched")
     for iid in (12, 21, 22):
-        d = server.item_detail(iid, U)
+        d = server.item_detail(iid, u=U)
         check(d["poster"] == right["poster"] and "?v=%s" % right["poster"] in (d.get("poster_large") or ""),
               "item %d also shows the new poster and a cache-busted large URL" % iid)
 
@@ -131,7 +131,7 @@ def main():
               poster=frame, thumb=frame, candidate=1001)
     r = server.match_item(41, {"accept_candidate": True}, U)
     check(r.get("ok"), "accept_candidate succeeded")
-    accepted = server.item_detail(41, U)
+    accepted = server.item_detail(41, u=U)
     big = tmdb.cached("movie", 1001)
     check(accepted["tmdb_id"] == 1001 and accepted["poster"] == big["poster"] and accepted["poster"] != frame,
           "accepting the suggestion swaps the frame-grab for the TMDB poster")
@@ -140,11 +140,11 @@ def main():
 
     print("a review item with only a frame-grab (no prior TMDB id) gets a poster after Fix match")
     add_movie(1, "Remux Test", 2022, 1280, 720, 51, status="review", poster=frame, thumb=frame)
-    before51 = server.item_detail(51, U)
+    before51 = server.item_detail(51, u=U)
     check(before51.get("poster") == frame and not before51.get("poster_large") and before51.get("tmdb_id") is None,
           "before: review item shows the frame-grab and has no large poster")
     server.match_item(51, {"tmdb_id": 1003}, U)
-    after51 = server.item_detail(51, U)
+    after51 = server.item_detail(51, u=U)
     remux = tmdb.cached("movie", 1003)
     check(after51["poster"] == remux["poster"] and after51.get("poster_large", "").endswith("?v=%s" % remux["poster"]),
           "after: TMDB poster is shown, with a cache-busted large URL")

@@ -134,7 +134,7 @@ def main():
     check('id="plsheet"' in html and ".plsheet{" in css, "add-to-playlist sheet is in the page")
 
     print("schema 8 / API")
-    check("SCHEMA_VERSION = 8" in (HERE.parent / "app/db.py").read_text(), "SCHEMA_VERSION is 8")
+    check(db.SCHEMA_VERSION >= 8, "SCHEMA_VERSION is 8 or later")
     check("/api/playlists" in srv and "playlists.create" in srv, "playlist endpoints are registered")
 
     db.migrate()
@@ -151,7 +151,7 @@ def main():
     a = add_track(1, "First Seed", "6 Pound", "6 Pound", n=1)
     b = add_track(1, "Second Seed", "6 Pound", "6 Pound", n=2)
     ctid = add_track(1, "Other Song", "Solo", "Solo", n=1)
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] == "8", "fresh install is schema 8")
+    check(int(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"]) == db.SCHEMA_VERSION, "fresh install is the current schema")
 
     print("create / list / rename / delete")
     p = server.create_playlist({"name": "  Morning Mix  ", "item_ids": [a, b]}, u=U)
@@ -229,7 +229,7 @@ def main():
     check(bak.is_file(), "schema 7 -> 8 writes media-server.db.pre-schema8")
     mode = stat.S_IMODE(bak.stat().st_mode)
     check(mode == 0o600, "backup mode is 600 (got %o)" % mode)
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] == "8", "migrate stamps schema 8")
+    check(int(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"]) == db.SCHEMA_VERSION, "migrate stamps the current schema")
     check(db.row("SELECT name FROM sqlite_master WHERE type='table' AND name='playlists'"),
           "playlists table exists after upgrade")
     # playlist rows from before the drop are gone (we dropped tables), that's expected
@@ -239,8 +239,8 @@ def main():
     db.migrate()
     check(bak.stat().st_mtime == first_mtime and bak.stat().st_size == first_size,
           "a second migrate does not overwrite the backup")
-    check(int(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"]) == 8,
-          "migrate stays at schema 8")
+    check(int(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"]) == db.SCHEMA_VERSION,
+          "migrate stays at the current schema")
 
     # user rows survive the upgrade path
     check(db.row("SELECT username FROM users WHERE id=1")["username"] == "admin", "users survive the schema 8 upgrade")

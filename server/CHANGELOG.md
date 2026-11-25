@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.9 -- 2026-11-25
+Builds on 1.7.8, plus faster first picture (schema 9):
+- **2-second HLS segments** with matching keyframes, so the first clip is about a third as long to make and to download. ffmpeg only restarts if the player jumps more than 60 seconds past what is already made (was a 4-segment, 24-second window that would have been too tight at 2 seconds). The pause-when-ahead logic now uses 150 and 72 seconds rather than a segment count, so the NAS still gets the same break.
+- **ffmpeg starts when the playlist is requested**, not when the first segment is asked for, so encoding overlaps the player's next request.
+- **Subtitles are cached.** A library scan or a low-priority idle job extracts them once. At play time the player is served from the cache, or gets a "try again in a moment" (HTTP 202) so a full-file extract never races the first video encode on the NAS.
+- **Remux cut points are computed in the background**, in small NAS-friendly chunks. A missing or odd keyframe no longer marks the file as permanently un-remuxable; the plan can be partial and is retried later. Play itself never waits on this probe.
+- **Rotation and HDR colour info are saved at scan time** and reused on play. Opening a movie from its details page reuses the item already loaded, and play is no longer blocked on the decoder probe.
+- **Opening-clip cache.** While the server is idle and nobody is streaming, it pre-makes the first ~6 seconds (three 2-second clips) at 1080p for recently added titles and Continue Watching resume points. Size is capped (Settings → Transcoding, default 2 GB, oldest clips removed first). A matching play copies those clips in and starts ffmpeg after them.
+- **The GPU encoder is warmed** with two black frames after the service starts, so the first movie after a restart is not a cold start.
+- **Versioned app files** (JS, CSS, logos, icons, the manifest) carry long cache headers, and the service worker precaches them. API and HLS responses are not cached.
+
+update.sh still writes a full code+database tarball first. migrate() also writes `data/media-server.db.pre-schema9` (mode 600) before the new tables.
+
 ## 1.7.8 -- 2026-11-25
 Builds on 1.7.7, plus:
 - **Quality is capped to the device.** The player reports the screen's longer side times `devicePixelRatio` (and, when the browser supports it, a `MediaCapabilities` 4K / 2K decode check for HEVC and H.264). The server clamps the chosen or saved quality so a 1920×1200 tablet (for example a Lenovo Tab TB311FU) gets 1080p even if 4K was saved earlier. Direct play and remux are offered only when the file itself fits that cap and the decoder can play it. The quality menu and the player stats show the effective quality, for example "Auto-capped to 1080p". Settings → My account has a "Cap quality to this screen" switch (on by default) if you want to allow a higher quality on this device. The Android app is unchanged: its JS bridge has no MediaCodec list, so the cap uses the screen size and `MediaCapabilities` only.

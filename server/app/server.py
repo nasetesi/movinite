@@ -14,7 +14,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import artwork, auth, browse, folderart, liborder, playlists, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
+from . import artwork, auth, browse, folderart, liborder, playlists, preload, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
 from .version import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -39,6 +39,7 @@ def _startup():
     # 1.5.2: video card scan (first start without a setting: scan, test, save; Auto: pick the card)
     threading.Thread(target=hwaccel.warm_up, daemon=True, name="hw-detect").start()
     folderart.start_backfill(lambda: _stop)    # 1.7.3
+    preload.start_loop(lambda: _stop)          # 1.7.9: subtitle / remux / opening-clip caches
     log.info("Movinite (media-server) v%s started; data in %s", __version__, config.DATA_DIR)
 
 
@@ -1466,6 +1467,7 @@ def playback_info(it, cap=None):
             remux, remux_codec, direct, maybe = False, "", False, False
     return {"direct": direct, "direct_maybe": maybe, "remux": remux, "remux_codec": remux_codec,
             "mime": MIME.get(ext, "application/octet-stream"),
+            "seg": transcode.SEG,
             "profiles": profiles, "hires": hires, "hires_off": hires_off, "hdr": hdr,
             "hires_kbps": {p: {"h264": transcode.video_kbps(it, p), "hevc": transcode.video_kbps(it, p, True)} for p in hires},   # 1.5.4: real maxrate
             "audio_streams": auds, "subtitles": subtitle_tracks,
@@ -1849,8 +1851,15 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
             raise HTTPException(409, "This file cannot be remuxed; use a transcode quality")
     need_init = transcode.split_profile(profile)[1] == "hevc" or (profile == "remux" and transcode.remux_codec(it) == "hevc")
     init = ("init.mp4" + _player_query(audio, player, max(0, start))) if need_init else None
+    # 1.7.9: start ffmpeg as soon as the playlist is requested, so the first segment overlaps the player's next RTT
+    if profile != "audio":
+        try:
+            s = transcode.get_session(it, profile, max(0, audio), u["id"], player)
+            transcode.kickoff(s, max(0, start))
+        except ValueError:
+            pass
     return PlainTextResponse(transcode.playlist(it, _player_query(audio, player), bounds, init), media_type="application/vnd.apple.mpegurl",
-                             headers={"Cache-Control": "no-cache"})
+                             headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0):
@@ -1879,7 +1888,7 @@ def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player:
     p = s.get_init(max(0, start))
     if not p:
         raise HTTPException(500, "Transcode failed" + (": " + s.failed if s.failed else ""))
-    return Response(p.read_bytes(), media_type="video/mp4", headers={"Cache-Control": "private, max-age=3600"})
+    return Response(p.read_bytes(), media_type="video/mp4", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.m4s")
@@ -1905,7 +1914,7 @@ def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(au
         data = p.read_bytes()
     except FileNotFoundError:
         raise HTTPException(503, "Segment expired, retry")
-    return Response(data, media_type="video/iso.segment" if s.hevc else "video/mp2t", headers={"Cache-Control": "private, max-age=3600"})
+    return Response(data, media_type="video/iso.segment" if s.hevc else "video/mp2t", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 @app.post("/api/items/{item_id}/stop")
@@ -1921,26 +1930,30 @@ def stop_stream(item_id: int, player: str = "", u=Depends(auth.require_user)):
 
 @app.get("/api/items/{item_id}/subs/{key}.vtt")
 def subtitles(item_id: int, key: str, u=Depends(auth.require_user)):
+    """1.7.9: serve a cached VTT when we have one. Otherwise enqueue a low-priority extract
+    and return 202 so this request never races the first video encode on the NAS."""
     it = _get_item(item_id)
-    if re.match(r"^e\d+$", key):
-        ext_subs = json.loads(it["external_subs"] or "[]")
-        i = int(key[1:])
-        if i >= len(ext_subs):
-            raise HTTPException(404)
-        src = os.path.join(os.path.dirname(it["path"]), ext_subs[i]["file"])
-        cmd = [config.FFMPEG, "-nostdin", "-loglevel", "error", "-i", src, "-f", "webvtt", "-"]
-    elif re.match(r"^s\d+$", key):
-        cmd = [config.FFMPEG, "-nostdin", "-loglevel", "error", "-i", it["path"], "-map", "0:%d" % int(key[1:]),
-               "-f", "webvtt", "-"]
-    else:
+    if not re.match(r"^[es]\d+$", key):
         raise HTTPException(404)
-    try:
-        p = subprocess.run(cmd, capture_output=True, timeout=180)
-    except subprocess.TimeoutExpired:
-        raise HTTPException(504, "Subtitle extraction timed out")
-    if p.returncode != 0:
-        raise HTTPException(500, "Could not convert subtitles: " + p.stderr.decode(errors="replace")[:300])
-    return Response(p.stdout, media_type="text/vtt", headers={"Cache-Control": "private, max-age=86400"})
+    if key.startswith("e"):
+        ext_subs = json.loads(it["external_subs"] or "[]")
+        if int(key[1:]) >= len(ext_subs):
+            raise HTTPException(404)
+    hit = preload.sub_get(it, key)
+    if hit:
+        return Response(hit.read_bytes(), media_type="text/vtt",
+                        headers={"Cache-Control": "private, max-age=86400"})
+    # Extract now only when it will not race a just-started video encode on the same NAS.
+    if (not preload.busy()) or preload.first_segment_ready(it["id"]):
+        preload.extract_sub(it, key)
+        hit = preload.sub_get(it, key)
+        if hit:
+            return Response(hit.read_bytes(), media_type="text/vtt",
+                            headers={"Cache-Control": "private, max-age=86400"})
+        raise HTTPException(500, "Could not convert subtitles")
+    preload.sub_enqueue(it, key, urgent=True)
+    return Response(b"", status_code=202, media_type="text/vtt",
+                    headers={"Retry-After": "1", "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 # ---------------------------------------------------------------------------
@@ -1955,10 +1968,13 @@ def _mask(key):
 @app.get("/api/settings")
 def get_settings(u=Depends(auth.require_admin)):
     db_key = settings.get("tmdb_key") or ""
+    prefetch = preload.cache_stats()
     return {"tmdb_key_set": bool(settings.tmdb_key()), "tmdb_key_masked": _mask(settings.tmdb_key()),
             "tmdb_key_source": "settings" if db_key else ("env" if config.TMDB_KEY else None),
             "tmdb_language": settings.tmdb_language(), "tmdb_enabled": settings.get("tmdb_enabled", "1") != "0",
-            "status_all_users": settings.get("status_all_users", "0") == "1"}
+            "status_all_users": settings.get("status_all_users", "0") == "1",
+            "prefetch_cache_gb": prefetch["gb"], "prefetch_cache_clips": prefetch["clips"],
+            "prefetch_cache_bytes": prefetch["bytes"]}
 
 
 @app.put("/api/settings")
@@ -1983,6 +1999,11 @@ def put_settings(body: dict = Body(...), u=Depends(auth.require_admin)):
         settings.put("tmdb_enabled", "1" if body.get("tmdb_enabled") else "0")
     if "status_all_users" in body:
         settings.put("status_all_users", "1" if body.get("status_all_users") else "0")
+    if "prefetch_cache_gb" in body:
+        try:
+            preload.set_cache_gb(body.get("prefetch_cache_gb"))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(400, str(e))
     if changed_key or body.get("tmdb_enabled"):
         for lib in db.rows("SELECT id FROM libraries WHERE kind IN ('movies','tv')"):
             tmdb.queue_library(lib["id"])
@@ -2192,10 +2213,16 @@ async def _asset_cache_headers(request: Request, call_next):
     app.js?v=1.6 will revalidate and receive this release's file."""
     resp = await call_next(request)
     path = request.url.path
-    if path.startswith("/static/") and path.endswith((".js", ".css", ".webmanifest")):
+    if path.startswith("/static/") and path.endswith(
+            (".js", ".css", ".webmanifest", ".png", ".svg", ".ico", ".jpg", ".jpeg", ".webp")):
         if request.query_params.get("v") == __version__:
             resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         else:
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+    elif path.startswith("/api/"):
+        # 1.7.9: playback and API are never cached (thumbs already set their own private max-age)
+        if "Cache-Control" not in resp.headers:
             resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             resp.headers["Pragma"] = "no-cache"
     return resp
@@ -2213,7 +2240,8 @@ def _index_response():
     service worker (1.7.2) fetches this page and the JS/CSS from the network, and a meta tag + MS_VERSION
     let a client see the running version."""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    html = re.sub(r'(/static/[A-Za-z0-9_./-]+\.(?:js|css))(\?v=[0-9A-Za-z._-]*)?"', r'\1?v=%s"' % __version__, html)
+    html = re.sub(r'(/static/[A-Za-z0-9_./-]+\.(?:js|css|png|svg|ico|webmanifest|jpg|jpeg|webp))(\?v=[0-9A-Za-z._-]*)?"',
+                  r'\1?v=%s"' % __version__, html)
     boot = ('<meta name="movinite-version" content="%s">\n'
             '<script>window.MS_VERSION=%r;'
             'if("serviceWorker"in navigator){navigator.serviceWorker.register("/sw.js?v=%s")}</script>\n'
@@ -2224,21 +2252,43 @@ def _index_response():
 
 @app.get("/sw.js")
 def service_worker():
-    """1.7.2: a tiny worker that always takes HTML, app.js and style.css from the network, so a phone
-    or the Android WebView cannot keep an old Libraries tab after an update. no-store on this file so
-    the next version is picked up as soon as the page loads."""
+    """1.7.9: precache versioned app assets (long-cache URLs). HTML, API and HLS always come from the network.
+    no-store on this file so the next version is picked up as soon as the page loads."""
+    assets = [
+        "/static/app.js?v=%s" % __version__,
+        "/static/style.css?v=%s" % __version__,
+        "/static/hls.min.js?v=%s" % __version__,
+        "/static/logo-bar.png?v=%s" % __version__,
+        "/static/logo-mark.png?v=%s" % __version__,
+        "/static/manifest.webmanifest?v=%s" % __version__,
+        "/static/icon-192.png?v=%s" % __version__,
+        "/static/favicon-32.png?v=%s" % __version__,
+    ]
     body = (
         "const V=%r;\n"
-        "self.addEventListener('install',e=>self.skipWaiting());\n"
-        "self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\n"
+        "const ASSETS=%s;\n"
+        "const CACHE='movinite-'+V;\n"
+        "self.addEventListener('install',e=>{\n"
+        "  e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting()).catch(()=>self.skipWaiting()));\n"
+        "});\n"
+        "self.addEventListener('activate',e=>{\n"
+        "  e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));\n"
+        "});\n"
         "self.addEventListener('fetch',e=>{\n"
         "  const u=new URL(e.request.url);\n"
-        "  if(e.request.mode==='navigate'||u.pathname==='/'||"
-        "/\\/static\\/(app\\.js|style\\.css)$/.test(u.pathname)||u.pathname==='/sw.js'){\n"
+        "  if(u.origin!==location.origin) return;\n"
+        "  if(u.pathname.startsWith('/api/')||u.pathname==='/sw.js'||e.request.mode==='navigate'||u.pathname==='/'){\n"
         "    e.respondWith(fetch(e.request,{cache:'no-store'}));\n"
+        "    return;\n"
+        "  }\n"
+        "  if(u.pathname.startsWith('/static/')){\n"
+        "    e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(resp=>{\n"
+        "      if(resp.ok && u.searchParams.get('v')===V){const c=resp.clone(); caches.open(CACHE).then(x=>x.put(e.request,c));}\n"
+        "      return resp;\n"
+        "    })));\n"
         "  }\n"
         "});\n"
-    ) % __version__
+    ) % (__version__, json.dumps(assets))
     return Response(body, media_type="text/javascript",
                     headers={**NO_STORE, "Service-Worker-Allowed": "/"})
 

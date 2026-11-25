@@ -168,11 +168,26 @@ def candidates(det=None):
 
 
 # ---------------------------------------------------------------------------------------- ffmpeg arguments
-def rotation(path):
+def rotation(item_or_path):
     """Display rotation of the first video stream in degrees as ffprobe reports it (0, 90, -90, 180 ...).
 
     The CPU path rotates automatically; frames that stay on the GPU do not, so the full GPU stage has
-    to rotate itself (phone videos are usually stored sideways with a -90 display matrix)."""
+    to rotate itself (phone videos are usually stored sideways with a -90 display matrix).
+
+    1.7.9: if an item dict already has a rotation from the library scan, use that and skip ffprobe.
+    """
+    path = item_or_path
+    item = None
+    if isinstance(item_or_path, dict):
+        item = item_or_path
+        if item.get("rotation") not in (None, ""):
+            try:
+                return int(item["rotation"]) % 360
+            except (TypeError, ValueError):
+                pass
+        path = item.get("path")
+    if not path:
+        return 0
     try:
         r = subprocess.run([config.FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
                             "stream_side_data=rotation:stream_tags=rotate", "-of", "csv=p=0", str(path)],
@@ -180,8 +195,14 @@ def rotation(path):
         for tok in re.split(r"[,\s]+", r.stdout):
             if re.fullmatch(r"-?\d+(\.\d+)?", tok or ""):
                 v = int(round(float(tok))) % 360
-                if v:
-                    return v
+                if v and item and item.get("id"):
+                    try:
+                        from . import db
+                        with db.tx() as c:
+                            c.execute("UPDATE items SET rotation=? WHERE id=?", (v, item["id"]))
+                    except Exception:
+                        pass
+                return v
     except Exception:
         pass
     return 0
@@ -457,7 +478,10 @@ def state():
 
 
 def warm_up():
-    """Background at start: first start after an update with no setting yet -> scan + set; else resolve Auto."""
+    """Background at start: first start after an update with no setting yet -> scan + set; else resolve Auto.
+
+    1.7.9: after the card is known, run a tiny VAAPI/NVENC encode so the first real movie is not a cold start.
+    """
     try:
         if not is_set():
             setup(if_unset=True, by="first start of v%s" % _version())
@@ -465,8 +489,38 @@ def warm_up():
             _auto_choice()
         else:
             detect()
+        _warm_encoder()
     except Exception:
         log.exception("hardware detection failed")
+
+
+def _warm_encoder():
+    """Encode two black frames with the active method so the driver and encoder are resident."""
+    m, dev = active()
+    if not m or not dev:
+        return
+    # lavfi -> hwupload keeps this off the NAS and takes well under a second once the driver is up.
+    cmd = [config.FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30:d=0.2"]
+    if m == "vaapi":
+        cmd += ["-vaapi_device", dev, "-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi",
+                "-frames:v", "2", "-f", "null", "-"]
+    elif m == "nvenc":
+        cmd += ["-c:v", "h264_nvenc", "-frames:v", "2", "-f", "null", "-"]
+    elif m == "qsv":
+        cmd += ["-init_hw_device", "qsv=hw:%s" % dev, "-filter_hw_device", "hw",
+                "-vf", "format=nv12,hwupload=extra_hw_frames=16", "-c:v", "h264_qsv",
+                "-frames:v", "2", "-f", "null", "-"]
+    else:
+        return
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=20)
+        if r.returncode == 0:
+            log.info("warmed %s on %s", m, dev)
+        else:
+            log.info("encoder warm-up skipped (%s): %s", m, (r.stderr or b"").decode(errors="replace")[:200])
+    except (subprocess.TimeoutExpired, OSError) as e:
+        log.info("encoder warm-up skipped: %s", e)
 
 
 def _version():

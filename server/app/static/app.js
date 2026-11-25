@@ -1619,7 +1619,7 @@ async function viewItem(id) {
   // 1.7: the page's file is played as-is when the user picked it (not the best version); the best one may step
   // down to a lighter version when this server can't transcode it well (see pickVersion)
   const exact = vers.length > 1 && vers[0].id !== it.id;
-  $("#play").onclick = () => { SFX.play(); playItem(id, 0, { exact }); };
+  $("#play").onclick = () => { SFX.play(); playItem(id, 0, { exact, item: it }); };
   if ($("#ver-sel")) $("#ver-sel").onchange = (e) => { location.hash = "#/item/" + e.target.value; };
   bindMoreMenu();
   if ($("#fileinfo")) $("#fileinfo").onclick = fileInfoDlg;
@@ -1628,7 +1628,7 @@ async function viewItem(id) {
     if (it.kind === "episode") fixMatchDialog("tv", it.show.replace(/\s*\((19|20)\d\d\)\s*$/, ""), null, (b) => api("/api/show/match", { method: "POST", body: { library_id: it.library_id, show: it.show, ...b } }));
     else fixMatchDialog("movie", it.file_title || it.title, it.year, (b) => api(`/api/items/${id}/match`, { method: "POST", body: b }));
   };
-  if ($("#resume")) $("#resume").onclick = () => { SFX.play(); playItem(id, it.position, { exact }); };
+  if ($("#resume")) $("#resume").onclick = () => { SFX.play(); playItem(id, it.position, { exact, item: it }); };
   if ($("#accept-cand")) $("#accept-cand").onclick = async () => { try { await api(`/api/items/${id}/match`, { method: "POST", body: { accept_candidate: true } }); toast("Match accepted"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } };
   if ($("#confirm-match")) $("#confirm-match").onclick = async () => { try { await api(`/api/items/${id}/match`, { method: "POST", body: { tmdb_id: it.tmdb_id } }); toast("Match confirmed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } };
   $("#watched").onclick = async () => { await api(`/api/items/${id}/watched`, { method: "POST", body: { watched: !it.watched } }); route._keepScroll = true; route(); };
@@ -1972,6 +1972,7 @@ function encName(t) {
 async function viewTranscoding(v, head) {
   const tok = route._token;
   let st = await api("/api/hw");
+  let cfg = await api("/api/settings").catch(() => ({}));
   const render = () => {
     const det = st.detect || { cards: [] };
     const cards = det.cards || [];
@@ -2019,11 +2020,25 @@ async function viewTranscoding(v, head) {
       <div class="help" style="margin-top:8px">ffmpeg encoders: ${(det.encoders || []).map(e => esc(e)).join(", ") || "none"}</div></div>
       <div class="panel"><h3 style="margin-top:0">Streams right now</h3>${streams.length ? `<table><tr><th>Title</th><th>Quality</th><th>Encoder</th></tr>${streams.map(t => `<tr><td>${esc(t.title || "")}</td><td>${t.profile}</td><td>${encName(t)}</td></tr>`).join("")}</table>` : `<div class="muted">None</div>`}
       ${lf.at ? `<div class="help hw-last">Last fallback ${ago(lf.at)}: ${HW_LABEL[lf.method] || esc(lf.method)} (${lf.stage === "full" ? "GPU decode" : "GPU encode"}) &rarr; ${lf.stage === "full" ? "CPU decode + GPU encode" : "CPU"}<br><span class="path">${esc(lf.reason || "")}</span></div>` : ""}
-      ${(st.held || []).map(h => `<div class="help" style="color:var(--warn)">${HW_LABEL[h.method]} is paused until ${new Date((h.since + 600) * 1000).toLocaleTimeString()} after it failed. Save or a passing test turns it back on now.</div>`).join("")}</div>`;
+      ${(st.held || []).map(h => `<div class="help" style="color:var(--warn)">${HW_LABEL[h.method]} is paused until ${new Date((h.since + 600) * 1000).toLocaleTimeString()} after it failed. Save or a passing test turns it back on now.</div>`).join("")}</div>
+      <div class="panel"><h3 style="margin-top:0">Opening-clip cache</h3>
+        <p class="help" style="margin-top:0">When the server is idle, it pre-makes the first 6 seconds at 1080p for recently added movies and titles in Continue Watching, so they start almost instantly. Oldest clips are removed first when the cache is full.</p>
+        <div class="form hw-form">
+          <label for="pf-gb">Cache size (GB)</label>
+          <input id="pf-gb" type="number" min="0" max="100" step="0.5" value="${cfg.prefetch_cache_gb != null ? cfg.prefetch_cache_gb : 2}">
+        </div>
+        <div class="help">${cfg.prefetch_cache_clips || 0} clip${(cfg.prefetch_cache_clips||0)===1?"":"s"} using ${((cfg.prefetch_cache_bytes||0)/1048576).toFixed(1)} MB. 0 GB turns this off. Default is 2 GB.</div>
+        <div class="err" id="pf-err"></div>
+        <div class="hw-acts"><button class="btn" id="pf-save">Save cache size</button></div></div>`;
     $("#hw-save").onclick = async () => {
       $("#hw-err").textContent = "";
       try { st = await api("/api/hw", { method: "PUT", body: { mode: $("#hw-mode").value, device: $("#hw-dev").value, max_transcodes: $("#hw-max").value } }); toast("Hardware transcoding: " + HW_LABEL[st.mode]); render(); }
       catch (e) { $("#hw-err").textContent = e.message; }
+    };
+    if ($("#pf-save")) $("#pf-save").onclick = async () => {
+      $("#pf-err").textContent = "";
+      try { cfg = await api("/api/settings", { method: "PUT", body: { prefetch_cache_gb: $("#pf-gb").value } }); toast("Opening-clip cache: " + cfg.prefetch_cache_gb + " GB"); render(); }
+      catch (e) { $("#pf-err").textContent = e.message; }
     };
     $("#hw-scan").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "Scanning..."; try { st = await api("/api/hw/scan", { method: "POST" }); toast("Scan finished"); } catch (er) { toast(er.message, true); } render(); };
     $$("[data-hwtest]").forEach(b => b.onclick = async () => {
@@ -2605,9 +2620,9 @@ function pickVersion(it, opts) {
 
 async function playItem(id, startAt, opts) {
   opts = opts || {};
-  try { await probeDecoders(); } catch (e) {}
+  try { probeDecoders(); } catch (e) {}   // 1.7.9: do not block first open on the decoder probe
   const capQ = itemCapQuery();
-  let it = await api("/api/items/" + id + capQ);
+  let it = (opts.item && opts.item.id === id && opts.item.playback) ? opts.item : await api("/api/items/" + id + capQ);
   if (it.offline && it.fallback) { toast(`Share offline -- playing the copy in ${it.fallback_library || "another library"}`); it = await api("/api/items/" + it.fallback + capQ); id = it.id; }
   else if (it.media_type === "video") {
     const pv = pickVersion(it, opts);
@@ -2711,7 +2726,8 @@ function startStream(mode, at) {
     });
   } else {
     setStatus(modeLabel(mode));
-    const url = `/api/items/${it.id}/hls/${mode}/index.m3u8?audio=${P.audio}&${capQuery()}${mode.endsWith(".hevc") || mode === "remux" ? "&start=" + Math.floor((at || 0) / 6) : ""}`;
+    const seg = (it.playback && it.playback.seg) || 2;
+    const url = `/api/items/${it.id}/hls/${mode}/index.m3u8?audio=${P.audio}&${capQuery()}&start=${Math.floor((at || 0) / seg)}`;
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({ startPosition: at || 0, maxBufferLength: 30, maxMaxBufferLength: 120, fragLoadingTimeOut: 90000, fragLoadingMaxRetry: 4, manifestLoadingTimeOut: 30000, xhrSetup: (xhr) => { xhr.withCredentials = true; } });
       hls.on(Hls.Events.ERROR, (ev, data) => {
@@ -2809,13 +2825,23 @@ function paintCues() {
   el.innerHTML = on.map(c => `<span class="cue">${esc(c.text)}</span>`).join("");
   el.classList.remove("hidden");
 }
+async function fetchVtt(id, key) {
+  // 1.7.9: 202 means the server is extracting in the background — retry instead of blocking the first encode
+  for (let i = 0; i < 24; i++) {
+    const r = await fetch(`/api/items/${id}/subs/${key}.vtt`, { credentials: "same-origin" });
+    if (r.status === 202) { await new Promise(res => setTimeout(res, 400 + i * 200)); continue; }
+    if (!r.ok) throw new Error("sub " + r.status);
+    return r.text();
+  }
+  throw new Error("sub timeout");
+}
 function prefetchSubs(keys) {
   if (!P || !keys || !keys.length) return;
   const id = P.it.id;
   keys.slice(0, 2).forEach(key => {
     const ck = subCacheKey(id, key);
     if (SUB.cache[ck] || !key) return;
-    fetch(`/api/items/${id}/subs/${key}.vtt`, { credentials: "same-origin" }).then(r => r.ok ? r.text() : Promise.reject())
+    fetchVtt(id, key)
       .then(t => { SUB.cache[ck] = parseVtt(t); if (SUB.key === key && P && P.it.id === id) { SUB.cues = SUB.cache[ck]; SUB.waiting = false; paintCues(); } })
       .catch(() => {});
   });
@@ -2831,9 +2857,7 @@ async function addSubTrack(key, opts) {
   if (!opts.keep) { SUB.cues = []; SUB.waiting = true; paintCues(); }
   const gen = ++SUB.gen, id = P.it.id;
   try {
-    const r = await fetch(`/api/items/${id}/subs/${key}.vtt`, { credentials: "same-origin" });
-    if (!r.ok) throw new Error("sub " + r.status);
-    const cues = parseVtt(await r.text());
+    const cues = parseVtt(await fetchVtt(id, key));
     SUB.cache[ck] = cues;
     if (SUB.gen !== gen || !P || P.it.id !== id || SUB.key !== key) return;
     SUB.cues = cues; SUB.waiting = false; paintCues();

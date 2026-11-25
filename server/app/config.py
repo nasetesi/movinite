@@ -36,6 +36,8 @@ DATA_DIR = Path(os.environ.get("MS_DATA_DIR") or (ROOT / "data"))
 DB_PATH = DATA_DIR / "media-server.db"
 THUMB_DIR = DATA_DIR / "thumbs"
 TRANSCODE_DIR = DATA_DIR / "transcode"
+PREFETCH_DIR = DATA_DIR / "prefetch"   # 1.7.9: opening-clip cache (first ~6s at 1080p)
+SUBS_DIR = DATA_DIR / "subs"           # 1.7.9: extracted WebVTT cache
 SHARES_DIR = Path(os.environ.get("MS_SHARES_DIR") or "/srv/media-server/shares")
 PORT = _int("MS_PORT", 8099)
 MAX_TRANSCODES = _int("MS_MAX_TRANSCODES", 4)  # 1.7.7: same login may use several devices; this is the server-wide cap
@@ -53,7 +55,7 @@ TMDB_WORKERS = int(os.environ.get("MS_TMDB_WORKERS") or 4)
 FFMPEG = os.environ.get("MS_FFMPEG") or "ffmpeg"
 FFPROBE = os.environ.get("MS_FFPROBE") or "ffprobe"
 
-for d in (DATA_DIR, THUMB_DIR, TRANSCODE_DIR):
+for d in (DATA_DIR, THUMB_DIR, TRANSCODE_DIR, PREFETCH_DIR, SUBS_DIR):
     try:
         d.mkdir(parents=True, exist_ok=True)
     except OSError:
