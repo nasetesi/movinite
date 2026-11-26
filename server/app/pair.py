@@ -22,7 +22,8 @@ START_LIMIT = 10         # new codes per IP per window (2.1.1)
 START_WINDOW = 10 * 60
 APPROVE_LIMIT = 20
 APPROVE_WINDOW = 10 * 60
-POLL_LIMIT = 90
+POLL_LIMIT = 400       # per code + real client IP per window (10 min at 3s = 200, plus headroom)
+POLL_IP_LIMIT = 800    # coarse cap per IP so random tokens can't open unlimited buckets
 POLL_WINDOW = 10 * 60
 
 _hits: dict = {}
@@ -129,12 +130,17 @@ def start(request, base_url: str = "", force: bool = False) -> dict:
 def poll(request, token: str) -> dict:
     """TV: wait for approval. When approved, a session cookie is set (caller should pass the Response)."""
     ip = netutil.client_ip(request)
-    if not _allowed("poll", ip, POLL_LIMIT, POLL_WINDOW):
+    token = token or ""
+    # 2.1.3: one generous bucket per code (poll token) + real client IP, plus a coarser
+    # per-IP cap. Password sign-in is not rate-limited here.
+    ph = _hash("poll", token) if len(token) >= 16 else "notoken"
+    if not _allowed("pollip", ip, POLL_IP_LIMIT, POLL_WINDOW):
+        raise HTTPException(429, "Too many checks; wait a moment")
+    if not _allowed("poll", "%s:%s" % (ip or "?", ph), POLL_LIMIT, POLL_WINDOW):
         raise HTTPException(429, "Too many checks; wait a moment")
     if not token or len(token) < 16:
         raise HTTPException(400, "Missing sign-in token")
     now = int(time.time())
-    ph = _hash("poll", token)
     with db.tx() as c:
         _cleanup(c, now)
         row = c.execute("SELECT * FROM pair_codes WHERE poll_hash=?", (ph,)).fetchone()

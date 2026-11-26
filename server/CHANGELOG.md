@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.3 -- 2026-11-26
+Builds on 2.1.2 (schema stays 12; no database upgrade).
+
+- **The TV no longer hits "Too many checks; wait a moment" while waiting for a phone approval.** In 2.1.2 the television asked the server every 1.5 seconds whether the code had been approved, but the server only allowed 90 checks per address in 10 minutes — not enough for a 10-minute code (about two minutes of waiting tripped the limit). On a 429 the TV also showed that error and kept checking just as often. 2.1.3 checks about every 3 seconds, slows down further if the server asks it to wait, and does not show that error on the sign-in screen.
+- **The check limit is now per code and real client address**, and is large enough for a full 10-minute code (400 checks per code+address in 10 minutes, with a separate coarser cap per address). The real client address behind a trusted proxy is still used (CF-Connecting-IP, then X-Real-IP, then X-Forwarded-For).
+- **Sign in with a username and password stays available.** Opening the password form stops the approval checks, so a "too many checks" message can no longer appear on (or block) the password screen. Password sign-in is not part of the check limit.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update.
+
+
 ## 2.1.2 -- 2026-11-26
 Builds on 2.1.1 (schema stays 12; no database upgrade).
 
