@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from . import config
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 -- 1.4: categories
@@ -188,6 +188,69 @@ CREATE TABLE IF NOT EXISTS prefetch_cache (
     PRIMARY KEY (item_id, kind, start_t)
 );
 CREATE INDEX IF NOT EXISTS prefetch_cache_lru ON prefetch_cache(last_access);
+-- 1.9: per-library access, email invites, user activity, Gmail connections (schema 10)
+CREATE TABLE IF NOT EXISTS user_libraries (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    library_id INTEGER NOT NULL, PRIMARY KEY (user_id, library_id));
+CREATE TABLE IF NOT EXISTS invites (
+    id INTEGER PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,      -- sha256 of the one-time token; the raw token only lives in the link
+    email TEXT NOT NULL COLLATE NOCASE,
+    role TEXT NOT NULL,                   -- view | download
+    libraries TEXT,                       -- JSON list of library ids, NULL = all
+    note TEXT,
+    created_by INTEGER, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+    sent_at INTEGER, sent_via TEXT, send_error TEXT, send_count INTEGER NOT NULL DEFAULT 0,
+    accepted_at INTEGER, accepted_user_id INTEGER, revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS invites_email ON invites(email);
+CREATE TABLE IF NOT EXISTS activity (
+    id INTEGER PRIMARY KEY, ts INTEGER NOT NULL,
+    user_id INTEGER, actor TEXT, kind TEXT NOT NULL,
+    item_id INTEGER, library_id INTEGER, title TEXT,
+    ip TEXT, device TEXT, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS activity_ts ON activity(ts);
+CREATE INDEX IF NOT EXISTS activity_user ON activity(user_id, ts);
+CREATE INDEX IF NOT EXISTS activity_kind ON activity(kind, ts);
+CREATE TABLE IF NOT EXISTS gmail_accounts (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    email TEXT NOT NULL, display_name TEXT, scopes TEXT, connected_at INTEGER NOT NULL, last_used INTEGER,
+    status TEXT NOT NULL, last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS gmail_sends (user_id INTEGER NOT NULL, ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS gmail_sends_user ON gmail_sends(user_id, ts);
+-- 2.0: offline downloads (schema 11). Devices are kept as tombstones (revoked_at) so a revoked or deleted
+-- account's phone still gets a signed "wipe" answer on its next sync.
+CREATE TABLE IF NOT EXISTS devices (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
+    name TEXT, platform TEXT, app_version TEXT,
+    pubkey TEXT NOT NULL UNIQUE,          -- base64 DER SubjectPublicKeyInfo (EC P-256 from the Android Keystore)
+    fp TEXT NOT NULL,                     -- base64url sha256 of the DER key (the grant "dev" field)
+    caps TEXT,                            -- JSON: what the device can decode (h264, hevc, av1, ac3, eac3, dts, maxh)
+    created_at INTEGER NOT NULL, last_sync INTEGER, last_ip TEXT,
+    revoked_at INTEGER, revoke_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
+CREATE TABLE IF NOT EXISTS offline_grants (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, device_id INTEGER NOT NULL, item_id INTEGER NOT NULL,
+    profile TEXT NOT NULL,                -- original | 1080p | 720p | 480p (+ ".hevc")
+    audio INTEGER NOT NULL DEFAULT 0,
+    job_id INTEGER,                       -- offline_jobs row for a transcoded profile
+    bytes INTEGER, sha256 TEXT,           -- of the file the device receives
+    title TEXT,                           -- kept for the admin list after the item is gone
+    issued_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, renewed_at INTEGER,
+    state TEXT NOT NULL,                  -- preparing | ready | downloaded | deleted | revoked | failed
+    revoked_at INTEGER, revoke_reason TEXT, done_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS offline_grants_user ON offline_grants(user_id, state);
+CREATE INDEX IF NOT EXISTS offline_grants_device ON offline_grants(device_id, state);
+CREATE TABLE IF NOT EXISTS offline_jobs (
+    id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL, profile TEXT NOT NULL, audio INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,                 -- queued | running | paused | ready | failed
+    progress REAL, path TEXT, bytes INTEGER, sha256 TEXT, encoder TEXT, error TEXT, mtime REAL,
+    created_at INTEGER, started_at INTEGER, finished_at INTEGER, last_access INTEGER,
+    UNIQUE(item_id, profile, audio)
+);
 """
 
 _local = threading.local()
@@ -251,6 +314,21 @@ ADDED_COLUMNS = [
     ("keyframes", "checked_at", "INTEGER"),
     ("keyframes", "attempts", "INTEGER"),
 
+    # 1.9: roles, email, per-library access, session devices
+    ("users", "role", "TEXT"),
+    ("users", "email", "TEXT"),
+    ("users", "all_libraries", "INTEGER NOT NULL DEFAULT 1"),
+    ("users", "disabled_at", "INTEGER"),
+    ("users", "invited_by", "INTEGER"),
+    ("sessions", "ip", "TEXT"),
+    ("sessions", "ua", "TEXT"),
+    ("sessions", "last_seen", "INTEGER"),
+    ("sessions", "device", "TEXT"),
+    # 2.0: per-user download limits (NULL = the server default, 0 = unlimited)
+    ("users", "dl_titles", "INTEGER"),
+    ("users", "dl_gb", "REAL"),
+    ("users", "dl_devices", "INTEGER"),
+
     # 1.4: categories (collection / franchise, age rating; cat_v = version of the category fields fetched)
     ("metadata", "collection_id", "INTEGER"),
     ("metadata", "collection_name", "TEXT"),
@@ -272,6 +350,10 @@ def migrate():
             _backup_db(c, 8)              # 1.7.6: snapshot before playlists (idempotent)
         if old_pre and int(old_pre[0]) < 9:
             _backup_db(c, 9)              # 1.7.9: snapshot before start-cache tables (idempotent)
+        if old_pre and int(old_pre[0]) < 10:
+            _backup_db(c, 10)             # 1.9: snapshot before roles / invites / hashed sessions (idempotent)
+        if old_pre and int(old_pre[0]) < 11:
+            _backup_db(c, 11)             # 2.0: snapshot before devices / offline downloads (idempotent)
         c.executescript(SCHEMA)
         for table, col, typ in ADDED_COLUMNS:
             have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}
@@ -294,6 +376,8 @@ def migrate():
                   "AND (status IS NULL OR status='' OR status='failed')")
         c.execute("UPDATE keyframes SET status='ok' WHERE data IS NOT NULL AND data!='null' AND "
                   "(status IS NULL OR status='')")
+        _upgrade_10(c)                  # 1.9: idempotent (roles from is_admin, hash old session tokens)
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email) WHERE email IS NOT NULL")
         c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
         c.commit()
     finally:
@@ -334,6 +418,20 @@ def _backup_db(c, ver):
             except OSError:
                 pass
         raise
+
+
+def _upgrade_10(c):
+    """1.9: every user gets a role (admin stays admin, everyone else keeps today's rights = viewer, all libraries).
+    Session tokens written before 1.9 are stored in the clear; hash them in place so nobody is signed out."""
+    import hashlib
+    c.execute("UPDATE users SET role='admin' WHERE is_admin=1 AND (role IS NULL OR role='')")
+    c.execute("UPDATE users SET role='view' WHERE (role IS NULL OR role='')")
+    c.execute("UPDATE users SET all_libraries=1 WHERE all_libraries IS NULL")
+    c.execute("UPDATE users SET is_admin=CASE WHEN role='admin' THEN 1 ELSE 0 END")
+    for (tok,) in c.execute("SELECT token FROM sessions").fetchall():
+        if tok and not (len(tok) == 64 and all(ch in "0123456789abcdef" for ch in tok)):
+            th = hashlib.sha256(("ms1:" + tok).encode()).hexdigest()
+            c.execute("UPDATE OR IGNORE sessions SET token=? WHERE token=?", (th, tok))
 
 
 def _upgrade_4(c):

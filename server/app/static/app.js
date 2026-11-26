@@ -171,12 +171,21 @@ function fixMatchDialog(kind, query, year, apply) {
   });
 }
 // lazy artwork: big libraries render thousands of cards; load posters only near the viewport
+function artBg(el) {
+  // In TV mode, prefer the w780 poster-large when present so 4K / high-DPR panels stay sharp.
+  const hi = el.dataset.bgHi;
+  const lo = el.dataset.bg;
+  if (hi && document.documentElement.classList.contains("tv-mode")) {
+    return `url('${hi}'),url('${lo}')`;
+  }
+  return `url('${lo}')`;
+}
 const lazyIO = ("IntersectionObserver" in window) ? new IntersectionObserver((ents) => ents.forEach(e => {
-  if (e.isIntersecting) { e.target.style.backgroundImage = `url('${e.target.dataset.bg}')`; lazyIO.unobserve(e.target); }
+  if (e.isIntersecting) { e.target.style.backgroundImage = artBg(e.target); lazyIO.unobserve(e.target); }
 }), { rootMargin: "800px 200px" }) : null;
 new MutationObserver(() => $$("[data-bg]:not([data-lz])").forEach(el => {
   el.dataset.lz = "1";
-  if (lazyIO) lazyIO.observe(el); else el.style.backgroundImage = `url('${el.dataset.bg}')`;
+  if (lazyIO) lazyIO.observe(el); else el.style.backgroundImage = artBg(el);
 })).observe(document.body, { childList: true, subtree: true });
 const ico = (body) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 const KIND_ICON = {   // 1.7.4: outlined theme icons (24px grid, currentColor)
@@ -427,6 +436,8 @@ if (typeof ResizeObserver === "function") {
 window.addEventListener("resize", syncTopH);
 
 async function boot() {
+  const inv = location.hash.match(/^#\/invite\/([A-Za-z0-9_-]{20,200})/);   // 1.9: invite link
+  if (inv) { await showJoin(inv[1]); return; }
   try {
     const st = await api("/api/setup-status", { noAuthRedirect: true });
     if (st.needs_setup) { showSetup(); return; }
@@ -436,6 +447,7 @@ async function boot() {
   $("#whoami").textContent = ME.username; $("#ver").textContent = "v" + ME.version;
   syncTopH();
   MOB.setup();
+  if (window.TV) TV.init();
   SFX.load(ME.username);
   $("#sndbtn").onclick = () => SFX.toggle();
   await refreshLibs();
@@ -525,6 +537,7 @@ const MOB = (() => {
     if (p === "libraries" || p === "library" || p === "show" || p === "album") return "libraries";
     if (p === "search") return "search";
     if (p === "mylist") return "mylist";
+    if (p === "downloads") return "downloads";
     if (p === "settings") return "settings";
     return "";
   }
@@ -541,6 +554,7 @@ const MOB = (() => {
     $("#acct-ver").textContent = "Movinite v" + ME.version;
     $("#acct-settings").hidden = !ME.is_admin;
     $("#tab-set-l").textContent = ME.is_admin ? "Settings" : "Account";
+    OFF.applyTabs();   // 2.0: in the Android app (with the download role) Downloads replaces My List in the tab bar
     tab();
   }
   av.onclick = (e) => { e.stopPropagation(); open(menu.classList.contains("hidden")); };
@@ -659,6 +673,7 @@ async function route() {
       case "search": setActive(""); await viewSearch(parts.slice(1).join("/")); break;
       case "libraries": setActive(""); await viewLibraries(); break;
       case "mylist": setActive(""); await viewMyList(); break;
+      case "downloads": setActive(""); await viewDownloads(); break;
       case "settings": setActive("settings"); await viewSettings(parts[1] || ""); break;
       default: setActive("home"); await viewHome();
     }
@@ -666,6 +681,7 @@ async function route() {
     if (e.message !== "Not signed in") v.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`;
   }
   v.scrollTop = route._keepScroll ? v.scrollTop : 0; route._keepScroll = false;
+  if (window.TV) TV.afterRoute();
 }
 
 // ---------------------------------------------------------------- cards
@@ -686,7 +702,7 @@ function cardItem(i, opts) {
   // 1.4.7: info that fades in over the poster on hover / keyboard focus
   const hov = i.media_type === "audio" ? "" : `<div class="hov" aria-hidden="true"><b>${esc(t)}</b><span>${[i.year, i.rating ? "&#9733; " + (+i.rating).toFixed(1) : "", i.duration ? fmtLen(i.duration) : ""].filter(Boolean).join(" · ")}</span></div>`;
   return `<div class="card ${cls}${opts.resume ? " resume" : ""}" tabindex="0" data-href="#/item/${i.id}"${opts.resume ? ` title="${esc(t)} -- resume from ${fmtDur(i.position || 0)}"` : ""} data-id="${i.id}">
-    <div class="art"${img ? ` data-bg="${thumbUrl(img)}"` : ""}>
+    <div class="art"${img ? ` data-bg="${thumbUrl(img)}"${(!land && i.id && i.kind !== "episode" && i.media_type !== "audio") ? ` data-bg-hi="/api/items/${i.id}/poster-large"` : ""}` : ""}>
       ${img ? "" : `<div class="ph">${i.media_type === "audio" ? "&#9835;" : "&#127902;"}</div>`}
       ${i.watched ? `<span class="badge">&#10003;</span>` : ""}
       ${i.needs_review ? `<span class="badge rv" title="Match needs review">?</span>` : ""}
@@ -1140,6 +1156,9 @@ async function viewHome(live) {
   }
   // 1.4.1: Continue watching first (only when something is part-watched); click resumes where you stopped
   if (d.continue.length) html += rowHead("Continue watching") + `<div class="strip hs cw">${d.continue.map(i => cardItem(i, { resume: true })).join("")}</div>`;
+  if (OFF.on()) {   // 2.0: the Downloads tab took My List's place, so My List's recently watched films get a home row
+    try { const ml = await api("/api/mylist"); if (ml.watched.length) html += rowHead("My List", "#/mylist", { sub: "Recently watched" }) + `<div class="strip hs">${ml.watched.slice(0, 20).map(i => cardItem(i)).join("")}</div>`; } catch (e) { /* row is optional */ }
+  }
   const nMovieLibs = d.libraries.filter(L => L.library.kind === "movies").length;
   for (const L of d.libraries) {
     const lib = L.library;
@@ -1699,6 +1718,7 @@ async function viewItem(id) {
     <div class="actions main-actions">
       ${it.position > 30 ? `<button class="btn big" id="resume">&#9654; Resume from ${fmtDur(it.position)}</button><button class="btn ghost big" id="play">Play from start</button>` : `<button class="btn big" id="play">&#9654; Play</button>`}
       <button class="btn ghost" id="watched">${it.watched ? "Mark unwatched" : "Mark watched"}</button>
+      ${OFF.on() && it.media_type === "video" ? `<button class="btn ghost dl-btn" id="dl-btn" data-item="${it.id}">${dlBtnLabel(it.id)}</button>` : ""}
       ${it.next ? `<a class="btn ghost" href="#/item/${it.next.id}">Next: ${epCode(it.next)} &rsaquo;</a>` : ""}
       ${moreMenu}
     </div>
@@ -1725,6 +1745,7 @@ async function viewItem(id) {
   if ($("#resume")) $("#resume").onclick = () => { SFX.play(); playItem(id, it.position, { exact, item: it }); };
   if ($("#accept-cand")) $("#accept-cand").onclick = async () => { try { await api(`/api/items/${id}/match`, { method: "POST", body: { accept_candidate: true } }); toast("Match accepted"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } };
   if ($("#confirm-match")) $("#confirm-match").onclick = async () => { try { await api(`/api/items/${id}/match`, { method: "POST", body: { tmdb_id: it.tmdb_id } }); toast("Match confirmed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } };
+  if ($("#dl-btn")) $("#dl-btn").onclick = () => { const d = OFF.forItem(it.id); if (d && d.state === "ready") { window.MSAndroid.playOffline(d.gid); return; } if (d) { location.hash = "#/downloads"; return; } downloadDialog(it); };
   $("#watched").onclick = async () => { await api(`/api/items/${id}/watched`, { method: "POST", body: { watched: !it.watched } }); route._keepScroll = true; route(); };
   if ($("#homerows")) $("#homerows").onclick = () => {
     const sel = (row) => { const m = (it.pins || {})[row] || 0; return `<select id="pin-${row}">${[[0, "Automatic"], [1, "Always include (pinned first)"], [-1, "Never include"]].map(([v, n]) => `<option value="${v}"${v === m ? " selected" : ""}>${n}</option>`).join("")}</select>`; };
@@ -1796,7 +1817,7 @@ async function viewLibraries() {
   const sub = { movies: "Movies", tv: "TV shows", music: "Music", other: "Videos" };
   let html = `<h2 class="pg-h">Libraries</h2>`;
   if (!LIBS.length) html += `<div class="empty">No libraries yet.${ME.is_admin ? ` <a href="#/settings/libraries">Add one in Settings</a>` : ""}</div>`;
-  else html += `<div class="lib-list">${libGroups().map(g => (libsGrouped() ? `<div class="lib-grp-h" data-grp="${g.key}"><span class="ng-ic" aria-hidden="true">${g.share ? ICO_SHARE : ICO_LOCAL}</span>${esc(g.name)}${g.share && groupHealthLib(g) ? shareDot(groupHealthLib(g)) : ""}</div>` : "") + g.libs.map(l => `<a class="lib-li" data-lib="${l.id}" href="#/library/${l.id}"><span class="lib-ic" aria-hidden="true">${KIND_ICON[l.kind] || KIND_ICON.other}</span>
+  else html += `<div class="lib-list">${libGroups().map(g => (libsGrouped() ? `<div class="lib-grp-h" data-grp="${g.key}"><span class="ng-ic" aria-hidden="true">${g.share ? ICO_SHARE : ICO_LOCAL}</span>${esc(g.name)}${g.share && groupHealthLib(g) ? shareDot(groupHealthLib(g)) : ""}</div>` : "") + g.libs.map(l => `<a class="lib-li" tabindex="0" data-lib="${l.id}" href="#/library/${l.id}"><span class="lib-ic" aria-hidden="true">${KIND_ICON[l.kind] || KIND_ICON.other}</span>
       <span class="lib-tx"><b>${esc(l.name)}<span class="ldot-slot">${shareDot(l)}</span></b><span class="muted">${sub[l.kind] || esc(l.kind)} · ${libCountText(l)}${l.health && l.health.state === "offline" ? ` · <span class="ldot-txt off">share offline</span>` : l.health && (l.health.state === "stuck" || l.health.state === "slow") ? ` · <span class="ldot-txt warn">share ${l.health.state === "slow" ? "slow" : "not responding"}</span>` : ""}</span></span><span class="chev" aria-hidden="true">&rsaquo;</span></a>`).join("")).join("")}</div>`;
   $("#view").innerHTML = html;
 }
@@ -1811,12 +1832,704 @@ async function viewMyList() {
   $("#view").innerHTML = html;
 }
 
+// ---------------------------------------------------------------- 2.0: offline downloads (Android app only)
+// The native app exposes window.MSAndroid.offlineCaps / downloads / storageInfo / call / playOffline. Browsers have
+// no bridge, so nothing here shows there: the bottom tabs, detail pages and menus stay as they were.
+const ICO_DL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11.5M7 10.5l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 16.5v2.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-2.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`;
+const ICO_MYLIST = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11a1 1 0 0 1 1 1V21l-6.5-4.5L5.5 21V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></svg>`;
+const DL_HELP = `<p><b>Downloads stay inside the Movinite app.</b> Films are saved encrypted in the app's own storage and only play in the app's player, with no internet needed.</p>
+  <p><b>Each download has a licence</b> from your server that lasts <span class="dl-days">30</span> days. It renews by itself whenever the app reaches the server. If a title is taken off the server, your access changes, or this device is removed, the download is deleted the next time the app connects.</p>
+  <p><b>Signing in offline</b> uses your phone's fingerprint, face or screen lock (or a Movinite PIN you set here). If the app hasn't reached the server for 30 days, it signs you out and removes the downloads.</p>
+  <p class="dl-warn"><b>This isn't studio-grade protection.</b> It stops casual copying and lets the server owner take downloads back, but someone with a rooted phone and enough know-how could still get at a file. It's meant for family and friends, not for protecting a film studio's rights.</p>`;
+const OFF = (() => {
+  const B = () => window.MSAndroid;
+  const native = () => { try { return !!(B() && typeof B().offlineCaps === "function" && typeof B().call === "function"); } catch (e) { return false; } };
+  const on = () => native() && !!(ME && ME.can_download);
+  const j = (fn, dflt) => { try { const v = JSON.parse(B()[fn]() || "null"); return v == null ? dflt : v; } catch (e) { return dflt; } };
+  let seq = 0; const pend = {};
+  window.__msResolve = (id, ok, data) => {
+    const p = pend[id]; if (!p) return; delete pend[id];
+    let d = data; try { if (typeof d === "string") d = JSON.parse(d); } catch (e) { /* plain text */ }
+    if (ok) p.res(d); else { const det = d && (d.detail || d.error || d.message); p.rej(Object.assign(new Error(typeof det === "string" ? det : (det && det.detail) || String(d || "Something went wrong")), { data: d })); }
+  };
+  function call(name, args, timeoutMs) {
+    return new Promise((res, rej) => {
+      const id = ++seq; pend[id] = { res, rej };
+      try { B().call(id, name, JSON.stringify(args || {})); } catch (e) { delete pend[id]; rej(e); return; }
+      setTimeout(() => { if (pend[id]) { delete pend[id]; rej(new Error("The app didn't answer. Try again.")); } }, timeoutMs || 45000);
+    });
+  }
+  const list = () => j("downloads", []);
+  const caps = () => j("offlineCaps", {});
+  const storage = () => j("storageInfo", {});
+  const ACTIVE = ["queued", "preparing", "downloading", "paused", "waiting_wifi", "ready"];
+  const forItem = (iid) => list().find(d => d.item_id === iid && ACTIVE.includes(d.state));
+  function applyTabs() {
+    const a = $('#tabbar a[data-tab="mylist"], #tabbar a[data-tab="downloads"]');
+    if (a) {
+      if (on()) { a.href = "#/downloads"; a.dataset.tab = "downloads"; a.innerHTML = ICO_DL + "<span>Downloads</span>"; }
+      else { a.href = "#/mylist"; a.dataset.tab = "mylist"; a.innerHTML = ICO_MYLIST + "<span>My List</span>"; }
+    }
+    const m = $("#acct-mylist"); if (m) m.hidden = !on();
+    const d = $("#acct-downloads"); if (d) d.hidden = !on();
+  }
+  window.__msDownloadsChanged = () => {
+    try {
+      if ((location.hash || "").startsWith("#/downloads")) drawDownloads();
+      const b = $("#dl-btn"); if (b) b.innerHTML = dlBtnLabel(+b.dataset.item);
+    } catch (e) { /* page changed */ }
+  };
+  return { native, on, call, list, caps, storage, forItem, applyTabs };
+})();
+
+function dlLeft(exp) { if (!exp) return ""; const d = Math.floor((exp - Date.now() / 1000) / 86400); return d < 0 ? "licence expired" : d === 0 ? "expires today" : `expires in ${d} day${d === 1 ? "" : "s"}`; }
+function dlBtnLabel(iid) {
+  const d = OFF.forItem(iid);
+  if (!d) return `${ICO_DL}<span>Download</span>`;
+  if (d.state === "ready") return `<span class="dl-ok">&#10003;</span><span>Downloaded</span>`;
+  if (d.state === "preparing") return `${ICO_DL}<span>Preparing ${Math.round(100 * (d.prep || 0))}%</span>`;
+  if (d.state === "paused" || d.state === "waiting_wifi") return `${ICO_DL}<span>${d.state === "paused" ? "Paused" : "Waiting for Wi-Fi"}</span>`;
+  return `${ICO_DL}<span>Downloading ${Math.round(100 * (d.progress || 0))}%</span>`;
+}
+function dlUsageLine(u) {
+  if (!u) return "";
+  const t = u.titles_max == null ? `${u.titles} title${u.titles === 1 ? "" : "s"}` : `${u.titles} of ${u.titles_max} titles`;
+  const g = u.bytes_max == null ? fmtSize(u.bytes) || "0 GB" : `${(u.bytes / 1073741824).toFixed(1)} / ${Math.round(u.bytes_max / 1073741824)} GB`;
+  return `${t} · ${g}`;
+}
+
+// the quality sheet: Original (only when this device can play the file), 1080p / 720p / 480p made by the server
+async function downloadDialog(it) {
+  modal(`<h2>Download for offline</h2><div class="dl-load muted">Checking what this device can play...</div>`);
+  let o;
+  try { o = await OFF.call("options", { item_id: it.id }); }
+  catch (e) { modal(`<h2>Download for offline</h2><div class="err">${esc(e.message)}</div><div class="modal-actions"><button class="btn" id="dl-x">Close</button></div>`, () => { $("#dl-x").onclick = closeModal; }); return; }
+  const caps = OFF.caps(), st = OFF.storage();
+  const want = caps.quality && caps.quality !== "ask" ? o.profiles.find(p => p.available && p.id.split(".")[0] === caps.quality) : null;
+  let pick = (want || o.profiles.find(p => p.id === o.default) || o.profiles.find(p => p.available) || {}).id;
+  const free = st.free || 0;
+  const row = (p) => `<label class="dl-q${p.available ? "" : " off"}"><input type="radio" name="dlq" value="${esc(p.id)}" ${p.id === pick ? "checked" : ""} ${p.available ? "" : "disabled"}>
+      <span class="dl-q-n"><b>${esc(p.label)}</b>${p.id === o.default ? ` <span class="chip pill">Recommended</span>` : ""}<span class="muted">${esc(p.note || "")}</span></span>
+      <span class="dl-q-s">${p.bytes ? "about " + fmtSize(p.bytes) : ""}</span></label>`;
+  const ex = o.existing;
+  const auds = (o.audio || []).length > 1 ? `<label for="dl-aud" class="dl-lbl">Audio</label><select id="dl-aud">${o.audio.map(a => `<option value="${a.index}">${esc(a.label)}${a.codec ? " · " + esc(String(a.codec).toUpperCase()) : ""}${a.channels ? " " + a.channels + "ch" : ""}</option>`).join("")}</select>` : "";
+  modal(`<h2>Download for offline</h2><div class="dl-title">${esc(o.title || it.title)}</div>
+    ${ex ? `<div class="dl-have"><span class="dl-ok">&#10003;</span> On this device in <b>${esc(ex.quality)}</b>. Delete it first to download another quality.</div>` : ""}
+    <div class="dl-qs" role="radiogroup" aria-label="Quality">${o.profiles.map(row).join("")}</div>
+    ${auds}
+    <div class="dl-meta"><span>${esc(dlUsageLine(o.usage))}</span>${free ? `<span>${fmtSize(free)} free on this device</span>` : ""}</div>
+    <div class="dl-warn-sp hidden" id="dl-space">Not enough space on this device for this quality.</div>
+    ${caps.wifi_only ? `<div class="help">Downloads use Wi-Fi only (change it in Downloads settings).</div>` : ""}
+    <details class="dl-help"><summary>How downloads work</summary>${DL_HELP.replace('<span class="dl-days">30</span>', o.days || 30)}</details>
+    <div class="err" id="dl-err"></div>
+    <div class="modal-actions">${ex ? `<button class="btn danger" id="dl-del">Delete download</button>` : ""}<button class="btn ghost" id="dl-cancel">Cancel</button>${ex ? "" : `<button class="btn" id="dl-go">${ICO_DL} Download</button>`}</div>`, (box) => {
+    box.classList.add("dl-box");
+    const size = () => { const p = o.profiles.find(x => x.id === pick); const over = p && free && p.bytes > free; $("#dl-space").classList.toggle("hidden", !over); if ($("#dl-go")) $("#dl-go").disabled = !!over || !p; };
+    $$('input[name="dlq"]', box).forEach(r => r.onchange = () => { pick = r.value; size(); });
+    size();
+    $("#dl-cancel").onclick = closeModal;
+    if ($("#dl-del")) $("#dl-del").onclick = async () => { try { await OFF.call("remove", { grant_id: ex.id }); closeModal(); toast("Download deleted"); route._keepScroll = true; route(); } catch (e) { $("#dl-err").textContent = e.message; } };
+    if ($("#dl-go")) $("#dl-go").onclick = async () => {
+      $("#dl-go").disabled = true; $("#dl-err").textContent = "";
+      try {
+        const r = await OFF.call("download", { item_id: it.id, profile: pick, audio: $("#dl-aud") ? +$("#dl-aud").value : 0 });
+        closeModal();
+        toast(r && r.state === "preparing" ? "The server is preparing this download. It starts by itself when ready." : "Downloading " + (o.title || it.title));
+        const b = $("#dl-btn"); if (b) b.innerHTML = dlBtnLabel(it.id);
+      } catch (e) { $("#dl-err").textContent = e.message; $("#dl-go").disabled = false; }
+    };
+  });
+}
+
+// the Downloads tab (in the app): storage and quota, then Downloading / Ready / Needs attention
+let DL_USAGE = null;
+async function viewDownloads() {
+  if (!OFF.native()) { $("#view").innerHTML = `<h2 class="pg-h">Downloads</h2><div class="empty">Downloads work in the Movinite Android app. <a href="#/mylist">My List</a></div>`; return; }
+  if (!ME.can_download) { $("#view").innerHTML = `<h2 class="pg-h">Downloads</h2><div class="empty">Downloading needs the <b>Viewer + Downloads</b> role. Ask the server's admin.</div>`; return; }
+  drawDownloads();
+  try { DL_USAGE = (await api("/api/devices")).usage; drawDownloads(); } catch (e) { /* quota line stays empty */ }
+  try { OFF.call("sync", {}, 20000).then(() => drawDownloads()).catch(() => {}); } catch (e) { /* offline */ }
+  const tok = route._token;
+  clearInterval(route._poll);
+  route._poll = setInterval(() => { if (route._token !== tok) { clearInterval(route._poll); return; } if (OFF.list().some(d => ["queued", "preparing", "downloading"].includes(d.state))) drawDownloads(); }, 2000);
+}
+function dlCard(d) {
+  const img = d.poster_url ? `style="background-image:url('${esc(d.poster_url)}')"` : "";
+  const busy = ["queued", "preparing", "downloading", "paused", "waiting_wifi"].includes(d.state);
+  const pct = d.state === "preparing" ? (d.prep || 0) : (d.progress || 0);
+  const sub = busy ? (d.state === "preparing" ? `Server is preparing ${esc(d.quality)} · ${Math.round(100 * pct)}%${d.queue > 1 ? ` · ${d.queue - 1} ahead` : ""}`
+      : d.state === "paused" ? `Paused · ${fmtSize(d.done_bytes) || "0 B"} of ${fmtSize(d.bytes)}`
+      : d.state === "waiting_wifi" ? "Waiting for Wi-Fi" : d.state === "queued" ? "Waiting to start"
+      : `${fmtSize(d.done_bytes) || "0 B"} of ${fmtSize(d.bytes)} · ${Math.round(100 * pct)}%`)
+    : d.state === "ready" ? `${esc(d.quality)} · ${fmtSize(d.bytes)} · ${dlLeft(d.expires_at)}`
+    : `<span class="dl-bad">${esc(d.error || ({ failed: "Download failed", expired: "Licence expired. Connect to renew it.", revoked: "Removed by the server" })[d.state] || d.state)}</span>`;
+  const resume = d.state === "ready" && d.position > 30 && d.duration ? `<div class="dl-res"><div style="width:${Math.min(100, 100 * d.position / d.duration)}%"></div></div>` : "";
+  const acts = d.state === "ready" ? `<button class="btn small" data-dlplay="${d.gid}">&#9654; ${d.position > 30 ? "Resume" : "Play"}</button>`
+    : d.state === "downloading" || d.state === "queued" || d.state === "waiting_wifi" ? `<button class="btn ghost small" data-dlpause="${d.gid}">Pause</button>`
+    : d.state === "paused" ? `<button class="btn ghost small" data-dlresume="${d.gid}">Resume</button>`
+    : d.state === "failed" ? `<button class="btn ghost small" data-dlretry="${d.gid}">Try again</button>` : "";
+  return `<div class="dl-card st-${esc(d.state)}" data-gid="${d.gid}"><div class="dl-art" ${img}>${img ? "" : "&#127902;"}${d.state === "ready" ? `<span class="dl-qchip">${esc(String(d.quality || "").replace(" HEVC", ""))}</span>` : ""}</div>
+    <div class="dl-body"><div class="dl-t">${esc(d.title)}</div>${d.subtitle ? `<div class="dl-s muted">${esc(d.subtitle)}</div>` : ""}<div class="dl-s">${sub}</div>
+      ${busy ? `<div class="dl-prog${d.state === "preparing" ? " prep" : ""}"><div style="width:${Math.max(2, Math.round(100 * pct))}%"></div></div>` : resume}
+      <div class="dl-acts">${acts}<button class="iconbtn small dl-more" data-dlmore="${d.gid}" aria-label="More for ${esc(d.title)}" title="More">&#8943;</button></div></div></div>`;
+}
+function drawDownloads() {
+  const v = $("#view"); if (!v || v.dataset.view !== "downloads") return;
+  const L = OFF.list(), st = OFF.storage(), caps = OFF.caps();
+  const going = L.filter(d => ["queued", "preparing", "downloading", "paused", "waiting_wifi"].includes(d.state));
+  const ready = L.filter(d => d.state === "ready");
+  const bad = L.filter(d => ["failed", "expired", "revoked"].includes(d.state));
+  const used = st.used || 0, total = st.total || 0, free = st.free || 0;
+  const pctUsed = total ? Math.min(100, 100 * used / total) : 0, pctOther = total ? Math.min(100 - pctUsed, 100 * (total - free - used) / total) : 0;
+  let html = `<div class="dl-head"><h2 class="pg-h">Downloads</h2><button class="iconbtn" id="dl-set" title="Download settings" aria-label="Download settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 2.8l1.6 2.3 2.7-.7.7 2.7 2.3 1.6-1.2 2.5 1.2 2.5-2.3 1.6-.7 2.7-2.7-.7L12 21.2l-1.6-2.3-2.7.7-.7-2.7-2.3-1.6L5.9 12 4.7 9.5 7 7.9l.7-2.7 2.7.7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button></div>
+    <div class="dl-store"><div class="dl-bar"><div class="mv" style="width:${pctUsed}%"></div><div class="ot" style="width:${pctOther}%"></div></div>
+      <div class="dl-store-l"><span><i class="k mv"></i>Movinite ${fmtSize(used) || "0 B"}</span><span><i class="k fr"></i>${fmtSize(free) || "?"} free</span>${DL_USAGE ? `<span class="dl-quota">${esc(dlUsageLine(DL_USAGE))}</span>` : ""}</div></div>`;
+  if (going.length) html += `<h3 class="dl-sec">Downloading <span class="muted">${going.length}</span></h3><div class="dl-list">${going.map(dlCard).join("")}</div>`;
+  if (ready.length) html += `<h3 class="dl-sec">Ready to watch offline <span class="muted">${ready.length}</span></h3><div class="dl-list">${ready.map(dlCard).join("")}</div>`;
+  if (bad.length) html += `<h3 class="dl-sec">Needs attention <span class="muted">${bad.length}</span></h3><div class="dl-list">${bad.map(dlCard).join("")}</div>`;
+  if (!L.length) html += `<div class="empty dl-empty">${ICO_DL}<b>Nothing downloaded yet</b><span>Open a movie or an episode and tap <b>Download</b> to watch it without internet.</span></div>`;
+  html += `<details class="dl-help panel"><summary>How downloads work</summary>${DL_HELP}</details>`;
+  html += `<p class="help dl-mylist">Looking for My List? It's on <a href="#/home">Home</a> and in your account menu: <a href="#/mylist">open My List</a>.</p>`;
+  v.innerHTML = html;
+  $("#dl-set").onclick = () => downloadSettings(caps);
+  $$("[data-dlplay]", v).forEach(b => b.onclick = () => { try { window.MSAndroid.playOffline(+b.dataset.dlplay); } catch (e) { toast("Couldn't open the player", true); } });
+  const act = (sel, name, msg) => $$(sel, v).forEach(b => b.onclick = async () => { b.disabled = true; try { await OFF.call(name, { grant_id: +Object.values(b.dataset)[0] }); if (msg) toast(msg); } catch (e) { toast(e.message, true); } drawDownloads(); });
+  act("[data-dlpause]", "pause"); act("[data-dlresume]", "resume"); act("[data-dlretry]", "retry", "Trying again");
+  $$("[data-dlmore]", v).forEach(b => b.onclick = () => dlMore(L.find(d => d.gid === +b.dataset.dlmore)));
+}
+function dlMore(d) {
+  if (!d) return;
+  modal(`<h2>${esc(d.title)}</h2><div class="dl-more-l">
+      ${d.state === "ready" ? `<button class="btn ghost" id="dm-play">&#9654; Play</button>` : ""}
+      ${d.item_id ? `<button class="btn ghost" id="dm-other">Download in another quality</button><a class="btn ghost" href="#/item/${d.item_id}" id="dm-open">Open details</a>` : ""}
+      <button class="btn danger" id="dm-del">${["downloading", "queued", "preparing", "paused", "waiting_wifi"].includes(d.state) ? "Cancel download" : "Delete download"}</button></div>
+      <div class="help">${d.state === "ready" ? `${esc(d.quality)} · ${fmtSize(d.bytes)} · ${dlLeft(d.expires_at)}` : ""}</div>
+      <div class="modal-actions"><button class="btn" id="dm-x">Close</button></div>`, () => {
+    $("#dm-x").onclick = closeModal;
+    if ($("#dm-open")) $("#dm-open").onclick = closeModal;
+    if ($("#dm-play")) $("#dm-play").onclick = () => { closeModal(); window.MSAndroid.playOffline(d.gid); };
+    $("#dm-del").onclick = async () => { try { await OFF.call("remove", { grant_id: d.gid }); closeModal(); toast("Download deleted"); drawDownloads(); } catch (e) { toast(e.message, true); } };
+    if ($("#dm-other")) $("#dm-other").onclick = async () => {
+      if (!confirm(`Delete the ${d.quality} download of "${d.title}" and pick another quality?`)) return;
+      try { await OFF.call("remove", { grant_id: d.gid }); closeModal(); downloadDialog({ id: d.item_id, title: d.title }); } catch (e) { toast(e.message, true); }
+    };
+  });
+}
+function downloadSettings(caps) {
+  const sw = (id, on, title, hint) => `<label class="aw-row" for="${id}"><span class="sw"><input type="checkbox" id="${id}" ${on ? "checked" : ""}><i></i></span><span class="aw-txt"><b>${title}</b><span class="aw-hint">${hint}</span></span></label>`;
+  const lockTxt = { biometric: "Fingerprint or face unlock", device: "Your phone's screen lock (PIN, pattern or password)", pin: "A Movinite PIN", none: "Nothing yet" }[caps.lock || "none"];
+  modal(`<h2>Download settings</h2>
+    ${sw("ds-wifi", caps.wifi_only !== false, "Wi-Fi only", "Don't use mobile data for downloads.")}
+    <div class="form"><label for="ds-q">Quality</label><select id="ds-q">${[["ask", "Ask each time (720p suggested)"], ["720p", "Always 720p"], ["1080p", "Always 1080p"]].map(([k, n]) => `<option value="${k}" ${(caps.quality || "ask") === k ? "selected" : ""}>${n}</option>`).join("")}</select>
+    ${caps.external_available ? `<label for="ds-loc">Save downloads on</label><select id="ds-loc"><option value="internal" ${caps.storage !== "external" ? "selected" : ""}>This device</option><option value="external" ${caps.storage === "external" ? "selected" : ""}>SD card</option></select>` : ""}</div>
+    <h3>Offline sign-in</h3><p class="help">When there's no connection, the app opens your downloads after you unlock with: <b>${esc(lockTxt)}</b>.</p>
+    ${sw("ds-pin", !!caps.pin, "Movinite PIN", caps.device_secure ? "Ask for a separate 6-digit PIN too." : "Your phone has no screen lock, so set a PIN to protect offline sign-in.")}
+    <div class="modal-actions"><button class="btn danger" id="ds-all">Delete all downloads</button><button class="btn" id="ds-ok">Done</button></div>`, () => {
+    const set = (k, val) => OFF.call("setting", { key: k, value: val }).catch(e => toast(e.message, true));
+    $("#ds-wifi").onchange = (e) => set("wifi_only", e.target.checked);
+    $("#ds-q").onchange = (e) => set("quality", e.target.value);
+    if ($("#ds-loc")) $("#ds-loc").onchange = (e) => set("storage", e.target.value);
+    $("#ds-pin").onchange = async (e) => { try { await OFF.call(e.target.checked ? "setupPin" : "clearPin", {}, 300000); toast(e.target.checked ? "Movinite PIN set" : "Movinite PIN removed"); } catch (er) { e.target.checked = !e.target.checked; if (er.message !== "cancelled") toast(er.message, true); } };
+    $("#ds-all").onclick = async () => { if (!confirm("Delete every download on this device?")) return; try { await OFF.call("deleteAll", {}); closeModal(); toast("All downloads deleted"); drawDownloads(); } catch (e) { toast(e.message, true); } };
+    $("#ds-ok").onclick = () => { closeModal(); drawDownloads(); };
+  });
+}
+
+// Settings > My account > Devices & downloads (any browser): what is downloaded where, so quota can be freed from a laptop
+function dlGrantRows(gs, admin) {
+  if (!gs.length) return `<div class="muted dl-none">No downloads on this device.</div>`;
+  return `<div class="dl-grants">${gs.map(g => `<div class="dl-g"><span class="dl-g-t">${esc(g.title || "#" + g.item_id)}</span>
+    <span class="chip pill">${esc(g.quality)}</span><span class="muted">${g.state === "preparing" ? "preparing" + (g.job ? " " + Math.round(100 * g.job.progress) + "%" : "") : g.state === "ready" ? "not downloaded yet" : g.state === "failed" ? "failed" : fmtSize(g.bytes)}${g.state === "downloaded" || g.state === "ready" ? " · " + dlLeft(g.expires_at) : ""}</span>
+    <button class="btn ghost small" data-rmgrant="${g.id}">${admin ? "Revoke" : "Remove"}</button></div>`).join("")}</div>`;
+}
+async function accountDownloads(v) {
+  let d;
+  try { d = await api("/api/devices"); } catch (e) { return; }
+  if (!d.can_download && !d.devices.length) return;
+  const box = document.createElement("div");
+  box.innerHTML = `<div class="panel dl-acct" style="max-width:760px"><h3 style="margin-top:0">Devices &amp; downloads</h3>
+    <p class="help">Phones and tablets with the Movinite app that can keep films for offline viewing. ${esc(dlUsageLine(d.usage))}${d.usage.devices_max != null ? ` · ${d.usage.devices} of ${d.usage.devices_max} devices` : ""}.</p>
+    ${d.devices.length ? d.devices.map(dv => `<div class="dl-dev"><div class="row-head"><div><b>${esc(dv.name || "Android device")}</b> <span class="muted">· set up ${fmtWhen(dv.created_at)} · last sync ${ago(dv.last_sync)}</span></div>
+      <button class="btn danger small" data-rmdev="${dv.id}">Remove device</button></div>${dlGrantRows(dv.grants, false)}</div>`).join("")
+      : `<div class="muted">No devices yet. Sign in to the Movinite Android app and tap Download on a film.</div>`}
+    <p class="help">Removing a download frees your quota; the app deletes the file the next time it connects. Removing a device deletes all of its downloads and signs it out of offline mode.</p>
+    <details class="dl-help"><summary>How downloads work</summary>${DL_HELP.replace('<span class="dl-days">30</span>', d.days || 30)}</details></div>`;
+  v.appendChild(box);
+  $$("[data-rmgrant]", box).forEach(b => b.onclick = async () => { try { await api("/api/offline/grants/" + b.dataset.rmgrant, { method: "DELETE" }); toast("Download removed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-rmdev]", box).forEach(b => b.onclick = async () => { if (!confirm("Remove this device? Its downloads are deleted the next time it connects.")) return;
+    try { await api("/api/devices/" + b.dataset.rmdev, { method: "DELETE" }); toast("Device removed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } });
+}
+
+// Settings > Downloads (admin): limits, the transcode queue, and every user's devices and downloads
+async function viewOfflineAdmin(v, html) {
+  const d = await api("/api/admin/offline");
+  const s = d.settings;
+  const num = (id, val, lbl, hint, step) => `<label for="${id}">${lbl}</label><div><input type="number" id="${id}" value="${val}" min="0" step="${step || 1}" style="max-width:120px"> <span class="help">${hint}</span></div>`;
+  const lim = (u) => u.role === "admin" ? `<span class="muted">unlimited (admin)</span>` : `${u.usage.titles}${u.limits.titles != null ? " / " + u.limits.titles : ""} titles · ${fmtSize(u.usage.bytes) || "0 B"}${u.limits.gb != null ? " / " + u.limits.gb + " GB" : ""} · ${u.usage.devices}${u.limits.devices != null ? " / " + u.limits.devices : ""} devices`;
+  html += `<div class="panel" style="max-width:760px"><h3 style="margin-top:0">Offline downloads</h3>
+    <p class="help" style="margin-top:0">People with the <b>Viewer + Downloads</b> role (and admins) can download films in the Movinite Android app to watch without internet. Downloads are encrypted in the app and carry a licence that renews whenever the app connects; you can take them back here at any time. This is trust-based protection for family and friends, not studio-grade DRM.</p>
+    <label class="aw-row" for="of-on"><span class="sw"><input type="checkbox" id="of-on" ${s.enabled ? "checked" : ""}><i></i></span><span class="aw-txt"><b>Allow downloads</b><span class="aw-hint">Turning this off removes every download the next time each phone connects.</span></span></label>
+    <div class="form of-form">
+      ${num("of-titles", s.titles, "Titles per user", "0 = unlimited")}
+      ${num("of-gb", s.gb, "GB per user", "0 = unlimited", "0.5")}
+      ${num("of-dev", s.devices, "Devices per user", "0 = unlimited")}
+      ${num("of-days", s.days, "Licence length (days)", "7 to 90; renewed on every sync")}
+      ${num("of-wipe", s.wipe_days, "Offline sign-in window (days)", "7 to 90; after this long without reaching the server the app removes its downloads")}
+      ${num("of-cache", s.cache_gb, "Prepared-file cache (GB)", `${fmtSize(d.cache.bytes) || "0 B"} used in ${d.cache.files} file${d.cache.files === 1 ? "" : "s"}; oldest are removed above this`)}
+    </div><div class="err" id="of-err"></div><button class="btn" id="of-save">Save</button>
+    <p class="help">Admins are always unlimited. Downloads in 1080p, 720p or 480p are prepared by the server on <b>${esc(d.encoder)}</b>, one at a time, and pause whenever someone is watching.</p></div>`;
+  html += `<div class="panel" style="max-width:760px"><h3 style="margin-top:0">Being prepared</h3>${d.jobs.length ? `<div class="dl-grants">${d.jobs.map(j => `<div class="dl-g"><span class="dl-g-t">${esc(j.title || "#" + j.item_id)}</span><span class="chip pill">${esc(j.profile.replace(".hevc", " HEVC"))}</span>
+      <span class="muted">${j.status === "failed" ? `<span class="dl-bad">failed: ${esc(j.error || "")}</span>` : j.status === "paused" ? "paused while someone watches · " + Math.round(100 * j.progress) + "%" : j.status === "running" ? `${Math.round(100 * j.progress)}% on ${esc((j.encoder || "").toUpperCase())}` : "waiting"} · ${j.waiting} waiting</span></div>`).join("")}</div>` : `<div class="muted">Nothing in the queue.</div>`}</div>`;
+  html += `<div class="panel"><h3 style="margin-top:0">Users and devices</h3>${d.users.length ? d.users.map(u => `<div class="dl-user"><div class="row-head"><div><b>${esc(u.username)}</b> ${roleChip(u.role)} <span class="muted">${lim(u)}</span></div>
+      ${u.role !== "admin" ? `<button class="btn ghost small" data-uplim="${u.id}">Limits</button>` : ""}</div>
+      ${u.devices.length ? u.devices.map(dv => `<div class="dl-dev"><div class="row-head"><div>${esc(dv.name || "Android device")} <span class="muted">· app ${esc(dv.app_version || "?")} · last sync ${ago(dv.last_sync)} · key ${esc(dv.fp_short)}</span></div><button class="btn danger small" data-rmdev="${dv.id}">Remove device</button></div>${dlGrantRows(dv.grants, true)}</div>`).join("") : `<div class="muted dl-none">No devices set up.</div>`}</div>`).join("")
+    : `<div class="muted">Nobody has the Viewer + Downloads role yet. Change a role in Users, or pick it when you invite someone.</div>`}</div>`;
+  v.innerHTML = html;
+  $("#of-save").onclick = async () => {
+    try {
+      await api("/api/settings/offline", { method: "PUT", body: { enabled: $("#of-on").checked, titles: +$("#of-titles").value, gb: +$("#of-gb").value, devices: +$("#of-dev").value,
+        days: +$("#of-days").value, wipe_days: +$("#of-wipe").value, cache_gb: +$("#of-cache").value } });
+      toast("Download settings saved"); $("#of-err").textContent = ""; route._keepScroll = true; route();
+    } catch (e) { $("#of-err").textContent = e.message; }
+  };
+  $$("[data-rmgrant]", v).forEach(b => b.onclick = async () => { if (!confirm("Revoke this download? The phone deletes it the next time it connects.")) return;
+    try { await api("/api/offline/grants/" + b.dataset.rmgrant, { method: "DELETE" }); toast("Download revoked"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-rmdev]", v).forEach(b => b.onclick = async () => { if (!confirm("Remove this device? All of its downloads are deleted the next time it connects.")) return;
+    try { await api("/api/devices/" + b.dataset.rmdev, { method: "DELETE" }); toast("Device removed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-uplim]", v).forEach(b => b.onclick = () => {
+    const u = d.users.find(x => x.id === +b.dataset.uplim); const o = u.own_limits;
+    const f = (id, val, lbl) => `<label for="${id}">${lbl}</label><input type="number" id="${id}" min="0" value="${val == null ? "" : val}" placeholder="server default">`;
+    modal(`<h2>Download limits for ${esc(u.username)}</h2><div class="form">${f("ul-t", o.titles, "Titles")}${f("ul-g", o.gb, "GB")}${f("ul-d", o.devices, "Devices")}
+      <div class="help">Leave empty to use the server default (${s.titles} titles, ${s.gb} GB, ${s.devices} devices). 0 = unlimited.</div></div><div class="err" id="ul-err"></div>
+      <div class="modal-actions"><button class="btn ghost" id="ul-x">Cancel</button><button class="btn" id="ul-ok">Save</button></div>`, () => {
+      $("#ul-x").onclick = closeModal;
+      $("#ul-ok").onclick = async () => { const val = (id) => $(id).value === "" ? null : +$(id).value;
+        try { await api(`/api/users/${u.id}/download-limits`, { method: "PUT", body: { titles: val("#ul-t"), gb: val("#ul-g"), devices: val("#ul-d") } }); closeModal(); toast("Limits saved"); route._keepScroll = true; route(); }
+        catch (e) { $("#ul-err").textContent = e.message; } };
+    });
+  });
+}
+
 // ---------------------------------------------------------------- settings
+// ---------------------------------------------------------------- 1.9: users, invites, Connect Gmail, devices, activity
+const ROLE_NAMES = { admin: "Admin", download: "Viewer + Downloads", view: "Viewer" };
+function roleChip(r) { return `<span class="role-chip r-${esc(r)}">${esc(ROLE_NAMES[r] || r)}</span>`; }
+function fmtWhen(ts) { if (!ts) return ""; return new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+async function copyText(t, okMsg) {
+  try { await navigator.clipboard.writeText(t); toast(okMsg || "Copied"); }
+  catch (e) { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast(okMsg || "Copied"); } catch (e2) { toast("Copy failed; select the text and copy it", true); } ta.remove(); }
+}
+function libPicker(id, sel) {   // sel: null = all, or a list of library ids
+  const all = sel == null;
+  return `<div class="lib-pick" id="${id}"><label class="chk"><input type="checkbox" data-all ${all ? "checked" : ""}> <b>All libraries</b> <span class="help">(and any added later)</span></label>
+    <div class="lib-pick-list${all ? " off" : ""}">${LIBS.map(l => `<label class="chk"><input type="checkbox" data-lib="${l.id}" ${all || (sel || []).includes(l.id) ? "checked" : ""} ${all ? "disabled" : ""}> ${esc(l.name)} <span class="help">${esc(l.kind)}</span></label>`).join("")}</div></div>`;
+}
+function bindLibPicker(id) {
+  const root = $("#" + id); if (!root) return;
+  const all = root.querySelector("[data-all]");
+  all.onchange = () => { root.querySelector(".lib-pick-list").classList.toggle("off", all.checked); root.querySelectorAll("[data-lib]").forEach(c => { c.disabled = all.checked; if (all.checked) c.checked = true; }); };
+}
+function readLibPicker(id) {
+  const root = $("#" + id);
+  if (root.querySelector("[data-all]").checked) return { all_libraries: true };
+  return { all_libraries: false, libraries: [...root.querySelectorAll("[data-lib]:checked")].map(c => +c.dataset.lib) };
+}
+
+function inviteResultDialog(r, email) {
+  const sent = r.sent;
+  modal(`<h2>${sent ? "Invite sent" : "Share this invite"}</h2>
+    ${sent ? `<p>Sent to <b>${esc(email)}</b> from ${r.from ? `<b>${esc(r.from_name || "")}</b> &lt;${esc(r.from)}&gt;` : "your email"}. It's in your Sent folder too.</p>`
+      : `${r.error ? `<p class="inv-warn">${esc(r.error)}</p>` : r.manual ? `<p class="muted">New link made; nothing was emailed and any earlier link for this invite stops working. Send <b>${esc(email)}</b> this link yourself, or let them scan the code.</p>` : `<p class="muted">Email sending isn't set up, so nothing was emailed. Send <b>${esc(email)}</b> this link yourself, or let them scan the code.</p>`}`}
+    <div class="inv-share"><div class="inv-qr" aria-label="QR code for the invite link">${window.MSQR ? MSQR.svg(r.link, 200) : ""}</div>
+      <div class="inv-linkbox"><label class="help">Invite link (works once)</label><textarea readonly id="inv-link" rows="3">${esc(r.link)}</textarea>
+        <button class="btn" id="inv-copy">Copy link</button>${!sent && !r.manual && (r.reconnect || r.mail === "not_set_up" || r.mail === "disconnected" || r.mail === "needs_reconnect") ? `<a class="btn ghost" href="#/settings/email" id="inv-gm">${r.reconnect ? "Fix email settings" : "Set up email"}</a>` : ""}</div></div>
+    <div class="modal-actions"><button class="btn ghost" id="inv-done">Done</button></div>`, () => {
+    $("#inv-copy").onclick = () => copyText(r.link, "Invite link copied");
+    $("#inv-done").onclick = () => { closeModal(); route(); };
+    if ($("#inv-gm")) $("#inv-gm").onclick = () => closeModal();
+  });
+}
+
+async function inviteDialog() {
+  await refreshLibs();
+  let ms = { ready: false };
+  try { ms = (await api("/api/mail/status")) || ms; } catch (e) { /* not fatal */ }
+  const from = ms.ready ? `<div class="inv-from ok"><span class="gm-dot ${ms.status === "auth_failed" || ms.status === "error" ? "warn" : ""}"></span>Will be sent from <b>${esc(ms.from_name || "")}</b> &lt;${esc(ms.from_addr)}&gt;</div>`
+    : `<div class="inv-from"><span class="gm-dot off"></span>Email sending isn't set up. You'll get a link and QR code to share yourself. <a href="#/settings/email" id="inv-togm">Set up email</a></div>`;
+  modal(`<h2>Invite someone</h2>${from}
+    <div class="form"><label for="iv-email">Email</label><input type="text" id="iv-email" inputmode="email" autocomplete="off" placeholder="friend@example.com">
+    <label for="iv-role">Role</label><select id="iv-role"><option value="view">Viewer — watch</option><option value="download">Viewer + Downloads — watch, and download for offline (Android app 2.0)</option></select>
+    <label>Libraries</label>${libPicker("iv-libs", null)}
+    <label for="iv-note">Personal note</label><textarea id="iv-note" rows="3" maxlength="500" placeholder="Optional — shown in the email"></textarea>
+    <label for="iv-days">Link expires</label><select id="iv-days"><option value="1">in 24 hours</option><option value="3">in 3 days</option><option value="7" selected>in 7 days</option><option value="30">in 30 days</option></select></div>
+    <div class="help">The link works once. Only a fingerprint of it is stored on the server.</div>
+    <div class="err" id="iv-err"></div>
+    <div class="modal-actions"><button class="btn ghost" id="iv-cancel">Cancel</button><button class="btn" id="iv-go">${ms.ready ? "Send invite" : "Create invite link"}</button></div>`, () => {
+    bindLibPicker("iv-libs");
+    $("#iv-cancel").onclick = closeModal;
+    if ($("#inv-togm")) $("#inv-togm").onclick = () => closeModal();
+    $("#iv-email").focus();
+    $("#iv-go").onclick = async () => {
+      const email = $("#iv-email").value.trim();
+      const b = Object.assign({ email, role: $("#iv-role").value, note: $("#iv-note").value, days: +$("#iv-days").value }, readLibPicker("iv-libs"));
+      $("#iv-go").disabled = true; $("#iv-go").textContent = ms.ready ? "Sending…" : "Creating…";
+      try { const r = await api("/api/invites", { method: "POST", body: b }); inviteResultDialog(r, email); }
+      catch (e) { $("#iv-err").textContent = e.message; $("#iv-go").disabled = false; $("#iv-go").textContent = ms.ready ? "Send invite" : "Create invite link"; }
+    };
+  });
+}
+
+function editUserDialog(x) {
+  modal(`<h2>${esc(x.username)}</h2>
+    <div class="form"><label for="eu-email">Email</label><input type="text" id="eu-email" value="${esc(x.email || "")}" placeholder="optional">
+    <label for="eu-role">Role</label><select id="eu-role">${["view", "download", "admin"].map(r => `<option value="${r}" ${x.role === r ? "selected" : ""}>${ROLE_NAMES[r]}</option>`).join("")}</select>
+    <label>Libraries</label><div id="eu-libwrap">${libPicker("eu-libs", x.libraries)}</div></div>
+    <p class="help">Viewers can watch. Viewer + Downloads will also be able to download for offline use in the Android app (2.0). Admins can change settings, libraries and users, and always see every library.</p>
+    <div class="err" id="eu-err"></div>
+    <div class="modal-actions">${x.id !== ME.id ? `<button class="btn ghost" id="eu-dis">${x.disabled ? "Turn account on" : "Turn account off"}</button>` : ""}<span style="flex:1"></span><button class="btn ghost" id="eu-cancel">Cancel</button><button class="btn" id="eu-save">Save</button></div>`, () => {
+    bindLibPicker("eu-libs");
+    const syncAdmin = () => { $("#eu-libwrap").classList.toggle("off", $("#eu-role").value === "admin"); };
+    $("#eu-role").onchange = syncAdmin; syncAdmin();
+    $("#eu-cancel").onclick = closeModal;
+    if ($("#eu-dis")) $("#eu-dis").onclick = async () => {
+      if (!x.disabled && !confirm(`Turn off ${x.username}'s account? They are signed out everywhere and can't sign in until you turn it back on.`)) return;
+      try { await api("/api/users/" + x.id, { method: "PUT", body: { disabled: !x.disabled } }); closeModal(); toast(x.disabled ? "Account turned on" : "Account turned off"); route(); } catch (e) { $("#eu-err").textContent = e.message; }
+    };
+    $("#eu-save").onclick = async () => {
+      const b = Object.assign({ email: $("#eu-email").value.trim(), role: $("#eu-role").value }, $("#eu-role").value === "admin" ? {} : readLibPicker("eu-libs"));
+      try { await api("/api/users/" + x.id, { method: "PUT", body: b }); closeModal(); toast("Saved"); route(); } catch (e) { $("#eu-err").textContent = e.message; }
+    };
+  });
+}
+
+async function devicesDialog(x) {
+  const list = await api(`/api/users/${x.id}/sessions`);
+  modal(`<h2>${esc(x.username)} — signed-in devices</h2>${deviceRows(list, true)}
+    <div class="modal-actions">${list.length ? `<button class="btn danger" id="dv-all">Sign out everywhere</button>` : ""}<span style="flex:1"></span><button class="btn ghost" id="dv-close">Close</button></div>`, () => {
+    $("#dv-close").onclick = closeModal;
+    if ($("#dv-all")) $("#dv-all").onclick = async () => { try { await api(`/api/users/${x.id}/signout`, { method: "POST" }); toast("Signed out everywhere"); closeModal(); route(); } catch (e) { toast(e.message, true); } };
+    $$("[data-endsess]").forEach(b => b.onclick = async () => { try { await api(`/api/users/${x.id}/sessions/${b.dataset.endsess}`, { method: "DELETE" }); b.closest(".dev-row").remove(); toast("Signed out"); } catch (e) { toast(e.message, true); } });
+  });
+}
+
+const DEV_ICO = { phone: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 18.5h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+  desk: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 20h7M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>` };
+function deviceRows(list, admin) {
+  if (!list.length) return `<div class="muted">Not signed in anywhere.</div>`;
+  return `<div class="dev-list">${list.map(s => `<div class="dev-row${s.current ? " cur" : ""}"><span class="dev-ic">${/Android|iPhone|app/.test(s.device) ? DEV_ICO.phone : DEV_ICO.desk}</span>
+    <div class="dev-txt"><b>${esc(s.device)}</b>${s.current ? ` <span class="chip ok pill">this device</span>` : ""}<div class="help">${s.ip ? esc(s.ip) + " · " : ""}last active ${esc(ago(s.last_seen))} · signed in ${esc(fmtWhen(s.created_at))}</div></div>
+    ${s.current && !admin ? "" : `<button class="btn ghost small" data-endsess="${esc(s.id)}">Sign out</button>`}</div>`).join("")}</div>`;
+}
+
+async function viewUsers(v, html) {
+  const [users, inv] = await Promise.all([api("/api/users"), api("/api/invites")]);
+  const pending = inv.invites.filter(i => i.state === "pending");
+  const older = inv.invites.filter(i => i.state !== "pending").slice(0, 15);
+  const ms = inv.mail || {};
+  const gmLine = ms.ready && (ms.status === "auth_failed" || ms.status === "error" || ms.status === "needs_reconnect") ? `<span class="gm-dot warn"></span><b>Email sending has a problem</b> — invites fall back to a link you share. <a href="#/settings/email">Fix it</a>`
+    : ms.ready ? `<span class="gm-dot"></span>Invites are sent from <b>${esc(ms.from_name || "")}</b> &lt;${esc(ms.from_addr)}&gt; · ${ms.sent_hour || 0}/${ms.hourly_cap} this hour`
+    : `<span class="gm-dot off"></span>Email sending isn't set up — invites give you a link and QR code to share. <a href="#/settings/email">Set up email</a>`;
+  html += `<div class="panel"><div class="row-head"><h3 style="margin:0">Users</h3><button class="btn" id="u-invite">+ Invite by email</button></div>
+    <div class="gm-line">${gmLine}</div>
+    <table class="users-tbl"><tr><th>User</th><th>Role</th><th>Libraries</th><th>Last active</th><th>Devices</th><th></th></tr>
+    ${users.map(x => `<tr class="${x.disabled ? "u-off" : ""}"><td><b>${esc(x.username)}</b>${x.id === ME.id ? ` <span class="help">(you)</span>` : ""}${x.disabled ? ` <span class="chip bad pill">off</span>` : ""}${x.email ? `<div class="help">${esc(x.email)}</div>` : ""}</td>
+      <td>${roleChip(x.role)}</td><td>${x.libraries == null ? `<span class="muted">All</span>` : esc(x.library_names.join(", ") || "none")}</td>
+      <td>${x.last_seen ? esc(ago(x.last_seen)) : `<span class="muted">—</span>`}</td><td>${x.devices}</td>
+      <td><div class="row-actions"><button class="btn ghost small" data-edit="${x.id}">Edit</button><button class="btn ghost small" data-dev="${x.id}">Devices</button><a class="btn ghost small" href="#/settings/activity" data-act="${x.id}">Activity</a><button class="btn ghost small" data-pw="${x.id}">Set password</button>${x.id !== ME.id ? `<button class="btn danger small" data-deluser="${x.id}">Delete</button>` : ""}</div></td></tr>`).join("")}</table></div>`;
+  html += `<div class="panel"><h3 style="margin-top:0">Pending invites</h3>${pending.length ? `<table class="inv-tbl"><tr><th>Email</th><th>Role</th><th>Libraries</th><th>Sent</th><th>Expires</th><th></th></tr>
+    ${pending.map(i => `<tr><td>${esc(i.email)}${i.note ? `<div class="help">“${esc(i.note.slice(0, 80))}${i.note.length > 80 ? "…" : ""}”</div>` : ""}</td><td>${roleChip(i.role)}</td><td>${i.libraries == null ? `<span class="muted">All</span>` : esc(i.library_names.join(", "))}</td>
+      <td>${(i.sent_via === "gmail" || i.sent_via === "email") && i.sent_at ? `Emailed · ${esc(ago(i.sent_at))}` : i.send_error ? `<span class="inv-warn" title="${esc(i.send_error)}">not emailed</span>` : `link only`}</td><td>${esc(inTime(i.expires_at).replace("in ", ""))}</td>
+      <td><div class="row-actions"><button class="btn ghost small" data-resend="${i.id}">${ms.ready ? "Resend" : "New link"}</button><button class="btn ghost small" data-newlink="${i.id}">Copy new link</button><button class="btn danger small" data-revoke="${i.id}">Revoke</button></div></td></tr>`).join("")}</table>`
+    : `<div class="muted">None. Press <b>Invite by email</b> to add someone; they choose their own username and password.</div>`}
+    ${older.length ? `<details class="inv-old"><summary>Earlier invites (${older.length})</summary><table><tr><th>Email</th><th>Role</th><th>Status</th><th>When</th></tr>${older.map(i => `<tr><td>${esc(i.email)}</td><td>${roleChip(i.role)}</td><td>${i.state === "accepted" ? `<span class="chip ok pill">joined as ${esc(i.accepted_username || "?")}</span>` : `<span class="chip pill">${esc(i.state)}</span>`}</td><td>${esc(fmtWhen(i.accepted_at || i.revoked_at || i.expires_at))}</td></tr>`).join("")}</table></details>` : ""}</div>`;
+  html += `<details class="panel add-user"><summary><b>Add a user by hand</b> <span class="help">(you set the password; they change it at first sign-in)</span></summary>
+    <div class="form" style="max-width:640px;margin-top:12px"><label>Username</label><input type="text" id="nu"><label>Password</label><input type="password" id="nup" autocomplete="new-password">
+    <label>Email</label><input type="text" id="nue" placeholder="optional"><label for="nur">Role</label><select id="nur"><option value="view">Viewer</option><option value="download">Viewer + Downloads</option><option value="admin">Admin</option></select>
+    <label>Libraries</label>${libPicker("nu-libs", null)}</div><div class="err" id="nuerr"></div><button class="btn" id="nuadd">Add user</button></details>`;
+  v.innerHTML = html;
+  bindLibPicker("nu-libs");
+  $("#u-invite").onclick = () => inviteDialog();
+  $("#nuadd").onclick = async () => { try { await api("/api/users", { method: "POST", body: Object.assign({ username: $("#nu").value, password: $("#nup").value, email: $("#nue").value, role: $("#nur").value }, readLibPicker("nu-libs")) }); toast("User added"); route(); } catch (e) { $("#nuerr").textContent = e.message; } };
+  $$("[data-deluser]").forEach(b => b.onclick = async () => { if (!confirm("Delete this user? Their playlists and watch progress are removed too.")) return; try { await api("/api/users/" + b.dataset.deluser, { method: "DELETE" }); route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-pw]").forEach(b => b.onclick = async () => { const pw = prompt("New password (8+ characters). Other users must change it at next sign-in:"); if (!pw) return; try { await api(`/api/users/${b.dataset.pw}/password`, { method: "POST", body: { password: pw } }); toast("Password set"); } catch (e) { toast(e.message, true); } });
+  $$("[data-edit]").forEach(b => b.onclick = () => editUserDialog(users.find(x => x.id === +b.dataset.edit)));
+  $$("[data-dev]").forEach(b => b.onclick = () => devicesDialog(users.find(x => x.id === +b.dataset.dev)));
+  $$("[data-act]").forEach(a => a.onclick = () => { sessionStorage.setItem("actFilter", JSON.stringify({ user: +a.dataset.act })); });
+  $$("[data-revoke]").forEach(b => b.onclick = async () => { if (!confirm("Revoke this invite? The link stops working.")) return; try { await api("/api/invites/" + b.dataset.revoke, { method: "DELETE" }); toast("Invite revoked"); route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-resend]").forEach(b => b.onclick = async () => { const i = pending.find(x => x.id === +b.dataset.resend); try { const r = await api(`/api/invites/${i.id}/resend`, { method: "POST", body: { send: true } }); inviteResultDialog(r, i.email); } catch (e) { toast(e.message, true); } });
+  $$("[data-newlink]").forEach(b => b.onclick = async () => { const i = pending.find(x => x.id === +b.dataset.newlink); if (!confirm("Make a new link for " + i.email + "? The old link stops working.")) return; try { const r = await api(`/api/invites/${i.id}/resend`, { method: "POST", body: { send: false } }); inviteResultDialog(r, i.email); } catch (e) { toast(e.message, true); } });
+}
+
+async function viewEmail(v, html, q) {
+  const s = await api("/api/settings/email");
+  const m = s.smtp || {};
+  const isG = (m.provider || "gmail") === "gmail";
+  const mchip = m.status === "ok" ? `<span class="chip ok pill">Working</span>` : m.status === "untested" ? `<span class="chip pill">Saved — not tested</span>`
+    : m.status === "auth_failed" || m.status === "error" ? `<span class="chip warn pill">Problem</span>` : `<span class="chip pill">Not set up</span>`;
+  const usingOAuth = s.mail_method === "gmail_oauth";
+  html += `<div class="panel sm-panel"><div class="row-head"><h3 style="margin:0">Send invites from your email</h3>${usingOAuth ? `<span class="chip pill">Not in use — Connect Gmail is selected below</span>` : mchip}</div>
+    <p class="help" style="margin-top:6px">Invites go out from your own address, so people see a name they know and replies come straight to you. The password is stored encrypted on this server and is never shown again.</p>
+    ${m.last_error && !usingOAuth ? `<p class="inv-warn">${esc(m.last_error)}</p>` : ""}
+    ${m.configured && !usingOAuth ? `<div class="gm-line"><span class="gm-dot ${m.status === "ok" ? "" : m.status === "untested" ? "off" : "warn"}"></span>Invites are sent as <b>${esc(m.from_name || m.suggested_from_name || "")}</b> &lt;${esc(m.from_addr)}&gt; · ${m.sent_hour}/${m.hourly_cap} this hour, ${m.sent_day}/${m.daily_cap} today${m.last_used ? " · last sent " + esc(ago(m.last_used)) : ""}</div>` : ""}
+    <div class="form sm-form" style="max-width:760px">
+      <label for="sm-prov">Send with</label><select id="sm-prov"><option value="gmail" ${isG ? "selected" : ""}>Gmail (app password)</option><option value="custom" ${isG ? "" : "selected"}>Other email (SMTP server)</option></select>
+      <label for="sm-user" id="sm-user-l">${isG ? "Gmail address" : "Username"}</label><input type="text" id="sm-user" value="${esc(m.user || "")}" placeholder="${isG ? "you@gmail.com" : "you@example.com"}" autocomplete="off" spellcheck="false" inputmode="email">
+      <label for="sm-pw" id="sm-pw-l">${isG ? "App password" : "Password"}</label><div><input type="password" id="sm-pw" placeholder="${m.password_saved ? "••••••••  saved — type to replace" : (isG ? "abcd efgh ijkl mnop" : "")}" autocomplete="new-password" spellcheck="false">
+        <div class="help sm-g ${isG ? "" : "hidden"}">Not your normal Gmail password: a 16-letter <b>app password</b>. Turn on <b>2-Step Verification</b>, then create one at <a href="${esc(m.app_password_url)}" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> (name it "Movinite"). Spaces are fine. <a href="/static/gmail-setup.html" target="_blank" rel="noopener">Step-by-step guide</a></div></div>
+      <label for="sm-name">From name</label><div><input type="text" id="sm-name" value="${esc(m.from_name || m.suggested_from_name || "")}" maxlength="80" placeholder="Your name"><div class="help">Shown as the sender, e.g. <b>${esc(m.from_name || m.suggested_from_name || "Your Name")}</b> &lt;${esc(m.from_addr || (isG ? "you@gmail.com" : "you@example.com"))}&gt;. Use the name on your Google account so people recognise it.</div></div>
+      <label for="sm-host" class="sm-c ${isG ? "hidden" : ""}">SMTP server</label><input type="text" id="sm-host" class="sm-c ${isG ? "hidden" : ""}" value="${esc(isG ? "" : m.host || "")}" placeholder="smtp.example.com" spellcheck="false">
+      <label for="sm-port" class="sm-c ${isG ? "hidden" : ""}">Port</label><input type="number" id="sm-port" class="sm-c ${isG ? "hidden" : ""}" min="1" max="65535" value="${esc(isG ? 587 : m.port || 587)}" style="max-width:120px">
+      <label for="sm-sec" class="sm-c ${isG ? "hidden" : ""}">Security</label><select id="sm-sec" class="sm-c ${isG ? "hidden" : ""}">${[["starttls", "STARTTLS (usually port 587)"], ["ssl", "SSL/TLS (usually port 465)"], ["none", "None (not recommended)"]].map(([k, l]) => `<option value="${k}" ${(m.security || "starttls") === k && !isG ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <label for="sm-from" class="sm-c ${isG ? "hidden" : ""}">From address</label><input type="text" id="sm-from" class="sm-c ${isG ? "hidden" : ""}" value="${esc(isG ? "" : m.from_addr || "")}" placeholder="same as username" spellcheck="false">
+    </div>
+    <p class="help sm-g ${isG ? "" : "hidden"}">Gmail sends through <code>smtp.gmail.com:587</code> (STARTTLS). The From address is always your Gmail address, with replies going to it too.</p>
+    ${m.crypto === false ? `<p class="inv-warn">This server is missing the Python <code>cryptography</code> package, so the password can't be stored safely. Re-run update.sh.</p>` : ""}
+    <div class="err" id="sm-err"></div>
+    <div class="gm-actions"><button class="btn" id="sm-save">Save</button><button class="btn ghost" id="sm-test" ${m.configured ? "" : "disabled"}>Send test email to myself</button>${m.configured || m.password_saved ? `<button class="btn ghost danger" id="sm-del">Remove</button>` : ""}</div>
+  </div>`;
+  html += `<div class="panel"><h3 style="margin-top:0">Invite links</h3><div class="form" style="max-width:760px">
+    <label for="em-pub">Public address</label><div><input type="text" id="em-pub" value="${esc(s.public_url)}" placeholder="https://movies.example.com"><div class="help">Used in invite links (and the Connect Gmail redirect). Empty: the address you're using now (<code>${esc(s.effective_base_url)}</code>).</div></div>
+    <label for="em-name">Server name</label><input type="text" id="em-name" value="${esc(s.server_name === "Movinite" ? "" : s.server_name)}" placeholder="Movinite" maxlength="60">
+    <label for="em-hcap">Invites per hour</label><input type="number" id="em-hcap" min="1" max="2000" value="${s.hourly_cap}" style="max-width:120px">
+    <label for="em-dcap">Invites per day</label><input type="number" id="em-dcap" min="1" max="2000" value="${s.daily_cap}" style="max-width:120px"></div>
+    <div class="err" id="em-err"></div><button class="btn" id="em-save">Save</button></div>`;
+  const me = s.me || {};
+  let adv = "";
+  if (q.connected) toast("Gmail connected" + (me.email ? " as " + me.email : ""));
+  const st = me.status || "disconnected";
+  const stChip = st === "connected" ? `<span class="chip ok pill">Connected</span>` : st === "needs_reconnect" ? `<span class="chip warn pill">Needs reconnect</span>` : `<span class="chip pill">Not connected</span>`;
+  const credsOk = s.client_id && s.client_secret_saved;
+  adv += `<div class="panel gm-panel"><div class="row-head"><h3 style="margin:0">Connect Gmail</h3>${stChip}</div>
+    <p class="help" style="margin-top:6px">Invites go out from your own Gmail, so people see a name they know and replies come straight to you. Movinite can <b>only send</b> email — it can't read, search or delete your mail. Your Google password is never seen by Movinite.</p>
+    ${st === "connected" ? `<div class="gm-who"><span class="gm-av">${esc((me.display_name || me.email || "?").slice(0, 1).toUpperCase())}</span><div><b>${esc(me.display_name || "")}</b><div class="help">${esc(me.email)} · connected ${esc(fmtWhen(me.connected_at))}${me.last_used ? " · last sent " + esc(ago(me.last_used)) : ""}</div><div class="help">Invites show as from <b>${esc(me.display_name || me.email)}</b> &lt;${esc(me.email)}&gt; (the name on this Google account). Sent: ${me.sent_hour}/${me.hourly_cap} this hour, ${me.sent_day}/${me.daily_cap} today.</div></div></div>
+      <div class="gm-actions"><button class="btn ghost" id="gm-test">Send test invite to myself</button><button class="btn ghost" id="gm-re">Reconnect</button><button class="btn danger" id="gm-off">Disconnect Gmail</button></div>`
+    : `${st === "needs_reconnect" && me.last_error ? `<p class="inv-warn">${esc(me.last_error)}</p>` : ""}
+      <div class="gm-actions"><button class="btn gm-connect" id="gm-connect" ${credsOk ? "" : "disabled"}><span class="g-ic" aria-hidden="true">G</span>Connect Gmail</button>${credsOk ? "" : `<span class="help">Add the Google OAuth client below first.</span>`}</div>`}
+    ${!s.redirect_ok && credsOk && st !== "connected" ? `<div class="gm-paste"><b>This page isn't open at an https address</b>, so Google can't send you straight back here.
+      <ol><li>Open Movinite at its public https address, e.g. ${esc(s.public_url || "https://movies.example.com")}, and connect there, <b>or</b></li>
+      <li>Use the copy-paste method: press <b>Connect with copy-paste</b>, sign in with Google, and when the browser ends on a page that can't load (address starting <code>${esc(s.paste_redirect_uri)}</code>), copy that whole address and paste it here.</li></ol>
+      <button class="btn ghost" id="gm-pastego">Connect with copy-paste</button>
+      <div class="gm-paste-in hidden" id="gm-pastebox"><input type="text" id="gm-pasteurl" placeholder="${esc(s.paste_redirect_uri)}?state=…&code=…"><button class="btn" id="gm-pastesave">Finish connecting</button></div><div class="err" id="gm-pasteerr"></div></div>` : ""}
+    ${s.accounts && s.accounts.filter(a => a.user_id !== ME.id).length ? `<div class="help" style="margin-top:10px">Other admins: ${s.accounts.filter(a => a.user_id !== ME.id).map(a => `${esc(a.username)} (${esc(a.email)}, ${esc(a.status)})`).join(" · ")}</div>` : ""}
+  </div>`;
+  adv += `<div class="panel"><h3 style="margin-top:0">Google OAuth client (for Connect Gmail)</h3>
+    <p class="help" style="margin-top:0">Each Movinite server uses its own free Google Cloud project for now (about 10 minutes, once). Follow <a href="/static/gmail-setup.html" target="_blank" rel="noopener" style="color:var(--acc-text)">the setup guide</a>, then paste the client ID and secret here. The secret is stored encrypted on this server and is never shown again.</p>
+    <div class="form" style="max-width:760px"><label for="gm-cid">Client ID</label><input type="text" id="gm-cid" value="${esc(s.client_id)}" placeholder="1234567890-abc….apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+    <label for="gm-sec">Client secret</label><input type="password" id="gm-sec" placeholder="${s.client_secret_saved ? "••••••••  saved — type to replace" : "GOCSPX-…"}" autocomplete="new-password" spellcheck="false">
+    <label>Redirect URI</label><div class="gm-uri"><code id="gm-uri">${esc(s.redirect_uri)}</code><button class="btn ghost small" data-copy="${esc(s.redirect_uri)}">Copy</button>${s.redirect_ok ? "" : ` <span class="chip warn pill" title="Google only accepts https addresses (or localhost)">not https</span>`}</div>
+    <label>Also add</label><div class="gm-uri"><code>${esc(s.paste_redirect_uri)}</code><button class="btn ghost small" data-copy="${esc(s.paste_redirect_uri)}">Copy</button> <span class="help">for the copy-paste method</span></div>
+    <label>Scopes</label><div class="help">${s.scopes.map(x => `<code>${esc(x)}</code>`).join(" ")}</div></div>
+    ${s.crypto ? "" : `<p class="inv-warn">This server is missing the Python <code>cryptography</code> package, so secrets can't be stored safely. Re-run update.sh.</p>`}
+    <div class="err" id="gm-err"></div><button class="btn" id="gm-save">Save credentials</button></div>`;
+  html += `<details class="panel adv-mail" ${usingOAuth || q.connected ? "open" : ""}><summary><b>Advanced: Connect Gmail with Google sign-in (OAuth)</b> <span class="help">— instead of an app password; needs a Google Cloud project</span></summary>
+    <div class="form" style="max-width:760px;margin-top:12px"><label>Send invites with</label><div class="mm-pick">
+      <label class="chk"><input type="radio" name="mm" value="smtp" ${usingOAuth ? "" : "checked"}> App password / SMTP (above)</label>
+      <label class="chk"><input type="radio" name="mm" value="gmail_oauth" ${usingOAuth ? "checked" : ""}> Connect Gmail (below)</label></div></div>
+    ${adv}</details>`;
+  v.innerHTML = html;
+  const prov = () => $("#sm-prov").value;
+  $("#sm-prov").onchange = () => {
+    const g = prov() === "gmail";
+    $$(".sm-c").forEach(e => e.classList.toggle("hidden", g)); $$(".sm-g").forEach(e => e.classList.toggle("hidden", !g));
+    $("#sm-user-l").textContent = g ? "Gmail address" : "Username"; $("#sm-pw-l").textContent = g ? "App password" : "Password";
+    $("#sm-user").placeholder = g ? "you@gmail.com" : "you@example.com";
+  };
+  $("#sm-save").onclick = async () => {
+    const body = { provider: prov(), user: $("#sm-user").value.trim(), from_name: $("#sm-name").value.trim() };
+    if ($("#sm-pw").value) body.password = $("#sm-pw").value;
+    if (prov() === "custom") Object.assign(body, { host: $("#sm-host").value.trim(), port: +$("#sm-port").value, security: $("#sm-sec").value, from_addr: $("#sm-from").value.trim() });
+    $("#sm-save").disabled = true;
+    try { await api("/api/settings/smtp", { method: "PUT", body }); $("#sm-pw").value = ""; toast("Saved — press Send test email to check it"); route(); }
+    catch (e) { $("#sm-err").textContent = e.message; } $("#sm-save").disabled = false;
+  };
+  $("#sm-test").onclick = async () => { $("#sm-test").disabled = true; $("#sm-err").textContent = ""; try { const r = await api("/api/smtp/test", { method: "POST" }); toast("Test email sent to " + r.to + " — check your inbox"); route(); } catch (e) { $("#sm-err").textContent = e.message; } $("#sm-test").disabled = false; };
+  if ($("#sm-del")) $("#sm-del").onclick = async () => { if (!confirm("Remove the saved email address and password? Invites will give you a link to share instead.")) return; try { await api("/api/settings/smtp", { method: "DELETE" }); toast("Removed"); route(); } catch (e) { toast(e.message, true); } };
+  $$("input[name=mm]").forEach(r => r.onchange = async () => { try { await api("/api/settings/email", { method: "PUT", body: { mail_method: r.value } }); toast(r.value === "smtp" ? "Invites use the app password / SMTP" : "Invites use Connect Gmail"); route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-copy]").forEach(b => b.onclick = () => copyText(b.dataset.copy, "Copied"));
+  $("#gm-save").onclick = async () => { try { await api("/api/settings/email", { method: "PUT", body: { client_id: $("#gm-cid").value.trim(), client_secret: $("#gm-sec").value } }); $("#gm-sec").value = ""; toast("Credentials saved"); route(); } catch (e) { $("#gm-err").textContent = e.message; } };
+  $("#em-save").onclick = async () => { try { await api("/api/settings/email", { method: "PUT", body: { public_url: $("#em-pub").value.trim(), server_name: $("#em-name").value.trim(), hourly_cap: +$("#em-hcap").value, daily_cap: +$("#em-dcap").value } }); toast("Saved"); route(); } catch (e) { $("#em-err").textContent = e.message; } };
+  const go = async (paste) => { try { const r = await api("/api/gmail/connect", { method: "POST", body: { paste } }); if (paste) { $("#gm-pastebox").classList.remove("hidden"); window.open(r.url, "_blank", "noopener"); } else location.href = r.url; } catch (e) { toast(e.message, true); } };
+  if ($("#gm-connect")) $("#gm-connect").onclick = () => go(!s.redirect_ok);
+  if ($("#gm-re")) $("#gm-re").onclick = () => go(!s.redirect_ok);
+  if ($("#gm-pastego")) $("#gm-pastego").onclick = () => go(true);
+  if ($("#gm-pastesave")) $("#gm-pastesave").onclick = async () => { try { await api("/api/gmail/paste", { method: "POST", body: { url: $("#gm-pasteurl").value } }); toast("Gmail connected"); route(); } catch (e) { $("#gm-pasteerr").textContent = e.message; } };
+  if ($("#gm-test")) $("#gm-test").onclick = async () => { $("#gm-test").disabled = true; try { const r = await api("/api/gmail/test", { method: "POST" }); toast("Test email sent to " + r.to); } catch (e) { toast(e.message, true); } $("#gm-test").disabled = false; };
+  if ($("#gm-off")) $("#gm-off").onclick = async () => { if (!confirm("Disconnect Gmail? Movinite's access is revoked at Google and its saved sign-in is deleted.")) return; try { const r = await api("/api/gmail", { method: "DELETE" }); toast(r.revoked ? "Gmail disconnected" : "Disconnected here; also remove Movinite at myaccount.google.com > Security", !r.revoked); route(); } catch (e) { toast(e.message, true); } };
+}
+
+// ---- Settings > Activity
+const UACT = {
+  login: ["Signed in", "in"], login_failed: ["Sign-in failed", "warn"], logout: ["Signed out", "out"], password_changed: ["Changed password", "key"],
+  session_revoked: ["Signed out a device", "out"], signed_out_everywhere: ["Signed out everywhere", "out"],
+  play_start: ["Started", "play"], play_stop: ["Stopped", "stop"],
+  invite_created: ["Created an invite", "mail"], invite_sent: ["Emailed an invite", "mail"], invite_send_failed: ["Invite email failed", "warn"], invite_accepted: ["Joined from an invite", "user"],
+  invite_revoked: ["Revoked an invite", "mail"], user_created: ["Added a user", "user"], user_deleted: ["Deleted a user", "user"], role_changed: ["Changed a role", "user"],
+  libraries_changed: ["Changed library access", "user"], user_disabled: ["Turned an account off", "user"], user_enabled: ["Turned an account on", "user"], password_reset: ["Set a password", "key"],
+  gmail_connected: ["Connected Gmail", "mail"], gmail_disconnected: ["Disconnected Gmail", "mail"], gmail_error: ["Gmail problem", "warn"], email_error: ["Email sending problem", "warn"], email_test: ["Sent a test email", "mail"],
+  library_added: ["Added a library", "lib"], library_removed: ["Removed a library", "lib"], scan_started: ["Started a scan", "lib"], settings_changed: ["Changed settings", "gear"], server_started: ["Server started", "gear"],
+  device_registered: ["Set up a device for downloads", "dl"], device_revoked: ["Removed a download device", "dl"], download_requested: ["Asked to download", "dl"],
+  download_ready: ["Download prepared", "dl"], download_started: ["Started downloading", "dl"], download_complete: ["Downloaded", "dl"],
+  download_deleted: ["Deleted a download", "dl"], download_revoked: ["Download taken back", "warn"], download_failed: ["Download failed", "warn"]
+};
+const ACT_ICO = { dl: `<path d="M12 4v10.5M7.5 10l4.5 4.5 4.5-4.5M5 17v2h14v-2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`, play: `<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>`, stop: `<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>`,
+  in: `<path d="M10 17l5-5-5-5M15 12H3M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`,
+  out: `<path d="M14 17l5-5-5-5M19 12H8M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`,
+  warn: `<path d="M12 4l9 16H3z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M12 10v4M12 17v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+  key: `<circle cx="8" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M11.5 12H20M17 12v3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`,
+  mail: `<rect x="3" y="5.5" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M3.5 7l8.5 6 8.5-6" fill="none" stroke="currentColor" stroke-width="1.9"/>`,
+  user: `<circle cx="12" cy="8.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`,
+  lib: `<path d="M5 4v16M10 4v16M15 4.5l4.5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+  gear: `<circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>` };
+function actIcon(k) { const t = (UACT[k] || [k, "gear"])[1]; return `<span class="act-ic t-${t}"><svg viewBox="0 0 24 24" aria-hidden="true">${ACT_ICO[t] || ACT_ICO.gear}</svg></span>`; }
+function actDetail(e) {
+  const d = e.detail || {};
+  const bits = [];
+  if (e.kind === "play_start" || e.kind === "play_stop") {
+    if (d.mode) bits.push({ transcode: "Transcode", remux: "Remux", direct: "Direct play", music: "Music" }[d.mode] || d.mode);
+    if (d.quality && d.quality !== "remux" && d.quality !== "audio") bits.push(d.quality);
+    if (d.watched_s) bits.push("watched " + fmtLen(d.watched_s));
+  }
+  if ((e.kind || "").startsWith("download_") && d.quality) bits.push(d.quality);
+  if ((e.kind || "").startsWith("download_") && d.bytes) bits.push(fmtSize(d.bytes));
+  if (d.offline) bits.push("while offline");
+  if (d.email) bits.push(d.email);
+  if (d.username) bits.push(d.username);
+  if (d.role) bits.push(ROLE_NAMES[d.role] || d.role);
+  if (d.from && d.to) bits.push(`${ROLE_NAMES[d.from] || d.from} → ${ROLE_NAMES[d.to] || d.to}`);
+  if (d.reason) bits.push(d.reason);
+  if (d.keys) bits.push(d.keys.join(", "));
+  if (d.devices != null) bits.push(d.devices + " device" + (d.devices === 1 ? "" : "s"));
+  return bits.map(esc).join(" · ");
+}
+function actRow(e) {
+  const what = (UACT[e.kind] || [e.kind])[0];
+  return `<div class="act-row g-${esc(e.group)}">${actIcon(e.kind)}<div class="act-main"><div><b>${esc(e.actor || "Server")}</b> <span class="act-what">${esc(what)}</span>${e.title ? ` <span class="act-title">${esc(e.title)}</span>` : ""}</div>
+    <div class="help">${esc(new Date(e.ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${e.device ? " · " + esc(e.device) : ""}${e.ip ? " · " + esc(e.ip) : ""}${actDetail(e) ? " · " + actDetail(e) : ""}</div></div></div>`;
+}
+function actDays(events) {
+  let out = "", last = "";
+  const today = new Date().toDateString(), yest = new Date(Date.now() - 86400000).toDateString();
+  for (const e of events) {
+    const d = new Date(e.ts * 1000), k = d.toDateString();
+    if (k !== last) { last = k; out += `<div class="act-day">${k === today ? "Today" : k === yest ? "Yesterday" : esc(d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }))}</div>`; }
+    out += actRow(e);
+  }
+  return out;
+}
+function nowCard(n) {
+  const it = n.item || {}, t = n.transcode;
+  const title = it.show ? `${it.show} ${epCode(it)}` : it.title;
+  const mode = n.mode === "transcode" || (t && t.profile !== "remux" && n.mode !== "direct") ? (t && t.encoder && t.encoder !== "cpu" ? `<span class="hw-badge">GPU</span> Transcode` : "Transcode (CPU)") : n.mode === "remux" ? "Remux" : n.mode === "music" ? "Music" : "Direct play";
+  const pct = n.progress != null ? Math.max(0, Math.min(100, n.progress * 100)) : null;
+  return `<div class="np-card"><div class="np-art"${it.poster || it.thumb ? ` style="background-image:url('${thumbUrl(it.poster || it.thumb)}')"` : ""}></div>
+    <div class="np-txt"><div class="np-title">${esc(title || "?")}</div><div class="np-user"><span class="gm-av sm">${esc((n.username || "?").slice(0, 1).toUpperCase())}</span>${esc(n.username || "?")}</div>
+    <div class="help">${mode}${n.profile && n.profile !== "remux" && n.profile !== "audio" ? " · " + esc(n.profile) : ""}${t && t.paused ? " · buffered ahead" : ""}</div>
+    <div class="help">${esc(n.device || "")}${n.ip ? " · " + esc(n.ip) : ""} · ${esc(fmtLen(Math.max(1, Date.now() / 1000 - n.started)))}</div>
+    ${pct != null ? `<div class="np-bar"><i style="width:${pct.toFixed(1)}%"></i></div>` : ""}</div>
+    <button class="iconbtn np-stop" title="Stop this stream" aria-label="Stop ${esc(n.username)}'s stream" data-npstop="${n.user_id}:${it.id}">&#9632;</button></div>`;
+}
+async function viewUserActivity(v, html) {
+  let f = {}; try { f = JSON.parse(sessionStorage.getItem("actFilter") || "{}"); } catch (e) { f = {}; }
+  const qs = () => { const p = new URLSearchParams(); if (f.user) p.set("user", f.user); if (f.group) p.set("group", f.group); if (f.q) p.set("q", f.q);
+    if (f.from) p.set("since", Math.floor(new Date(f.from + "T00:00").getTime() / 1000)); if (f.to) p.set("until", Math.floor(new Date(f.to + "T00:00").getTime() / 1000) + 86400); return p.toString(); };
+  const [now, list, sum, users] = await Promise.all([api("/api/admin/activity/now"), api("/api/admin/activity?limit=100&" + qs()), api("/api/admin/activity/summary?days=30"), api("/api/users")]);
+  html += `<div class="panel np-panel"><div class="row-head"><h3 style="margin:0">Now playing</h3><span class="help" id="np-count">${now.now.length ? now.now.length + " stream" + (now.now.length === 1 ? "" : "s") : ""}</span></div>
+    <div class="np-grid" id="np-grid">${now.now.length ? now.now.map(nowCard).join("") : `<div class="muted">Nothing is playing right now.</div>`}</div></div>`;
+  html += `<div class="panel"><h3 style="margin-top:0">Last 30 days</h3><div class="act-sum">${sum.users.map(x => `<button class="act-user${f.user === x.id ? " on" : ""}" data-fuser="${x.id}"><span class="gm-av sm">${esc(x.username.slice(0, 1).toUpperCase())}</span><span><b>${esc(x.username)}</b><span class="help">${x.plays} play${x.plays === 1 ? "" : "s"} · ${x.hours} h · ${x.last_active ? esc(ago(x.last_active)) : "never"}</span></span></button>`).join("")}</div></div>`;
+  html += `<div class="panel"><div class="act-filters">
+      <select id="af-user" aria-label="User"><option value="">Everyone</option>${users.map(x => `<option value="${x.id}" ${f.user === x.id ? "selected" : ""}>${esc(x.username)}</option>`).join("")}</select>
+      <select id="af-group" aria-label="Type"><option value="">All activity</option>${[["playback", "Playback"], ["signin", "Sign-ins"], ["accounts", "Users & invites"], ["downloads", "Downloads"], ["server", "Server"]].map(([k, n]) => `<option value="${k}" ${f.group === k ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <input type="date" id="af-from" value="${esc(f.from || "")}" aria-label="From"><input type="date" id="af-to" value="${esc(f.to || "")}" aria-label="To">
+      <input type="search" id="af-q" value="${esc(f.q || "")}" placeholder="Search titles, devices, IPs" aria-label="Search">
+      <a class="btn ghost small" id="af-csv" href="/api/admin/activity/export.csv?${esc(qs())}" download>Export CSV</a></div>
+    <div class="act-list" id="act-list">${list.events.length ? actDays(list.events) : `<div class="muted" style="padding:14px 0">No activity${qs() ? " matches these filters" : " yet"}.</div>`}</div>
+    ${list.more ? `<button class="btn ghost" id="act-more">Show older</button>` : ""}
+    <div class="act-ret"><label for="af-ret">Keep activity for</label><select id="af-ret">${[[30, "30 days"], [90, "90 days"], [180, "180 days"], [365, "1 year"], [0, "forever"]].map(([d, n]) => `<option value="${d}" ${list.retention_days === d ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <span class="help">Failed sign-ins are kept 30 days, and IP addresses are cleared after 30 days.</span></div></div>`;
+  v.innerHTML = html;
+  const setF = (k, val) => { if (val === "" || val == null) delete f[k]; else f[k] = val; sessionStorage.setItem("actFilter", JSON.stringify(f)); route._keepScroll = true; route(); };
+  $("#af-user").onchange = (e) => setF("user", e.target.value ? +e.target.value : "");
+  $("#af-group").onchange = (e) => setF("group", e.target.value);
+  $("#af-from").onchange = (e) => setF("from", e.target.value);
+  $("#af-to").onchange = (e) => setF("to", e.target.value);
+  let qt; $("#af-q").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => setF("q", e.target.value.trim()), 400); };
+  $$("[data-fuser]").forEach(b => b.onclick = () => setF("user", f.user === +b.dataset.fuser ? "" : +b.dataset.fuser));
+  $("#af-ret").onchange = async (e) => { try { await api("/api/admin/activity/settings", { method: "PUT", body: { retention_days: +e.target.value } }); toast("Saved"); } catch (err) { toast(err.message, true); } };
+  let oldest = list.events.length ? list.events[list.events.length - 1].id : 0, shown = list.events.slice();
+  if ($("#act-more")) $("#act-more").onclick = async () => { const r = await api(`/api/admin/activity?limit=100&before_id=${oldest}&` + qs()); shown = shown.concat(r.events); if (r.events.length) oldest = r.events[r.events.length - 1].id; $("#act-list").innerHTML = actDays(shown); if (!r.more) $("#act-more").remove(); };
+  const bindStops = () => $$("[data-npstop]").forEach(b => b.onclick = async () => { const [uid, iid] = b.dataset.npstop.split(":").map(Number); if (!confirm("Stop this stream?")) return; try { await api("/api/admin/activity/stop", { method: "POST", body: { user_id: uid, item_id: iid } }); toast("Stream stopped"); } catch (e) { toast(e.message, true); } });
+  bindStops();
+  const tok = route._token;
+  route._poll = setInterval(async () => {
+    if (route._token !== tok || document.hidden) return;
+    try { const n = await api("/api/admin/activity/now"); if (route._token !== tok) return;
+      $("#np-grid").innerHTML = n.now.length ? n.now.map(nowCard).join("") : `<div class="muted">Nothing is playing right now.</div>`;
+      $("#np-count").textContent = n.now.length ? n.now.length + " stream" + (n.now.length === 1 ? "" : "s") : ""; bindStops(); } catch (e) { /* ignore */ }
+  }, 5000);
+}
+
+async function accountExtras(v) {
+  const [sess, act] = await Promise.all([api("/api/me/sessions"), api("/api/me/activity?limit=15")]);
+  const box = document.createElement("div");
+  box.innerHTML = `<div class="panel" style="max-width:760px"><div class="row-head"><h3 style="margin:0">Signed-in devices</h3>${sess.length > 1 ? `<button class="btn ghost small" id="dv-others">Sign out all other devices</button>` : ""}</div>
+    <p class="help">Phones, tablets and browsers signed in to your account. Sign out any you don't recognise, then change your password.</p>${deviceRows(sess, false)}</div>
+    <div class="panel" style="max-width:760px"><h3 style="margin-top:0">My recent activity</h3><div class="act-list">${act.events.length ? actDays(act.events) : `<div class="muted">Nothing yet.</div>`}</div>
+    <p class="help">Admins can see activity on this server, including what you play. It is kept ${act.retention_days ? act.retention_days + " days" : "until an admin clears it"}.</p></div>`;
+  const ref = v.querySelector(".panel:nth-of-type(2)");
+  v.insertBefore(box, ref ? ref.nextSibling : null);
+  if ($("#dv-others")) $("#dv-others").onclick = async () => { try { const r = await api("/api/me/sessions/others", { method: "POST" }); toast(`Signed out ${r.signed_out} other device${r.signed_out === 1 ? "" : "s"}`); route(); } catch (e) { toast(e.message, true); } };
+  $$("[data-endsess]", box).forEach(b => b.onclick = async () => { try { await api("/api/me/sessions/" + b.dataset.endsess, { method: "DELETE" }); b.closest(".dev-row").remove(); toast("Signed out"); } catch (e) { toast(e.message, true); } });
+}
+
+async function networkPanel(v) {
+  const n = await api("/api/settings/network");
+  const box = document.createElement("div");
+  box.className = "panel"; box.id = "net-panel";
+  box.innerHTML = `<h3 style="margin-top:0">Reverse proxy</h3>
+    <p class="help" style="margin-top:0">If Movinite sits behind a proxy (for example OpenResty or nginx, with Cloudflare in front), list the proxy's address so the server sees each visitor's real address. Sign-in limits and Activity use it.</p>
+    ${n.untrusted_proxy ? `<div class="inv-warn">Requests are arriving through <b>${esc(n.untrusted_proxy.ip)}</b> with forwarded-address headers, but it isn't trusted yet, so every visitor looks like ${esc(n.untrusted_proxy.ip)}. <button class="btn small" id="net-trust" data-ip="${esc(n.untrusted_proxy.ip)}">Trust ${esc(n.untrusted_proxy.ip)}</button></div>` : ""}
+    <div class="form" style="max-width:760px"><label for="net-tp">Trusted proxies</label><div><input type="text" id="net-tp" value="${esc(n.trusted_proxies)}" placeholder="e.g. 192.0.2.10"><div class="help">IP addresses or networks, comma-separated. 127.0.0.1 is always trusted${n.env ? `; also from .env: ${esc(n.env)}` : ""}.</div></div>
+    <label>You are seen as</label><b>${esc(n.your_ip)}${n.peer && n.peer !== n.your_ip ? ` <span class="help">(via ${esc(n.peer)})</span>` : ""}</b></div>
+    <div class="err" id="net-err"></div><button class="btn" id="net-save">Save</button>`;
+  v.appendChild(box);
+  const save = async (spec) => { try { await api("/api/settings/network", { method: "PUT", body: { trusted_proxies: spec } }); toast("Saved"); route(); } catch (e) { $("#net-err").textContent = e.message; } };
+  $("#net-save").onclick = () => save($("#net-tp").value.trim());
+  if ($("#net-trust")) $("#net-trust").onclick = (e) => { const cur = $("#net-tp").value.trim(); save(cur ? cur + ", " + e.target.dataset.ip : e.target.dataset.ip); };
+}
+
+// ---- the page an invited person opens (no sign-in needed)
+async function showJoin(token) {
+  stopAll();
+  let p;
+  try { p = await api("/api/invite/" + enc(token), { noAuthRedirect: true }); }
+  catch (e) { showAuth(`<div class="auth-box join-box"><h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1><h2 class="auth-h">Invite not valid</h2><p class="muted">${esc(e.message)}</p><button class="btn" id="jn-login">Go to sign in</button></div>`);
+    $("#jn-login").onclick = () => { location.hash = "#/home"; boot(); }; return; }
+  const libs = p.all_libraries ? "all libraries" : p.libraries.join(", ");
+  showAuth(`<form class="auth-box join-box" id="joinf"><h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
+    <h2 class="auth-h">${esc(p.inviter)} invited you</h2><div class="muted">to ${esc(p.server)} as <b>${esc(p.role_label)}</b> · ${esc(libs)}</div>
+    ${p.note ? `<div class="join-note">${esc(p.note)}</div>` : ""}
+    <label>Email</label><input type="text" value="${esc(p.email)}" disabled>
+    <label for="ju">Choose a username</label><input type="text" id="ju" autocomplete="username" value="${esc((p.email.split("@")[0] || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 40))}">
+    <label for="jp">Choose a password (8+ characters)</label><input type="password" id="jp" autocomplete="new-password">
+    <label for="jp2">Repeat password</label><input type="password" id="jp2" autocomplete="new-password">
+    <button class="btn" type="submit">Join</button><div class="err" id="jerr"></div>
+    <div class="help" style="margin-top:8px">This invite works once and expires ${esc(fmtWhen(p.expires_at))}. You can sign in later with your username or your email.</div></form>`);
+  $("#joinf").onsubmit = async (e) => {
+    e.preventDefault();
+    if ($("#jp").value !== $("#jp2").value) { $("#jerr").textContent = "Passwords do not match"; return; }
+    try { await api("/api/invite/" + enc(token) + "/accept", { method: "POST", body: { username: $("#ju").value.trim(), password: $("#jp").value }, noAuthRedirect: true });
+      history.replaceState(null, "", "/#/home"); boot(); }
+    catch (err) { $("#jerr").textContent = err.message; }
+  };
+}
+
 async function viewSettings(tab) {
   // 1.4.9: non-admins only see their own tabs.  1.5.5: Poster Sounds has its own tab (for everyone).
   // 1.6: fixed left-to-right order; viewers get the same relative order; an unknown / hidden tab opens the first one
-  const ALL_TABS = [["libraries", "Libraries", 1], ["scans", "Scan activity", 1], ["sounds", "Poster Sounds", 0], ["metadata", "Metadata", 1],
-    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["account", "My account", 0], ["system", "System", 1]];
+  // 1.9: + Activity (users) and Email (Connect Gmail); "Scan activity" is now "Scans"
+  const tq = {}; if (tab && tab.includes("?")) { new URLSearchParams(tab.split("?")[1]).forEach((v, k) => { tq[k] = v; }); tab = tab.split("?")[0]; }
+  const ALL_TABS = [["libraries", "Libraries", 1], ["scans", "Scans", 1], ["activity", "Activity", 1], ["sounds", "Poster Sounds", 0], ["metadata", "Metadata", 1],
+    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["downloads", "Downloads", 1], ["email", "Email", 1], ["account", "My account", 0], ["system", "System", 1]];
   const tabs = ALL_TABS.filter(t => ME.is_admin || !t[2]).map(t => [t[0], t[1]]);
   if (!tabs.some(t => t[0] === tab)) tab = tabs[0][0];
   let html = `<h2>Settings</h2><div class="tabs set-tabs" role="tablist" aria-label="Settings sections">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? "on" : ""}" data-href="#/settings/${k}">${n}</button>`).join("")}</div>`;
@@ -2000,6 +2713,7 @@ async function viewSettings(tab) {
       <button class="btn" id="cpsave">Change password</button></div>`;
     html += `<p class="help" style="max-width:560px">Sounds for posters and buttons are in <a style="color:var(--acc-text)" href="#/settings/sounds">Poster Sounds</a>.</p>`;
     v.innerHTML = html;
+    accountExtras(v).then(() => accountDownloads(v)).catch(() => {});
     $("#qcap-on").onchange = () => { setQualityCap($("#qcap-on").checked); toast($("#qcap-on").checked ? "Quality will be capped to this screen" : "Screen cap off on this device"); };
     $("#cpsave").onclick = async () => {
       if ($("#np").value !== $("#np2").value) { $("#cperr").textContent = "Passwords do not match"; return; }
@@ -2027,16 +2741,13 @@ async function viewSettings(tab) {
     $("#snd-test").onclick = () => SFX.test();
     sndSync();
   } else if (tab === "users") {
-    const users = await api("/api/users");
-    html += `<div class="panel"><h3 style="margin-top:0">Users</h3><table><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr>
-      ${users.map(x => `<tr><td>${esc(x.username)}</td><td>${x.is_admin ? "admin" : "viewer"}</td><td>${new Date(x.created_at * 1000).toLocaleDateString()}</td>
-      <td><button class="btn ghost small" data-pw="${x.id}">Set password</button>${x.id !== ME.id ? `<button class="btn danger small" data-deluser="${x.id}">Delete</button>` : ""}</td></tr>`).join("")}</table>
-      <h3>Add a user</h3><div class="form" style="max-width:560px"><label>Username</label><input type="text" id="nu"><label>Password</label><input type="password" id="nup" autocomplete="new-password">
-      <label for="nua">Administrator</label><label class="chk"><input type="checkbox" id="nua"> <span class="help">can add libraries, shares and users</span></label></div><div class="err" id="nuerr"></div><button class="btn" id="nuadd">Add user</button></div>`;
-    v.innerHTML = html;
-    $("#nuadd").onclick = async () => { try { await api("/api/users", { method: "POST", body: { username: $("#nu").value, password: $("#nup").value, is_admin: $("#nua").checked } }); toast("User added"); route(); } catch (e) { $("#nuerr").textContent = e.message; } };
-    $$("[data-deluser]").forEach(b => b.onclick = async () => { if (!confirm("Delete this user?")) return; try { await api("/api/users/" + b.dataset.deluser, { method: "DELETE" }); route(); } catch (e) { toast(e.message, true); } });
-    $$("[data-pw]").forEach(b => b.onclick = async () => { const pw = prompt("New password (8+ characters). Other users must change it at next sign-in:"); if (!pw) return; try { await api(`/api/users/${b.dataset.pw}/password`, { method: "POST", body: { password: pw } }); toast("Password set"); } catch (e) { toast(e.message, true); } });
+    await viewUsers(v, html);
+  } else if (tab === "downloads") {
+    await viewOfflineAdmin(v, html);
+  } else if (tab === "email") {
+    await viewEmail(v, html, tq);
+  } else if (tab === "activity") {
+    await viewUserActivity(v, html);
   } else if (tab === "transcoding") {
     await viewTranscoding(v, html);
   } else if (tab === "system") {
@@ -2051,8 +2762,9 @@ async function viewSettings(tab) {
       <span>TMDB metadata</span><b>${s.tmdb && s.tmdb.enabled ? "on" : "off (no key)"}${s.tmdb && s.tmdb.stats ? ` · ${s.tmdb.stats.requests || 0} requests since start` : ""}</b></div>
       <h3>Active transcodes</h3>${s.transcodes.length ? `<table><tr><th>Title</th><th>Quality</th><th>Encoder</th><th>State</th><th>Segment</th><th>Idle</th></tr>${s.transcodes.map(t => `<tr><td>${esc(t.title)}</td><td>${t.profile === "remux" ? "remux (video copied)" : t.profile}</td><td>${encName(t)}</td><td>${t.running ? (t.paused ? "paused (buffered ahead)" : "running") : "finished"}</td><td>${t.last_req}</td><td>${t.idle_s}s</td></tr>`).join("")}</table>` : `<div class="muted">None</div>`}</div>`;
     v.innerHTML = html;
+    await networkPanel(v).catch(() => {});
     $("#ss-all").onchange = async (e) => { try { await api("/api/settings", { method: "PUT", body: { status_all_users: e.target.checked } }); toast(e.target.checked ? "Server status is shown to everyone" : "Server status is shown to admins only"); } catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); } };
-    route._poll = setInterval(() => { route._keepScroll = true; route(); }, 5000);
+    route._poll = setInterval(() => { const a = document.activeElement; if (a && (a.tagName === "INPUT" || a.tagName === "SELECT")) return; route._keepScroll = true; route(); }, 5000);
   }
 }
 
@@ -3969,6 +4681,448 @@ window.__msVizSet = function (on) { VIZ.on = !!on; vizSave(); vizStart(); };
 window.__msVizInject = function (arr, t) { VIZ.mock = arr ? new Uint8Array(arr) : null; if (arr) vizDraw(t != null ? t : performance.now()); };
 window.__msVizTick = function () { vizDraw(performance.now()); };
 window.openPlaylistSheet = openPlaylistSheet;
+
+/* 1.9.1: Android TV / remote spatial navigation.
+   Cards already have tabindex=0 and Enter-to-open (1.4.7), but a TV remote sends
+   arrow keys, not Tab, and nothing moved focus between posters, the sidebar, or
+   the player bar. This module turns those arrows into spatial focus, with a large
+   purple focus ring, OK to select, and Back to go back. */
+const TV = {
+  on: false,
+  _bound: false,
+  detect() {
+    try { if (localStorage.getItem("msTvMode") === "1") return true; } catch (e) {}
+    // 2.0: the Android app answers isTv() from the system's UI mode, so a tablet with the app isn't mistaken for a TV
+    try { if (window.MSAndroid && typeof MSAndroid.isTv === "function") return !!MSAndroid.isTv(); } catch (e) {}
+    const ua = navigator.userAgent || "";
+    if (/AndroidTV|Android TV|GoogleTV|Google TV|BRAVIA|AFT[A-Z0-9]|SHIELD Android TV|SmartTV|Smart-TV|HbbTV|CrKey|AppleTV|FireTV|TV Safari/i.test(ua)) return true;
+    // Android WebView on a TV often includes "Mobile" in the UA, so don't require its absence.
+    // The installed app identifies itself as MediaServerAndroid. A short phone side is under 500px.
+    const app = /MediaServerAndroid|MoviniteAndroid/i.test(ua);
+    const android = /Android/i.test(ua);
+    const noHover = window.matchMedia && window.matchMedia("(hover: none)").matches;
+    const wide = Math.max(window.innerWidth || 0, (screen && screen.width) || 0) >= 900;
+    const shortSide = Math.min(window.innerWidth || 0, window.innerHeight || 0, (screen && Math.min(screen.width, screen.height)) || 9999);
+    if ((app || (android && noHover)) && wide && shortSide >= 500) return true;
+    return false;
+  },
+  prepare() {
+    this.on = this.detect();
+    document.documentElement.classList.toggle("tv-mode", this.on);
+    this.fitLayout();
+  },
+  // Layout at 1920×1080 CSS pixels, then scale to the WebView's CSS viewport
+  // (window.innerWidth / innerHeight — not physical pixels). On a 4K TV, Android
+  // often reports 960×540 (DPR 4) or 1920×1080 (DPR 2).
+  fitLayout() {
+    const root = document.documentElement;
+    const targetW = 1920, targetH = 1080;
+    if (!this.on) {
+      root.classList.remove("tv-scaled");
+      root.style.removeProperty("--tv-scale");
+      root.style.removeProperty("--tv-layout-w");
+      root.style.removeProperty("--tv-layout-h");
+      return;
+    }
+    const w = window.innerWidth || targetW;
+    const h = window.innerHeight || targetH;
+    const s = w / targetW;
+    if (s > 0.98 && s < 1.02) {
+      root.classList.remove("tv-scaled");
+      root.style.removeProperty("--tv-scale");
+      root.style.removeProperty("--tv-layout-w");
+      root.style.removeProperty("--tv-layout-h");
+      return;
+    }
+    root.classList.add("tv-scaled");
+    root.style.setProperty("--tv-scale", String(s));
+    root.style.setProperty("--tv-layout-w", targetW + "px");
+    root.style.setProperty("--tv-layout-h", Math.max(targetH, Math.round(h / s)) + "px");
+  },
+  init() {
+    this.prepare();
+    if (!this.on || this._bound) return;
+    this._bound = true;
+    document.addEventListener("keydown", (e) => this.onKey(e), true);
+    const onResize = () => { const was = this.on; this.prepare(); if (this.on && !was) this.afterRoute(); };
+    window.addEventListener("resize", onResize);
+    try { if (window.visualViewport) visualViewport.addEventListener("resize", onResize); } catch (e) {}
+  },
+  typing(e) {
+    const t = e.target;
+    if (!t || !t.tagName) return false;
+    const tag = t.tagName;
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const ty = (t.type || "text").toLowerCase();
+      return !/^(button|submit|reset|checkbox|radio|range|file|color|hidden)$/.test(ty);
+    }
+    return t.isContentEditable;
+  },
+  visible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
+    if (el.closest("[hidden]")) return false;
+    let n = el;
+    while (n && n !== document.documentElement) {
+      if (n.classList && n.classList.contains("hidden")) return false;
+      n = n.parentElement;
+    }
+    const st = window.getComputedStyle(el);
+    if (st.display === "none" || st.visibility === "hidden" || st.opacity === "0") return false;
+    const r = el.getBoundingClientRect();
+    return r.width >= 2 && r.height >= 2;
+  },
+  isSearchChrome(el) {
+    if (!el) return false;
+    if (el.id === "search" || el.id === "m-search" || el.id === "m-q") return true;
+    return !!(el.closest && el.closest(".m-qw"));
+  },
+  isDetailView() {
+    const h = (location.hash || "").replace(/^#\/?/, "");
+    return /^(item|show|album)(\/|$)/.test(h);
+  },
+  detailPrimaryAction() {
+    return $("#resume") || $("#play") || $("#playnext") || $("#playall") || $("#pl-play")
+      || $("#view .main-actions .btn, #view .actions .btn, #view .pli-actions .btn");
+  },
+  rememberOrigin(el) {
+    if (!el) return;
+    const href = (el.dataset && el.dataset.href) || el.getAttribute("href") || "";
+    const itemId = (el.dataset && (el.dataset.id || el.dataset.item)) || (href.match(/item\/(\d+)/) || [])[1] || "";
+    this._origin = { fromHash: location.hash, href, itemId: String(itemId || "") };
+  },
+  originEl() {
+    const o = this._origin;
+    if (!o) return null;
+    if (o.itemId) {
+      const by = document.querySelector(`#view .card[data-href="#/item/${o.itemId}"], #view .card[data-id="${o.itemId}"]`);
+      if (by && this.visible(by)) return by;
+    }
+    if (o.href) {
+      const el = document.querySelector(`#view [data-href="${o.href}"]`);
+      if (el && this.visible(el)) return el;
+    }
+    return null;
+  },
+  leaveDetail() { return this.back(); },
+  detailZones(items) {
+    const inView = items.filter((el) => el.closest && el.closest("#view"));
+    const actions = inView.filter((el) => el.closest(".actions, .main-actions, .pli-actions") && !el.closest(".list, .cast-strip, .strip.sim"));
+    const mid = inView.filter((el) =>
+      (el.closest(".tabs") && el.tagName === "BUTTON")
+      || (el.closest(".list") && (el.classList.contains("li") || el.matches(".li, [data-href], [data-track]")))
+      || el.closest("#pl-tracks")
+      || el.classList.contains("pli-row")
+    ).filter((el) => !actions.includes(el));
+    const cast = inView.filter((el) => el.closest(".cast-strip") && (el.classList.contains("person") || el.closest("a.person")));
+    const similar = inView.filter((el) => el.closest(".strip.sim") && el.classList.contains("card"));
+    const zones = [];
+    if (actions.length) zones.push(actions);
+    if (mid.length) zones.push(mid);
+    if (cast.length) zones.push(cast);
+    if (similar.length) zones.push(similar);
+    return zones;
+  },
+  moveInDetail(dir, cur, items) {
+    const zones = this.detailZones(items);
+    const zi = zones.findIndex((z) => z.includes(cur));
+    if (zi < 0) return false;
+    if (dir === "left" || dir === "right") {
+      const next = this.nearest(cur, zones[zi], dir);
+      if (next) this.focus(next);
+      return true;
+    }
+    const nextIn = this.nearest(cur, zones[zi], dir);
+    if (nextIn) { this.focus(nextIn, dir === "up" ? { block: "center" } : undefined); return true; }
+    if (dir === "down") {
+      for (let i = zi + 1; i < zones.length; i++) {
+        if (zones[i].length) { this.focus(zones[i][0]); return true; }
+      }
+      return true;
+    }
+    if (zi === 0) { this.leaveDetail(); return true; }
+    const last = zones.length - 1;
+    if (zi === last && zones[0] && zones[0].length) {
+      this.focus(this.detailPrimaryAction() || zones[0][0], { block: "center" });
+      return true;
+    }
+    for (let i = zi - 1; i >= 0; i--) {
+      if (zones[i].length) {
+        this.focus(i === 0 ? (this.detailPrimaryAction() || zones[i][0]) : zones[i][0], { block: "center" });
+        return true;
+      }
+    }
+    this.leaveDetail();
+    return true;
+  },
+  candidates() {
+    const playerOn = $("#player") && !$("#player").classList.contains("hidden");
+    const modalOn = $("#modal") && !$("#modal").classList.contains("hidden");
+    const authOn = $("#auth") && !$("#auth").classList.contains("hidden");
+    let sel;
+    if (authOn) sel = "#auth button, #auth input, #auth a, #auth [tabindex='0']";
+    else if (modalOn) sel = "#modal button, #modal a, #modal input, #modal select, #modal [tabindex='0'], #modal [data-href]";
+    else if (playerOn) sel = "#player .pl-big, #player .pl-cb:not(.hidden), #player #pl-seek, #player #pl-close, #player .pl-bar button:not(.hidden), #player .pl-bar [tabindex='0'], #player .pl-top button, #player [role='menu'] button, #player .pl-menu button";
+    else sel = [
+      ".side nav a", "#navlibs a",
+      "#tabbar a",
+      "#view .card", "#view .lib-li", "#view .person", "#view [data-href]", "#view .gchip", "#view .btn:not([disabled])",
+      "#view .set-tabs button", "#view .libtabs a", "#view .tabs button", "#view .li[data-href]", "#view .list .li",
+      "#view .see-all", "#view .rh-a",
+      "#view .pli-row", "#view .iconbtn", "#view select",
+      "#menubtn", "#sndbtn", "#ss-pill", "#m-avatar", "#m-search", "#search",
+      "#acct-menu:not(.hidden) a, #acct-menu:not(.hidden) button",
+      "#audiobar:not(.hidden) button, #audiobar:not(.hidden) [tabindex='0']",
+      "#pip-chip:not(.hidden) button"
+    ].join(",");
+    return [...document.querySelectorAll(sel)].filter((el) => this.visible(el));
+  },
+  overlap(a1, a2, b1, b2) { return Math.max(0, Math.min(a2, b2) - Math.max(a1, b1)); },
+  nearest(cur, items, dir) {
+    const a = cur.getBoundingClientRect();
+    const acx = a.left + a.width / 2, acy = a.top + a.height / 2;
+    let best = null, bestScore = Infinity;
+    for (const el of items) {
+      if (el === cur) continue;
+      const b = el.getBoundingClientRect();
+      const bcx = b.left + b.width / 2, bcy = b.top + b.height / 2;
+      let primary, secondary, ov;
+      if (dir === "right") {
+        if (bcx <= acx + 4 && b.left <= a.left + 4) continue;
+        primary = Math.max(0, b.left - a.right);
+        if (b.left < a.right) primary = Math.max(8, bcx - acx);
+        secondary = Math.abs(bcy - acy);
+        ov = this.overlap(a.top, a.bottom, b.top, b.bottom);
+      } else if (dir === "left") {
+        if (bcx >= acx - 4 && b.right >= a.right - 4) continue;
+        primary = Math.max(0, a.left - b.right);
+        if (a.left < b.right) primary = Math.max(8, acx - bcx);
+        secondary = Math.abs(bcy - acy);
+        ov = this.overlap(a.top, a.bottom, b.top, b.bottom);
+      } else if (dir === "down") {
+        if (bcy <= acy + 4 && b.top <= a.top + 4) continue;
+        primary = Math.max(0, b.top - a.bottom);
+        if (b.top < a.bottom) primary = Math.max(8, bcy - acy);
+        secondary = Math.abs(bcx - acx);
+        ov = this.overlap(a.left, a.right, b.left, b.right);
+      } else {
+        if (bcy >= acy - 4 && b.bottom >= a.bottom - 4) continue;
+        primary = Math.max(0, a.top - b.bottom);
+        if (a.top < b.bottom) primary = Math.max(8, acy - bcy);
+        secondary = Math.abs(bcx - acx);
+        ov = this.overlap(a.left, a.right, b.left, b.right);
+      }
+      const axis = (dir === "left" || dir === "right") ? Math.min(a.height, b.height) : Math.min(a.width, b.width);
+      const ovRatio = axis ? ov / axis : 0;
+      const score = primary + (ovRatio > 0.25 ? secondary * 0.15 : secondary * 1.35) + (ovRatio > 0.25 ? 0 : 80);
+      if (score < bestScore) { bestScore = score; best = el; }
+    }
+    return best;
+  },
+  focus(el, opts) {
+    if (!el) return;
+    try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+    const block = (opts && opts.block) || "nearest";
+    const r = el.getBoundingClientRect();
+    const pad = 80;
+    if (block === "center" || r.top < pad || r.bottom > window.innerHeight - pad || r.left < 20 || r.right > window.innerWidth - 20) {
+      const target = (block === "center" && el.closest && (el.closest(".actions") || el.closest(".detail"))) || el;
+      target.scrollIntoView({ block: block === "center" ? "center" : "nearest", inline: "nearest", behavior: "smooth" });
+    }
+    const strip = el.closest(".strip, .hs, .cast-strip");
+    if (strip && typeof strip.scrollLeft === "number") {
+      const sr = strip.getBoundingClientRect(), er = el.getBoundingClientRect();
+      if (er.left < sr.left + 16) strip.scrollLeft += er.left - sr.left - 16;
+      else if (er.right > sr.right - 16) strip.scrollLeft += er.right - sr.right + 16;
+    }
+  },
+  preferredStart(items) {
+    if (!items.length) return null;
+    const cur = document.activeElement;
+    if (cur && items.includes(cur) && this.isDetailView() && this.detailPrimaryAction()) {
+      // After opening a title, never keep a Similar-movies card as the start focus.
+    } else if (cur && items.includes(cur) && !this.isSearchChrome(cur)) {
+      return cur;
+    }
+    const playerOn = $("#player") && !$("#player").classList.contains("hidden");
+    if (playerOn) return $("#pl-pp") || $("#pl-bplay") || items[0];
+    if (this.isDetailView()) {
+      const act = this.detailPrimaryAction();
+      if (act && items.includes(act)) return act;
+    }
+    const origin = this.originEl();
+    if (origin && items.includes(origin)) return origin;
+    const home = items.find((el) => el.matches && el.matches("#view .card, #view .lib-li"));
+    if (home) return home;
+    const lib = items.find((el) => el.matches && el.matches(".side nav a[data-nav^='lib'], #navlibs a"));
+    const firstNav = items.find((el) => el.matches && el.matches(".side nav a, #tabbar a"));
+    return home || lib || firstNav || items[0];
+  },
+  move(dir) {
+    const items = this.candidates();
+    if (!items.length) return false;
+    const cur = document.activeElement && items.includes(document.activeElement) ? document.activeElement : null;
+    if (!cur) { this.focus(this.preferredStart(items)); return true; }
+    const atTop = !!(cur.closest && (cur.closest(".side") || cur.closest(".top")) || this.isSearchChrome(cur));
+    let pool = items;
+    if ((dir === "up" || dir === "down") && !atTop) {
+      pool = items.filter((el) => !this.isSearchChrome(el));
+    }
+    if (this.isDetailView() && cur.closest && cur.closest("#view")) {
+      if (this.moveInDetail(dir, cur, pool)) return true;
+    }
+    const stripSel = ".strip, .hs, .cast-strip, .grid";
+    // Stay inside a horizontal movie/library row first, so the remote cannot skip the posters
+    const strip = cur.closest && cur.closest(stripSel);
+    if (strip && (dir === "left" || dir === "right")) {
+      const inStrip = pool.filter((el) => strip.contains(el));
+      const next = this.nearest(cur, inStrip, dir);
+      if (next) { this.focus(next); return true; }
+    }
+    // Right from the sidebar (Home / library list) should enter the first poster or library tile, not jump over it.
+    if (dir === "right" && cur.closest && cur.closest(".side")) {
+      const content = pool.filter((el) => el.closest("#view"));
+      const preferred = content.filter((el) => el.matches && el.matches(".card, .lib-li, .person, .li[data-href], .btn"));
+      const next = this.nearest(cur, preferred.length ? preferred : content, dir) || preferred[0];
+      if (next) { this.focus(next); return true; }
+    }
+    if (dir === "down" && cur.closest && (cur.closest(".row-head") || cur.classList.contains("rh-a") || cur.classList.contains("see-all"))) {
+      let row = cur.closest(".hrow") || cur.closest(".row-head");
+      let st = row && (row.querySelector(stripSel) || (row.nextElementSibling && row.nextElementSibling.matches(stripSel) ? row.nextElementSibling : null) || (row.nextElementSibling && row.nextElementSibling.querySelector && row.nextElementSibling.querySelector(stripSel)));
+      if (!st && row && row.parentElement) {
+        const kids = [...row.parentElement.children];
+        const i = kids.indexOf(row);
+        st = kids.slice(i + 1).map((n) => (n.matches && n.matches(stripSel) ? n : n.querySelector && n.querySelector(stripSel))).find(Boolean);
+      }
+      if (st) {
+        const cards = pool.filter((el) => st.contains(el));
+        if (cards.length) { this.focus(cards[0]); return true; }
+      }
+    }
+    const next = this.nearest(cur, pool, dir);
+    if (next) { this.focus(next); return true; }
+    return true;
+  },
+  activate(el) {
+    if (!el) return false;
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") { el.focus(); return true; }
+    const href = (el.dataset && el.dataset.href) || el.getAttribute("href") || "";
+    if (/#\/(item|show|album)\//.test(href)) this.rememberOrigin(el);
+    if (el.classList && el.classList.contains("card") && el.dataset.href) { el.click(); return true; }
+    el.click();
+    return true;
+  },
+  back() {
+    if (!this.on) return false;
+    const d = document;
+    const player = d.getElementById("player");
+    if (player && !player.classList.contains("hidden")) {
+      const c = d.getElementById("pl-close"); if (c) c.click(); else if (typeof closePlayer === "function") closePlayer();
+      return true;
+    }
+    if (typeof BAR !== "undefined" && BAR.popOpen && BAR.popOpen()) { BAR.closePop(); return true; }
+    if (typeof abVolPop !== "undefined" && abVolPop) { if (typeof abSetVolPop === "function") abSetVolPop(false); return true; }
+    const m = d.getElementById("modal");
+    if (m && !m.classList.contains("hidden") && !m.dataset.locked) { m.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); return true; }
+    const sd = d.querySelector(".side.open"); if (sd) { sd.classList.remove("open"); return true; }
+    const mm = d.getElementById("more-menu"); if (mm && !mm.hidden) { mm.hidden = true; return true; }
+    const am = d.getElementById("acct-menu");
+    if (am && !am.classList.contains("hidden")) { const av = d.getElementById("m-avatar"); if (av) av.click(); else am.classList.add("hidden"); return true; }
+    if (typeof MLS !== "undefined" && MLS.el) { if (typeof mlClose === "function") mlClose(); return true; }
+    const h = location.hash.replace(/^#\/?/, "");
+    if (h && h !== "home" && h !== "") {
+      if (h.startsWith("item/") || h.startsWith("show/") || h.startsWith("album/") || h.startsWith("person/")) {
+        history.length > 1 ? history.back() : (location.hash = "#/home");
+      } else if (h.startsWith("library/")) {
+        location.hash = "#/home";
+      } else if (h.startsWith("settings/") && h !== "settings") {
+        location.hash = "#/settings";
+      } else {
+        location.hash = "#/home";
+      }
+      return true;
+    }
+    return false;
+  },
+  onKey(e) {
+    if (!this.on || e.altKey || e.ctrlKey || e.metaKey) return;
+    const playerOn = $("#player") && !$("#player").classList.contains("hidden");
+    const key = e.key;
+    const center = key === "Enter" || key === "Go" || key === "Select" || e.keyCode === 23;
+    if (key === "Escape" || key === "BrowserBack" || key === "GoBack" || key === "Backspace" || e.keyCode === 4 || e.keyCode === 166) {
+      if (this.typing(e) && (key === "Escape" || key === "Backspace")) return;
+      if (this.back()) { e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
+    if (this.typing(e) && !center) return;
+    if (key === "ArrowRight" || key === "ArrowLeft" || key === "ArrowUp" || key === "ArrowDown") {
+      if (playerOn && typeof OV !== "undefined") OV.show();
+      const onSeek = document.activeElement && document.activeElement.id === "pl-seek";
+      if (playerOn && onSeek && (key === "ArrowLeft" || key === "ArrowRight")) return;
+      const items = this.candidates();
+      const focused = document.activeElement && items.includes(document.activeElement);
+      if (playerOn && !focused) {
+        e.preventDefault(); e.stopPropagation();
+        this.focus(this.preferredStart(items));
+        return;
+      }
+      const dir = key === "ArrowRight" ? "right" : key === "ArrowLeft" ? "left" : key === "ArrowDown" ? "down" : "up";
+      if (this.move(dir)) { e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
+    if (center) {
+      if (this.typing(e)) return;
+      const el = document.activeElement;
+      const items = this.candidates();
+      if (el && items.includes(el)) {
+        e.preventDefault(); e.stopPropagation();
+        this.activate(el);
+      } else if (items.length) {
+        e.preventDefault(); e.stopPropagation();
+        this.focus(this.preferredStart(items));
+      }
+    }
+  },
+  ensureFocusable() {
+    $$("#view .card, #view .lib-li, #view .person, #view .li[data-href], #view .list .li, #view .tabs button, #navlibs a, #view .rh-a, #view .see-all, #view .actions .btn, #view .main-actions .btn").forEach((el) => {
+      if (!el.hasAttribute("tabindex") && el.tagName !== "BUTTON" && el.tagName !== "SELECT" && el.tagName !== "INPUT" && el.tagName !== "A") el.tabIndex = 0;
+      else if (!el.hasAttribute("tabindex") && (el.tagName === "A" || el.classList.contains("li") || el.classList.contains("card"))) el.tabIndex = 0;
+    });
+  },
+  afterRoute() {
+    if (!this.on) return;
+    this.ensureFocusable();
+    const typ = document.activeElement && this.typing({ target: document.activeElement });
+    if (typ && !this.isSearchChrome(document.activeElement)) return;
+    const items = this.candidates();
+    if (!items.length) return;
+    const playerOn = $("#player") && !$("#player").classList.contains("hidden");
+    if (playerOn) { this.focus(this.preferredStart(items)); return; }
+    if (this.isDetailView()) {
+      const act = this.detailPrimaryAction();
+      if (act && items.includes(act)) {
+        this.focus(act, { block: "center" });
+        return;
+      }
+    }
+    const origin = this.originEl();
+    if (origin) {
+      this.focus(origin);
+      this._origin = null;
+      return;
+    }
+    if (document.activeElement && items.includes(document.activeElement) && this.visible(document.activeElement)
+        && !this.isSearchChrome(document.activeElement)) {
+      this.focus(document.activeElement);
+      return;
+    }
+    this.focus(this.preferredStart(items));
+  }
+};
+window.TV = TV;
+window.__msTvBack = () => TV.back();
+TV.prepare();
 
 boot();
 })();

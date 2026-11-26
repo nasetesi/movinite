@@ -157,6 +157,11 @@ def yield_to_playback():
         _stop_proc(p)
         log.info("preload yielded to playback (stopped %s pid %s)", kind, getattr(p, "pid", None))
     _clear(p)
+    try:
+        from . import offline
+        offline.yield_now()       # 2.0: pause a download transcode too (it carries on when streaming is idle)
+    except Exception:
+        pass
     kick()
 
 

@@ -17,9 +17,9 @@ def check(cond, msg):
 
 
 def test_v181():
-    check(__version__ == "1.8.1", "version is 1.8.1")
+    check(tuple(int(x) for x in __version__.split(".")) >= (1, 8, 1), "version is 1.8.1 or later")
     ver = (ROOT / "app/version.py").read_text()
-    check('__version__ = "1.8.1"' in ver, "version.py is 1.8.1")
+    check(('__version__ = "%s"' % __version__) in ver, "version.py matches")
     ch = (ROOT / "CHANGELOG.md").read_text()
     check(ch.find("## 1.8.1") < ch.find("## 1.8 --"), "CHANGELOG 1.8.1 is above 1.8")
     check("Play and Shuffle are on the playlist list" in ch and "Mute and a volume control" in ch

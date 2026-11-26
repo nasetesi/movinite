@@ -9,7 +9,7 @@ from . import auth, config, db
 def cmd_init():
     db.migrate()
     print("database: %s" % config.DB_PATH)
-    if db.row("SELECT COUNT(*) n FROM users WHERE is_admin=1")["n"]:
+    if db.row("SELECT COUNT(*) n FROM users WHERE is_admin=1 OR role='admin'")["n"]:
         print("ADMIN_STATUS=exists")
         return
     pw = os.environ.get("MS_ADMIN_PASSWORD") or secrets.token_urlsafe(14)
@@ -26,7 +26,7 @@ def cmd_reset_admin(username="admin"):
     if u:
         auth.set_password(u["id"], pw, must_change=True)
         with db.tx() as c:
-            c.execute("UPDATE users SET is_admin=1 WHERE id=?", (u["id"],))
+            c.execute("UPDATE users SET is_admin=1, role='admin', all_libraries=1, disabled_at=NULL WHERE id=?", (u["id"],))  # 1.9 roles
     else:
         auth.create_user(username, pw, is_admin=True, must_change=True)
     print("username: %s" % username)

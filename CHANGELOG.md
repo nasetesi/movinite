@@ -1,7 +1,31 @@
 # Changelog
 
-The full server history (1.0 to 1.8.1) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
+The full server history (1.0 to 1.9) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
+
+## 2.0 -- 2026-11-25
+
+Server 2.0 (schema 11) builds on 1.9.2 and adds offline downloads in the Android app. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **2.0 — offline downloads in the Android app:** people with Viewer + Downloads (and admins) can download films and episodes, play them offline, and manage devices and quotas from Settings > Downloads. Downloads are encrypted on the phone; licences last 30 days and can be taken back. The Android app 2.0 (`org.movinite.app`, versionCode 8) also includes the TV home-screen banner and WebView zoom fix for 4K sets. Opening a title on a television focuses Resume or Play, and the TV layout is sized for a 1920-wide page (1.9.2).
+
+## 1.9.2 -- 2026-11-25
+
+Server 1.9.2 is a quick fix on 1.9.1. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.9.2 — TV details focus and 4K layout:** opening a movie or show focuses Resume or Play instead of jumping to Similar movies. Up and down stay inside the details. The TV page is laid out at 1920×1080 and scaled to the WebView's CSS size so a 4K television does not look zoomed in. The wide banner on the Android TV home screen ships with app 2.0.
+
+## 1.9.1 -- 2026-11-25
+
+Server 1.9.1 is a quick fix on 1.9. The Android app is unchanged (its WebView uses the same JS); a Leanback launcher and `isTv()` bridge are planned for app 2.0. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.9.1 — TV remote / D-pad navigation:** library tiles and movie posters are focusable, so an Android TV remote no longer skips the library list and the movie rows. Arrow keys move a large purple focus ring within and between rows; OK or Enter opens the focused item; Back closes the player or goes back. Televisions are detected automatically.
+
+## 1.9 -- 2026-11-25
+
+Server 1.9 adds email invites, roles, per-library access, a device list, Settings > Activity, and a fix for sign-in lockouts behind a proxy (schema 10). The Android app is unchanged (its WebView uses the same JS). Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **1.9 — invite people from your Gmail, roles, Activity, and the real visitor address:** Settings > Users can invite someone by email as a Viewer or Viewer + Downloads, with optional library limits. Invites are sent from your own Gmail with a 16-letter app password (Connect Gmail remains under Advanced). Without email, you get a one-time link and a QR code. My account lists signed-in devices with remote sign-out. Settings > Activity shows who is playing and a filterable timeline. Behind a reverse proxy, list the proxy under Settings > System > Trusted proxies so lockouts and Activity use the real client address instead of treating every visitor as the proxy. Existing accounts keep their access; sessions stay signed in (tokens are now stored hashed).
 
 ## 1.8.1 -- 2026-11-25
 

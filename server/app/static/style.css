@@ -1392,3 +1392,254 @@ html.af-open.af-chrome-off #ab-close{opacity:0;pointer-events:none}
   html.af-open #ab-prev,html.af-open #ab-next{width:48px;height:48px}
   html.af-open #ab-prev svg,html.af-open #ab-next svg{width:24px;height:24px}
 }
+
+/* ---- 1.9: users, invites, Connect Gmail, devices, activity ---- */
+.role-chip{display:inline-block;border-radius:20px;padding:2px 10px;font-size:12px;font-weight:600;border:1px solid var(--line);background:var(--panel2);white-space:nowrap}
+.role-chip.r-admin{color:var(--on-acc);background:var(--acc-fill);border-color:var(--acc-fill)}
+.role-chip.r-download{color:var(--acc2);border-color:color-mix(in srgb,var(--acc) 55%,var(--line));background:var(--acc-tint)}
+.role-chip.r-view{color:var(--acc-text)}
+.users-tbl tr.u-off td{opacity:.6}
+.row-actions{display:flex;flex-wrap:wrap;gap:4px}
+.row-actions .btn{margin:0}
+.gm-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 6px;padding:9px 12px;border-radius:10px;background:var(--glass-bg);border:1px solid var(--glass-border);font-size:13px}
+.gm-line a,.inv-from a{color:var(--acc-text);text-decoration:underline}
+.gm-dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:none;box-shadow:0 0 0 3px rgba(63,185,80,.18)}
+.gm-dot.off{background:#5b6170;box-shadow:none}.gm-dot.warn{background:var(--warn);box-shadow:0 0 0 3px rgba(var(--warn-rgb),.2)}
+.inv-from{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-4px 0 14px;padding:9px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);font-size:13px}
+.inv-from.ok{background:var(--glass-bg);border-color:var(--glass-border)}
+.inv-warn{color:var(--warn);background:rgba(var(--warn-rgb),.08);border:1px solid rgba(var(--warn-rgb),.35);border-radius:10px;padding:9px 12px;font-size:13px;margin:8px 0}
+span.inv-warn{display:inline;padding:1px 8px;margin:0}
+.modal-box textarea,.panel textarea{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;color:var(--text);font:inherit;resize:vertical}
+.modal-box textarea:focus{border-color:var(--acc);outline:none}
+.lib-pick{display:flex;flex-direction:column;gap:6px}
+.lib-pick .chk{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--text)}
+.lib-pick-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.lib-pick-list.off{opacity:.55}
+#eu-libwrap.off{opacity:.4;pointer-events:none}
+.inv-share{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:6px}
+.inv-qr{background:#fff;border-radius:12px;padding:6px;line-height:0;flex:none}
+.inv-qr svg{width:180px;height:180px}
+.inv-linkbox{flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px}
+.inv-linkbox textarea{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+.inv-linkbox .btn{align-self:flex-start}
+details.add-user summary,details.inv-old summary{cursor:pointer;color:var(--text)}
+details.inv-old{margin-top:14px}
+.dev-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.dev-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+.dev-row.cur{border-color:var(--glass-border);background:var(--glass-bg)}
+.dev-ic{width:34px;height:34px;flex:none;border-radius:9px;display:grid;place-items:center;background:var(--acc-tint);color:var(--acc-text)}
+.dev-ic svg{width:20px;height:20px}
+.dev-txt{flex:1;min-width:0}
+.gm-panel .gm-who{display:flex;gap:12px;align-items:center;margin:10px 0}
+.gm-av{width:40px;height:40px;border-radius:50%;flex:none;display:inline-grid;place-items:center;font-weight:700;background:linear-gradient(135deg,var(--acc),var(--acc-fill-h));color:#fff}
+.gm-av.sm{width:22px;height:22px;font-size:11px;margin-right:6px;vertical-align:middle}
+.gm-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.btn.gm-connect{display:inline-flex;align-items:center;gap:10px;padding:9px 18px}
+.g-ic{width:22px;height:22px;border-radius:50%;background:#fff;color:#4285F4;font-weight:800;display:grid;place-items:center;font-size:14px}
+.gm-uri{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.gm-uri code,.gm-paste code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 7px;font-size:12.5px;word-break:break-all}
+.gm-paste{margin-top:12px;padding:12px 14px;border:1px dashed var(--glass-border);border-radius:10px;font-size:13px}
+.gm-paste ol{margin:8px 0;padding-left:20px}
+.gm-paste-in{display:flex;gap:8px;margin-top:8px}
+.np-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:12px}
+.np-card{position:relative;display:flex;gap:12px;padding:12px;border-radius:14px;background:var(--glass-bg);border:1px solid var(--glass-border);box-shadow:var(--glass-shadow)}
+.np-art{width:64px;height:96px;flex:none;border-radius:8px;background:#222 center/cover no-repeat}
+.np-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.np-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:26px}
+.np-user{font-size:13px;color:var(--acc2)}
+.np-bar{height:4px;border-radius:4px;background:rgba(255,255,255,.08);margin-top:auto;overflow:hidden}
+.np-bar i{display:block;height:100%;background:var(--acc)}
+.np-stop{position:absolute;top:8px;right:8px;font-size:13px;color:var(--muted)}
+.np-stop:hover{color:var(--bad)}
+.act-sum{display:flex;flex-wrap:wrap;gap:8px}
+.act-user{display:flex;align-items:center;gap:4px;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px 12px;cursor:pointer;color:var(--text)}
+.act-user span{display:flex;flex-direction:column}
+.act-user.on,.act-user:hover{border-color:var(--acc)}
+.act-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
+.act-filters select,.act-filters input{width:auto;min-width:130px}
+.act-filters input[type=search]{flex:1;min-width:180px}
+.act-filters input[type=date]{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color-scheme:dark}
+.act-day{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:14px 0 6px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.act-row{display:flex;gap:12px;align-items:flex-start;padding:8px 2px;border-bottom:1px solid rgba(255,255,255,.04)}
+.act-main{flex:1;min-width:0}
+.act-what{color:var(--muted)}
+.act-title{color:var(--acc2)}
+.act-ic{width:28px;height:28px;flex:none;border-radius:8px;display:grid;place-items:center;background:var(--panel2);color:var(--acc-text);border:1px solid var(--line)}
+.act-ic svg{width:16px;height:16px}
+.act-ic.t-play{background:var(--acc-tint);border-color:color-mix(in srgb,var(--acc) 45%,var(--line))}
+.act-ic.t-warn{color:var(--warn)}
+.act-ic.t-stop{color:var(--muted)}
+.act-ret{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.act-ret select{width:auto}
+#act-more{margin-top:12px}
+.join-box .auth-h{margin:6px 0 2px}
+.join-note{margin-top:14px;border-left:3px solid var(--acc-fill);background:var(--acc-tint);border-radius:8px;padding:10px 12px;white-space:pre-wrap;font-size:14px}
+.join-box input:disabled{opacity:.7}
+@media (max-width:700px){
+  .np-grid{grid-template-columns:1fr}
+  .inv-share{flex-direction:column;align-items:center}
+  .inv-linkbox{width:100%}
+  .act-filters select,.act-filters input{flex:1 1 45%;min-width:0}
+  .gm-paste-in{flex-direction:column}
+  .lib-pick-list{grid-template-columns:1fr 1fr}
+}
+/* 1.9: Email tab -- app password / SMTP first, Connect Gmail under Advanced */
+.sm-panel .gm-line{margin-top:4px}
+.sm-form .help a,.sm-panel .help a{color:var(--acc-text);text-decoration:underline}
+details.adv-mail>summary{cursor:pointer;list-style:none;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+details.adv-mail>summary::-webkit-details-marker{display:none}
+details.adv-mail>summary::before{content:"▸";color:var(--acc-text);transition:transform .15s}
+details.adv-mail[open]>summary::before{transform:rotate(90deg)}
+details.adv-mail .panel{background:transparent;border-color:var(--line);box-shadow:none;margin:12px 0 0}
+.mm-pick{display:flex;flex-direction:column;gap:6px}
+.mm-pick .chk{display:flex;gap:8px;align-items:center;color:var(--text)}
+
+/* 1.9.1: Android TV / D-pad spatial navigation. Large purple focus rings work with
+   :focus as well as :focus-visible, because WebView D-pad focus often doesn't
+   match :focus-visible. Hover-only overlays stay visible on the focused card. */
+html.tv-mode,html.tv-mode *{cursor:none}
+html.tv-mode .card:focus,html.tv-mode .card:focus-visible{z-index:5;outline:none}
+html.tv-mode .card:focus .art,html.tv-mode .card:focus-visible .art{
+  transform:translateY(-6px) scale(1.08);border-color:var(--acc);filter:brightness(1.08);
+  box-shadow:0 22px 44px rgba(0,0,0,.6),0 0 0 4px var(--acc),0 0 32px rgba(var(--acc-rgb),.55)}
+html.tv-mode .card:focus .hov,html.tv-mode .card:focus-visible .hov{display:flex;opacity:1;transform:none}
+html.tv-mode .card:focus .art .qplay,html.tv-mode .card:focus-visible .art .qplay{display:flex;opacity:1;transform:scale(1)}
+html.tv-mode .side nav a:focus,html.tv-mode .side nav a:focus-visible,
+html.tv-mode #navlibs a:focus,html.tv-mode #navlibs a:focus-visible,
+html.tv-mode #tabbar a:focus,html.tv-mode #tabbar a:focus-visible{
+  outline:3px solid var(--acc);outline-offset:2px;background:var(--panel2);color:var(--acc-text)}
+html.tv-mode .btn:focus,html.tv-mode .btn:focus-visible,
+html.tv-mode .iconbtn:focus,html.tv-mode .iconbtn:focus-visible,
+html.tv-mode .gchip:focus,html.tv-mode .gchip:focus-visible,
+html.tv-mode .set-tabs button:focus,html.tv-mode .set-tabs button:focus-visible,
+html.tv-mode .libtabs a:focus,html.tv-mode .libtabs a:focus-visible,
+html.tv-mode .hnav:focus,html.tv-mode .hnav:focus-visible,
+html.tv-mode .avatar:focus,html.tv-mode .avatar:focus-visible,
+html.tv-mode .ss-pill:focus,html.tv-mode .ss-pill:focus-visible,
+html.tv-mode .li[data-href]:focus,html.tv-mode .li[data-href]:focus-visible,
+html.tv-mode .pli-row:focus,html.tv-mode .pli-row:focus-visible{
+  outline:3px solid var(--acc);outline-offset:3px}
+html.tv-mode .pl-big:focus,html.tv-mode .pl-big:focus-visible,
+html.tv-mode .pl-cb:focus,html.tv-mode .pl-cb:focus-visible,
+html.tv-mode #pl-close:focus,html.tv-mode #pl-close:focus-visible,
+html.tv-mode #pl-seek:focus,html.tv-mode #pl-seek:focus-visible{
+  outline:4px solid var(--acc);outline-offset:4px}
+html.tv-mode .side{display:flex!important;position:relative!important;transform:none!important;inset:auto!important;width:230px!important;z-index:5!important}
+html.tv-mode .tabbar,html.tv-mode #menubtn,html.tv-mode .top-brand,html.tv-mode .m-ico{display:none!important}
+html.tv-mode .top #search,html.tv-mode .top .snd-btn{display:block!important}
+
+html.tv-mode #search:focus,html.tv-mode #search:focus-visible,
+html.tv-mode input:focus,html.tv-mode select:focus{outline:3px solid var(--acc);outline-offset:2px;border-color:var(--acc)}
+
+html.tv-mode .lib-li:focus,html.tv-mode .lib-li:focus-visible,
+html.tv-mode .person:focus,html.tv-mode .person:focus-visible,
+html.tv-mode .see-all:focus,html.tv-mode .see-all:focus-visible,
+html.tv-mode .rh-a:focus,html.tv-mode .rh-a:focus-visible{
+  outline:3px solid var(--acc);outline-offset:3px;border-color:var(--acc)}
+
+/* 2.0: offline downloads (Android app) -- Downloads tab, quality sheet, admin and account panels */
+.dl-btn svg,.dl-head .iconbtn svg,#tabbar a svg{width:20px;height:20px}
+.dl-btn{display:inline-flex;align-items:center;gap:7px}
+.dl-btn svg{width:18px;height:18px}
+.dl-ok{color:var(--ok);font-weight:700}
+.dl-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.dl-head .pg-h{margin-bottom:8px}
+.dl-head .iconbtn svg{width:22px;height:22px;display:block}
+.dl-store{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;margin:4px 0 18px}
+.dl-bar{display:flex;height:8px;border-radius:5px;background:var(--panel2);overflow:hidden}
+.dl-bar .mv{background:var(--acc)}.dl-bar .ot{background:#4a505d}
+.dl-store-l{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:9px;font-size:13px;color:var(--muted)}
+.dl-store-l .k{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px;vertical-align:0}
+.dl-store-l .k.mv{background:var(--acc)}.dl-store-l .k.fr{background:var(--panel2);border:1px solid var(--line)}
+.dl-quota{margin-left:auto;color:var(--text)}
+.dl-sec{font-size:15px;margin:18px 0 8px;font-weight:700}
+.dl-sec .muted{font-weight:400;margin-left:4px}
+.dl-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px}
+.dl-card{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px}
+.dl-card.st-failed,.dl-card.st-expired,.dl-card.st-revoked{border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+.dl-art{position:relative;flex:0 0 72px;height:108px;border-radius:7px;background:var(--panel2) center/cover;display:flex;align-items:center;justify-content:center;font-size:26px}
+.dl-qchip{position:absolute;left:4px;bottom:4px;right:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;background:rgba(0,0,0,.72);color:#fff;font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 5px}
+.dl-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.dl-t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dl-s{font-size:13px;color:var(--muted)}
+.dl-bad{color:var(--bad)}
+.dl-prog,.dl-res{height:5px;border-radius:3px;background:var(--panel2);overflow:hidden;margin:5px 0 2px}
+.dl-prog div{height:100%;background:var(--acc);transition:width .4s}
+.dl-prog.prep div{background:repeating-linear-gradient(45deg,var(--acc) 0 8px,color-mix(in srgb,var(--acc) 65%,#000) 8px 16px);animation:dlstripe 1s linear infinite}
+@keyframes dlstripe{to{background-position:22px 0}}
+.dl-res div{height:100%;background:var(--warn)}
+.dl-acts{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:6px}
+.dl-acts .dl-more{margin-left:auto;font-size:20px;line-height:1}
+.btn.small{padding:5px 12px;font-size:13px}
+.dl-empty{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:40px 16px}
+.dl-empty svg{width:44px;height:44px;color:var(--acc-text)}
+.dl-empty span{max-width:360px;color:var(--muted)}
+.dl-help{margin-top:22px;max-width:760px}
+.dl-help summary{cursor:pointer;font-weight:600;color:var(--acc-text)}
+.dl-help p{font-size:14px;line-height:1.5;color:var(--text)}
+.dl-warn{border-left:3px solid var(--warn);padding-left:10px}
+.dl-mylist a,.dl-acct a{color:var(--acc-text)}
+.dl-more-l{display:flex;flex-direction:column;gap:8px;margin:6px 0 4px}
+.dl-more-l .btn{text-align:center}
+.dl-q{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px;cursor:pointer;background:var(--panel2)}
+.dl-q:has(input:checked){border-color:var(--acc);background:var(--acc-tint)}
+.dl-q.off{opacity:.5;cursor:not-allowed}
+.dl-q input{accent-color:var(--acc)}
+.dl-q-n{flex:1;display:flex;flex-direction:column;gap:2px}
+.dl-q-n .muted{font-size:12.5px}
+.dl-q-n .chip{align-self:flex-start;margin-top:2px}
+.dl-q-s{font-size:13px;color:var(--muted);white-space:nowrap}
+.dl-dev{border-top:1px solid var(--line);padding:10px 0 4px}
+.dl-dev:first-of-type{border-top:0}
+.dl-user{border-top:1px solid var(--line);padding:12px 0}
+.dl-user:first-of-type{border-top:0;padding-top:0}
+.dl-user .dl-dev{margin-left:16px}
+.dl-grants{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.dl-g{display:flex;align-items:center;gap:10px;font-size:14px;flex-wrap:wrap}
+.dl-g-t{flex:1;min-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dl-g .muted{font-size:13px}
+.dl-none{font-size:13px;padding:4px 0}
+.of-form{grid-template-columns:auto 1fr;align-items:center}
+@media (max-width:820px){
+  .dl-list{grid-template-columns:1fr}
+  .dl-art{flex-basis:64px;height:96px}
+  .dl-quota{margin-left:0;width:100%}
+  .dl-user .dl-dev{margin-left:0}
+  .of-form{grid-template-columns:1fr}
+}
+.dl-box{max-width:520px}
+.dl-title{font-weight:600;margin:-6px 0 12px;color:var(--muted)}
+.dl-have{background:var(--panel2);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:14px}
+.dl-lbl{display:block;font-size:13px;color:var(--muted);margin:6px 0 4px}
+#dl-aud{width:100%}
+.dl-meta{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 14px;font-size:13px;color:var(--muted);margin:10px 0 4px}
+.dl-warn-sp{color:var(--warn);font-size:13px;margin:4px 0}
+.dl-box .dl-help{margin-top:10px}
+.dl-box #dl-go{display:inline-flex;align-items:center;gap:6px}
+.dl-box #dl-go svg{width:17px;height:17px}
+/* 1.9.2: TV layout is authored at 1920×1080, then scaled to the WebView CSS viewport */
+html.tv-mode.tv-scaled,html.tv-mode.tv-scaled body{margin:0;overflow:hidden;background:var(--bg)}
+html.tv-mode.tv-scaled body{
+  width:var(--tv-layout-w,1920px);height:var(--tv-layout-h,1080px);
+  transform:scale(var(--tv-scale,1));transform-origin:0 0}
+/* Smaller posters so about 7–8 fit in a 1920-wide Home row (sidebar + gaps). */
+html.tv-mode .strip.hs:not(.wide){grid-auto-columns:200px;gap:14px}
+html.tv-mode .strip.hs.wide{grid-auto-columns:280px;gap:16px}
+html.tv-mode .strip.sim{grid-auto-columns:200px;gap:14px}
+html.tv-mode .strip.hs .card .t,html.tv-mode .strip.sim .card .t{font-size:14px}
+html.tv-mode .cast-strip{grid-auto-columns:140px;gap:12px}
+html.tv-mode .side{width:220px!important}
+html.tv-mode .card .art{image-rendering:auto}
+/* Keep a clear purple ring on action buttons and similar/posters (cards already have a 4px ring). */
+html.tv-mode .actions .btn:focus,html.tv-mode .actions .btn:focus-visible,
+html.tv-mode .main-actions .btn:focus,html.tv-mode .main-actions .btn:focus-visible,
+html.tv-mode .pli-actions .btn:focus,html.tv-mode .pli-actions .btn:focus-visible,
+html.tv-mode #resume:focus,html.tv-mode #resume:focus-visible,
+html.tv-mode #play:focus,html.tv-mode #play:focus-visible,
+html.tv-mode #playnext:focus,html.tv-mode #playnext:focus-visible,
+html.tv-mode #playall:focus,html.tv-mode #playall:focus-visible,
+html.tv-mode #watched:focus,html.tv-mode #watched:focus-visible,
+html.tv-mode .tabs button:focus,html.tv-mode .tabs button:focus-visible{
+  outline:3px solid #fff;outline-offset:4px;box-shadow:0 0 0 8px var(--acc),0 0 22px rgba(var(--acc-rgb),.5);z-index:3}
+html.tv-mode .card:focus .art,html.tv-mode .card:focus-visible .art{
+  transform:translateY(-4px) scale(1.06)}

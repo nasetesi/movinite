@@ -174,7 +174,7 @@ else
   cp .env.example .env
   ok ".env created from .env.example"
 fi
-mkdir -p data/thumbs data/transcode data/prefetch data/subs backups
+mkdir -p data/thumbs data/transcode data/prefetch data/subs data/offline backups
 chmod 755 "$PROJECT_DIR"
 if [ "$INSTALL_SERVICE" = "yes" ]; then
   chown root:"$SVC_USER" .env; chmod 640 .env

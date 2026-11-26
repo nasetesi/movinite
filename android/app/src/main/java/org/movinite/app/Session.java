@@ -9,7 +9,6 @@ final class Session {
     private Session() {}
 
     static boolean signedIn(String server) {
-        if (server == null) return false;
         String c = CookieManager.getInstance().getCookie(server);
         if (c == null) return false;
         for (String part : c.split(";")) {
@@ -21,7 +20,6 @@ final class Session {
 
     /** forget the session for this server (expired, signed out, or server changed) */
     static void clear(String server) {
-        if (server == null) return;
         CookieManager cm = CookieManager.getInstance();
         cm.setCookie(server, COOKIE + "=; Max-Age=0; Path=/");
         cm.setCookie(server, COOKIE + "=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/");

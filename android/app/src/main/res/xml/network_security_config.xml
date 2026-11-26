@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Plain http is allowed at the network level because the server address is typed in by the user
-     (e.g. http://192.0.2.10:8099 on a home network) and Android can't list IP ranges here. The app itself only
+     (e.g. http://192.0.2.10:8099 on the LAN) and Android can't list IP ranges here. The app itself only
      loads http:// pages from the exact server the user entered; every other page must be https. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">

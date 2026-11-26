@@ -165,6 +165,34 @@ narrower than 600 px (swipe the row) and small and subtle on tablets.
 From v1.4.7 Home posters are up to 330 px wide, and posters everywhere pop out on mouse hover or keyboard focus
 (Tab to a poster, Enter opens it). "Reduce motion" in the operating system turns the movement off.
 
+## Offline downloads in the Android app (2.0)
+
+Needs the **Movinite Android app 2.0** (`movinite-android-v2.0.apk`, installs over 1.x and keeps the sign-in) and server 2.0.
+
+* **Who can download:** admins and people with the **Viewer + Downloads** role. Turn the feature on or off and set the
+  limits in **Settings > Downloads** (defaults: 20 titles or 100 GB per person, 3 devices, admins unlimited).
+* **In the app:** a **Download** button on detail pages. You pick a quality each time (720p suggested; 1080p, 720p and
+  480p are prepared by the server on the GPU and pause while anyone is watching; **Original** only when the phone can
+  play the file as it is). The **Downloads** tab (it replaces My List in the bottom tabs; My List stays on Home and in
+  the account menu) shows progress, storage, quota and what is ready to watch.
+* **Offline:** when the server can't be reached the app opens its offline screen after you confirm with your
+  fingerprint, face or screen lock (or a 6-digit Movinite PIN; one is required if the phone has no screen lock).
+  Films are stored encrypted inside the app and play only in its own player. Progress is sent back at the next sync.
+* **Licences:** each download has a 30-day licence signed by the server key and tied to that phone. It renews whenever
+  the app syncs. A download is deleted at the next sync if it is removed from the server, the person loses the role or
+  the library, or the device is removed (**Settings > Downloads**, or **My account > Devices & downloads**). After 30
+  days without a sync, or on sign-out, the app removes every download.
+* **Honest limits:** this is trust-based protection for family and friends, not studio-grade DRM. A determined person
+  with a rooted phone could copy a film; screenshots and screen recording of the player are blocked.
+* Prepared versions are cached in `data/offline` (200 GB by default, oldest removed first). `update.sh` saves
+  `data/media-server.db.pre-schema11` before the schema 11 upgrade.
+
+## Android TV remote (1.9.1, 1.9.2)
+
+The web app (including the Android 1.5 WebView on a television) can be driven with a D-pad: arrow keys move a large purple focus ring across the sidebar, rows, posters and player controls; OK or Enter opens the focused item; Back closes the player or goes back. Televisions are detected automatically. On a browser you can turn it on with `localStorage.msTvMode = 1` and reload (set it to `0` to turn it off).
+
+From 1.9.2, opening a movie or show focuses Resume or Play (not the Similar movies row). Up and down stay inside the details: buttons, then cast or episodes, then Similar movies. The page is laid out at 1920×1080 and scaled to the WebView's CSS size, so a 4K television does not look zoomed in. The wide banner on the Android TV home screen comes from the app (2.0), not this server release.
+
 ## Phones and admin-only tools (v1.4.9)
 
 Settings work on phones: there is one swipeable line of tabs, each panel is a single column, tables become cards
@@ -313,6 +341,10 @@ to both:
 - **No WebSockets** are used -- nothing special is needed for them. (If you reuse a config that upgrades
   connections, it does no harm.)
 - Pass **`X-Forwarded-Proto`** so the sign-in cookie is marked `Secure` over HTTPS.
+- **1.9:** tell Movinite which proxy to trust so it sees the real visitor address (sign-in lockouts, Activity and
+  the device list use it): **Settings > System > Trusted proxies** (for example `192.0.2.10`), or
+  `MS_TRUSTED_PROXIES=192.0.2.10` in `.env`. The proxy should send `X-Real-IP` / `X-Forwarded-For`; behind
+  Cloudflare, `CF-Connecting-IP` is used. Requests from 127.0.0.1 are always trusted.
 - Uploads are not used, so `client_max_body_size` doesn't matter.
 - Once the proxy works, you can stop the direct port from being reachable from other machines:
 
@@ -394,6 +426,7 @@ python3-certbot-nginx && sudo certbot --nginx -d media.example.com`.
 | `/opt/media-server/` | code, `.venv`, scripts |
 | `/opt/media-server/.env` | settings (port is on the systemd unit; transcode preset, max transcodes, `MS_TMDB_KEY`, `MS_SCAN_WORKERS`...) |
 | `/opt/media-server/data/media-server.db` | SQLite: users, libraries, items, watch progress |
+| `/opt/media-server/data/secrets/` | 1.9: server identity key and encrypted Gmail sign-ins (owner-only; included in update.sh backups) |
 | `/opt/media-server/data/thumbs/` | generated thumbnails + cached TMDB posters, backdrops, stills |
 | `/opt/media-server/data/transcode/` | temporary HLS segments (wiped automatically) |
 | `/opt/media-server/backups/` | backups made by update.sh (newest 10) |
@@ -403,9 +436,8 @@ python3-certbot-nginx && sudo certbot --nginx -d media.example.com`.
 
 ## Building a new release (developers)
 
-In the Git repository the server code is in `server/`. Bump `app/version.py` (and CHANGELOG.md), then run
-`bash scripts/pack-server.sh /path/to/output` -> `media-server-verX.Y.Z.tar.gz` + `.sha256`. Pushing a `vX.Y.Z` tag
-builds the same files (plus the Android APK) with GitHub Actions and attaches them to a GitHub Release.
+The source lives in `src/` of the project folder. Bump `app/version.py` (and CHANGELOG.md), then run
+`bash src/pack.sh /path/to/output` -> `media-server-verX.Y.tar.gz` + `.sha256`.
 
 ## Handy commands
 
@@ -619,8 +651,34 @@ Libraries tab, the home page and the Android app. By default libraries are order
 
 A new library goes after the last library of its type, so your own arrangement stays as it is.
 
-**Settings tabs:** Libraries, Scan activity, Poster Sounds, Metadata, Transcoding, Users, My account, System.
+**Settings tabs:** Libraries, Scans, Activity, Poster Sounds, Metadata, Transcoding, Users, Email, My account, System (1.9).
 
 **Share status.** A dot after a network-share library in the side menu (and on the phone Libraries tab) shows whether
 the share answers: green online, amber slow / not answering, red offline, grey checking. Hover it for the reason and
 when it was checked. Checked every 45 s; checks time out after 3 s and never remount the share.
+
+
+## Users, invites, Gmail and Activity (1.9)
+
+**Roles.** Admin (everything), **Viewer + Downloads** (watch; offline downloads arrive with the Android app 2.0) and
+**Viewer** (watch). Non-admins can be limited to picked libraries; they never see the others anywhere.
+Settings > Users: add or invite people, change role or libraries, reset a password, sign a person out everywhere,
+turn an account off, or delete it.
+
+**Invites.** Settings > Users > **Invite**: email, role, libraries, optional note, expiry (7 days by default). The link
+works once. With email set up the invite is sent from your address with your name on it (up to 20 an hour,
+100 a day); otherwise copy the link or show the QR code. The person opens the link, picks a username and password,
+and is signed in. They can also sign in with their email address.
+
+**Email.** Settings > Email: your Gmail address plus a Google **app password** (turn on 2-Step Verification, then
+create one at https://myaccount.google.com/apppasswords), and the From name. Press **Send test email to myself**.
+Any other SMTP provider works too. The password is stored encrypted in `data/secrets/`. Step by step:
+[`docs/gmail-setup.md`](docs/gmail-setup.md). Advanced: **Connect Gmail** with Google sign-in (OAuth) instead, which
+needs your own Google Cloud project; redirect URIs `https://<your public address>/api/gmail/callback` and
+`http://localhost/movinite-gmail-callback` (paste mode).
+
+**Devices.** My account lists the browsers and phones signed in to your account, with Sign out for each.
+
+**Activity.** Settings > Activity (admins): Now playing, then a timeline of sign-ins, failed sign-ins, plays,
+invites, account and settings changes, with filters and CSV export. Kept 90 days by default; IP addresses are
+blanked after 30 days. My account > My activity shows your own.
