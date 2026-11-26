@@ -207,9 +207,11 @@ On a television, Up from the first row reaches the header. Left and Right move a
 
 **2.1.1:** a signed-out television shows only the phone-code (or password) sign-in screen, not the home chrome. Sign-in codes are reused until they expire (10 new codes per address per 10 minutes). The top bar uses the same dark color as the side menu.
 
+**2.1.2:** the web header (search, poster sounds, server status, account button) is hidden on a television. Desktop and phone keep it. Search, Sign out and Settings stay in the slide-out menu. The TV tab bar is transparent over the backdrop. Moving the remote onto a tab or a menu item opens that view after a short pause (Sign out still needs OK). Opening a title focuses Resume or Play with the page scrolled to the top.
+
 On a TV, Movinite uses a Plex-style home: a large backdrop of the focused title, details and a short synopsis, a slim icon rail on the left that slides out into a full menu, tabs across the top, and rows of posters underneath. The menu lists your libraries as *Movies / NAS* (or the share's real name), and shared libraries from another server as *Movies / Harbor*. Desktop and phone layouts are unchanged. The 2.0.2 Android TV app works as-is; the layout comes from the server.
 
-Remote: Left from the rows opens the menu; Up/Down move; OK selects; Right or Back closes it. Up from the first row reaches the tabs. Sign out is still on the profile row, as in 2.0.2.
+Remote: Left from the rows or from the tabs opens the menu; Up from the tabs stays on the tabs; Up/Down move in the menu; OK selects; Right or Back closes it. Up from the first row reaches the tabs. Sign out is on the profile row in the slide-out menu.
 
 ## Sharing libraries between servers (2.1)
 

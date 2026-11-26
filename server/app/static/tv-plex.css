@@ -21,15 +21,9 @@ html.tv-mode.tv-plex .main {
   padding: 0;
   background: transparent;
 }
+/* 2.1.2: the web header (search, sounds, status, account) is web-only */
 html.tv-mode.tv-plex .top {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 0 !important;
-  padding: 0 !important;
-  background: transparent !important;
-  border: 0 !important;
-  overflow: visible;
-  z-index: 5;
+  display: none !important;
 }
 html.tv-mode.tv-plex #view {
   position: relative;
@@ -162,9 +156,18 @@ html.tv-mode.tv-plex #tv-top {
   align-items: center;
   z-index: 6;
   pointer-events: auto;
-  /* 2.1.1: same dark as the slide-out side menu, not a purple/glass mix */
-  background: rgba(22, 22, 26, .96);
-  border-bottom: 1px solid rgba(255,255,255,.06);
+  /* 2.1.2: transparent over the hero; a soft top fade keeps tabs/clock readable */
+  background: transparent;
+  border-bottom: 0;
+}
+html.tv-mode.tv-plex #tv-top::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 140px;
+  pointer-events: none;
+  z-index: -1;
+  background: linear-gradient(to bottom, rgba(0,0,0,.62) 0%, rgba(0,0,0,.28) 55%, rgba(0,0,0,0) 100%);
 }
 #tv-tabs {
   display: flex;
@@ -175,12 +178,13 @@ html.tv-mode.tv-plex #tv-top {
   appearance: none;
   background: transparent;
   border: 2px solid transparent;
-  color: rgba(255,255,255,.72);
+  color: rgba(255,255,255,.86);
   font-size: 22px;
   font-weight: 700;
   padding: 6px 18px;
   border-radius: 999px;
   cursor: pointer;
+  text-shadow: 0 1px 8px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.85);
 }
 #tv-tabs button.on {
   color: #fff;
@@ -195,11 +199,12 @@ html.tv-mode.tv-plex #tv-top {
 }
 #tv-clock {
   margin-left: auto;
-  color: rgba(255,255,255,.9);
+  color: rgba(255,255,255,.94);
   font-size: 22px;
   font-weight: 650;
   letter-spacing: .02em;
   font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 8px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.85);
 }
 
 /* Slim closed rail */
@@ -447,7 +452,8 @@ html.tv-mode.tv-auth #tv-hero,
 html.tv-mode.tv-auth #tv-top,
 html.tv-mode.tv-auth #tv-rail,
 html.tv-mode.tv-auth #tv-menu,
-html.tv-mode.tv-auth #tv-dim { display: none !important; }
+html.tv-mode.tv-auth #tv-dim,
+html.tv-mode.tv-auth .top { display: none !important; }
 html.tv-mode #auth {
   position: fixed;
   inset: 0;

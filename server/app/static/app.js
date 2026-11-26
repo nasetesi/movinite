@@ -5411,11 +5411,17 @@ const TV = {
     if (!el) return;
     try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
     const block = (opts && opts.block) || "nearest";
-    const r = el.getBoundingClientRect();
-    const pad = 80;
-    if (block === "center" || r.top < pad || r.bottom > window.innerHeight - pad || r.left < 20 || r.right > window.innerWidth - 20) {
-      const target = (block === "center" && el.closest && (el.closest(".actions") || el.closest(".detail"))) || el;
-      target.scrollIntoView({ block: block === "center" ? "center" : "nearest", inline: "nearest", behavior: "smooth" });
+    // 2.1.2: opening a title pins the details page at the top so Resume/Play stay on screen
+    if (block === "start") {
+      const v = document.getElementById("view");
+      if (v) v.scrollTop = 0;
+    } else {
+      const r = el.getBoundingClientRect();
+      const pad = 80;
+      if (block === "center" || r.top < pad || r.bottom > window.innerHeight - pad || r.left < 20 || r.right > window.innerWidth - 20) {
+        const target = (block === "center" && el.closest && (el.closest(".actions") || el.closest(".detail"))) || el;
+        target.scrollIntoView({ block: block === "center" ? "center" : "nearest", inline: "nearest", behavior: "smooth" });
+      }
     }
     const strip = el.closest(".strip, .hs, .cast-strip");
     if (strip && typeof strip.scrollLeft === "number") {
@@ -5738,7 +5744,7 @@ const TV = {
     if (this.isDetailView()) {
       const act = this.detailPrimaryAction();
       if (act && items.includes(act)) {
-        this.focus(act, { block: "center" });
+        this.focus(act, { block: "start" });
         return;
       }
     }
