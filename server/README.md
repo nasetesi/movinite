@@ -202,6 +202,26 @@ The sign-in screen lists Movinite servers you've used before, and the server adv
 
 On a television, Up from the first row reaches the header. Left and Right move across search, sounds and the account button; OK opens the account menu (including Sign out). Settings > My account also has a Sign out button.
 
+
+## Television home (2.1)
+
+On a TV, Movinite uses a Plex-style home: a large backdrop of the focused title, details and a short synopsis, a slim icon rail on the left that slides out into a full menu, tabs across the top, and rows of posters underneath. The menu lists your libraries as *Movies / NAS* (or the share's real name), and shared libraries from another server as *Movies / Harbor*. Desktop and phone layouts are unchanged. The 2.0.2 Android TV app works as-is; the layout comes from the server.
+
+Remote: Left from the rows opens the menu; Up/Down move; OK selects; Right or Back closes it. Up from the first row reaches the tabs. Sign out is still on the profile row, as in 2.0.2.
+
+## Sharing libraries between servers (2.1)
+
+Two Movinite servers can share libraries with no central service.
+
+1. On the owner, open **Settings > Sharing**, set a short server name if you want, tick the libraries, and press **Share libraries**. You get a one-time link and a code (for example `7K3Q-M9PX-2TQA`), valid 48 hours.
+2. On the other server, **Settings > Sharing > Add a shared library**, paste the link (or the address plus the code), check the fingerprint, and accept.
+3. The shared libraries show up in that server's library list, search, home and the TV menu, labelled with the owner's name.
+
+The servers then trust each other with signed requests using each server's Ed25519 identity. Public addresses must be HTTPS, for example `https://media.example.com`. A LAN address an admin types may use plain HTTP, for example `http://192.0.2.10:8099`.
+
+The first start of 2.1 copies the database to `data/media-server.db.pre-schema12` (mode 600) before applying schema 12.
+
+
 ## Phones and admin-only tools (v1.4.9)
 
 Settings work on phones: there is one swipeable line of tabs, each panel is a single column, tables become cards

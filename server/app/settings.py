@@ -1,7 +1,7 @@
 """Small key/value settings stored in the database (editable from the UI)."""
 from . import config, db
 
-DEFAULTS = {"tmdb_key": "", "tmdb_language": "", "tmdb_enabled": "1"}
+DEFAULTS = {"tmdb_key": "", "tmdb_language": "", "tmdb_enabled": "1", "server_name": ""}
 
 
 def get(key, default=None):

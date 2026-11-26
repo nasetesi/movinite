@@ -1676,3 +1676,15 @@ html.tv-mode .side-foot a:focus,html.tv-mode .side-foot a:focus-visible,
 html.tv-mode #acct-page-logout:focus,html.tv-mode #acct-page-logout:focus-visible{
   outline:3px solid var(--acc);outline-offset:2px;background:rgba(var(--acc-rgb),.18)
 }
+
+
+/* 2.1 Settings > Sharing */
+.share-card { margin-top: 12px; }
+.share-grant { padding: 4px 0; }
+.share-code { font-size: 1.25em; letter-spacing: 0.08em; }
+#share-name input, #share-link, #share-in-link, #share-in-url, #share-in-code {
+  background: #1a1224; color: #f4eef8; border: 1px solid rgba(255,255,255,0.18);
+  padding: 6px 10px; border-radius: 8px;
+}
+
+.chip { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.08); }
