@@ -31,6 +31,12 @@ html.tv-mode.tv-plex #view {
   padding: 560px 0 48px 108px;
   min-height: 1080px;
   background: transparent;
+  scroll-behavior: auto;
+}
+html.tv-mode.tv-plex .strip,
+html.tv-mode.tv-plex .hs,
+html.tv-mode.tv-plex .cast-strip {
+  scroll-behavior: auto;
 }
 
 /* Hero backdrop */
@@ -188,14 +194,18 @@ html.tv-mode.tv-plex #tv-top::before {
 }
 #tv-tabs button.on {
   color: #fff;
-  border-color: rgba(255,255,255,.92);
+  border-color: transparent;
+  box-shadow: inset 0 -3px 0 #fff;
 }
 #tv-tabs button:focus,
-#tv-tabs button:focus-visible {
+#tv-tabs button:focus-visible,
+#tv-tabs button.tv-focused {
   outline: none;
-  color: #fff;
+  color: #111;
+  background: #fff;
   border-color: #fff;
-  box-shadow: 0 0 0 3px rgba(255,255,255,.18);
+  box-shadow: 0 0 0 4px rgba(255,255,255,.4);
+  text-shadow: none;
 }
 #tv-clock {
   margin-left: auto;
@@ -236,11 +246,18 @@ html.tv-mode.tv-plex #tv-rail {
   cursor: pointer;
 }
 #tv-rail button svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#tv-rail button {
+  border: 2px solid transparent;
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+}
 #tv-rail button:focus,
-#tv-rail button:focus-visible {
+#tv-rail button:focus-visible,
+#tv-rail button.tv-focused {
   outline: none;
-  background: rgba(255,255,255,.16);
-  box-shadow: 0 0 0 2px #fff;
+  background: rgba(255,255,255,.22);
+  border-color: #fff;
+  box-shadow: 0 0 0 3px #fff, 0 0 0 7px rgba(255,255,255,.3);
+  transform: scale(1.08);
 }
 #tv-rail .tv-rail-av {
   width: 44px;

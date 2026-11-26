@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.4 -- 2026-11-26
+Builds on 2.1.3 (schema stays 12; no database upgrade).
+
+- **The first Left from a row goes to the slim left rail, not the slide-out menu.** In 2.1.3, Left from the first poster, a tab, or the rail opened the slide-out immediately, so the rail icons never kept focus and the menu appeared whenever you tried to use the left side. 2.1.4 moves Left within a row to the previous poster; Left on the first poster focuses the current section's rail icon (with a clear focus ring) and leaves the menu closed; a second Left on the rail opens the slide-out. Right or Back from the slide-out closes it and returns to the rail (or the last poster). Right from the rail returns to that poster. Up and Down walk the rail icons; OK activates them. Sign out still needs OK.
+- **The top tabs (For You, Recently Added, Libraries) are selectable.** Up from the first row reaches the tabs with a visible focus pill. Left and Right move between tabs; after a short pause (~250 ms) that section opens, but the tab keeps focus. Down returns to the posters. Left from For You goes to the rail, not the menu. The Libraries tab scrolls to the library rows instead of opening the slide-out. If focus is ever lost, it is restored to a poster, a tab, or the rail so the outline does not disappear.
+- **The home screen responds faster to the remote.** Hero backdrop changes wait about 300 ms and crossfade instead of jumping on every poster. Neighbour artwork is preloaded. On a television, page and row scrolling is instant (no stacked smooth-scroll), and the home remote only considers on-screen posters plus the tabs and rail, so each key does less work. The slide-out opens immediately even if the library list is still loading.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update. Desktop and phone layouts are unchanged. Opening a title still focuses Resume or Play at the top of the page (2.1.2).
+
+
+
 ## 2.1.3 -- 2026-11-26
 Builds on 2.1.2 (schema stays 12; no database upgrade).
 
