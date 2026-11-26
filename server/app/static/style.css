@@ -1645,3 +1645,34 @@ html.tv-mode .tabs button:focus,html.tv-mode .tabs button:focus-visible{
   outline:3px solid #fff;outline-offset:4px;box-shadow:0 0 0 8px var(--acc),0 0 22px rgba(var(--acc-rgb),.5);z-index:3}
 html.tv-mode .card:focus .art,html.tv-mode .card:focus-visible .art{
   transform:translateY(-4px) scale(1.06)}
+
+/* 2.0.2: TV sign-in with a short code + QR, and the phone approval page */
+.auth-tv-pair{max-width:720px}
+.pair-lead{text-align:center;margin:4px 0 18px;line-height:1.45}
+.pair-row{display:flex;gap:28px;align-items:center;justify-content:center;flex-wrap:wrap;margin:8px 0 12px}
+.pair-qr{width:220px;height:220px;background:#fff;border-radius:12px;padding:8px;box-sizing:border-box;display:flex;align-items:center;justify-content:center}
+.pair-qr svg{width:100%;height:100%;display:block}
+.pair-side{min-width:220px;text-align:center}
+.pair-code{font-size:42px;letter-spacing:.14em;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--text)}
+.pair-stay{margin-top:10px}
+.pair-url{text-align:center;word-break:break-all;margin:0 0 8px;font-size:13px}
+.pair-actions{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.pair-actions .btn{margin-top:0;width:100%}
+.pair-recent{margin-top:16px;display:flex;flex-direction:column;gap:8px}
+.pair-recent-h{margin-bottom:2px}
+.pair-srv{width:100%}
+.pair-device{text-align:center;margin:8px 0 4px}
+.pair-device-name{text-align:center;font-size:22px;font-weight:650;margin:0 0 8px}
+.auth-pair-ok{max-width:420px}
+#pair-in{text-transform:uppercase;letter-spacing:.2em;font-size:22px;text-align:center}
+
+/* 2.0.2: TV account button in the header, and Sign out with the remote */
+html.tv-mode .acct-w{display:block!important}
+html.tv-mode #m-avatar{display:inline-flex}
+html.tv-mode .acct-menu{z-index:80;width:280px}
+html.tv-mode .acct-menu>a:focus,html.tv-mode .acct-menu>a:focus-visible,
+html.tv-mode .acct-menu>button:focus,html.tv-mode .acct-menu>button:focus-visible,
+html.tv-mode .side-foot a:focus,html.tv-mode .side-foot a:focus-visible,
+html.tv-mode #acct-page-logout:focus,html.tv-mode #acct-page-logout:focus-visible{
+  outline:3px solid var(--acc);outline-offset:2px;background:rgba(var(--acc-rgb),.18)
+}

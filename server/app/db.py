@@ -251,6 +251,18 @@ CREATE TABLE IF NOT EXISTS offline_jobs (
     created_at INTEGER, started_at INTEGER, finished_at INTEGER, last_access INTEGER,
     UNIQUE(item_id, profile, audio)
 );
+-- 2.0.2: TV sign-in codes (idempotent; schema stays 11 so 2.1 can still be 12)
+CREATE TABLE IF NOT EXISTS pair_codes (
+    id INTEGER PRIMARY KEY,
+    code_hash TEXT NOT NULL UNIQUE,
+    poll_hash TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    status TEXT NOT NULL,                 -- pending | approved | consumed | expired | denied
+    device TEXT, ua TEXT, ip TEXT,
+    user_id INTEGER, approved_at INTEGER, approver_ip TEXT
+);
+CREATE INDEX IF NOT EXISTS pair_codes_status ON pair_codes(status, expires_at);
 """
 
 _local = threading.local()

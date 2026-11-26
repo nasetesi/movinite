@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 
 from . import artwork, auth, browse, folderart, liborder, playlists, preload, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
-from . import gmail, mailer, guard, invites, keys, netutil, offline, useractivity
+from . import gmail, mailer, guard, invites, keys, netutil, offline, useractivity, pair, discover
 from .version import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -49,6 +49,7 @@ def _startup():
     folderart.start_backfill(lambda: _stop)    # 1.7.3
     preload.start_loop(lambda: _stop)          # 1.7.9: subtitle / remux / opening-clip caches
     threading.Thread(target=offline.loop, args=(lambda: _stop,), daemon=True, name="offline-jobs").start()   # 2.0
+    threading.Thread(target=lambda: discover.start(lambda: _stop), daemon=True, name="mdns").start()          # 2.0.2
     log.info("Movinite (media-server) v%s started; data in %s", __version__, config.DATA_DIR)
 
 
@@ -58,6 +59,7 @@ def _shutdown():
     _stop = True
     scanner._stop = True
     offline.stop()
+    discover.stop()
     transcode.shutdown()
 
 
@@ -85,6 +87,12 @@ def _share_watchdog():
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": __version__}
+
+
+@app.get("/.well-known/movinite.json")
+def movinite_discover(request: Request):
+    """LAN / recent-server probe: confirms this is a Movinite server (no auth)."""
+    return discover.info_payload(request)
 
 
 @app.get("/api/setup-status")
@@ -158,6 +166,45 @@ def login(request: Request, response: Response, body: dict = Body(...)):
     _set_cookie(request, response, auth.new_session(u["id"], ip, ua))
     useractivity.record("login", user=u, ip=ip, device=auth._device_name(ua))
     return {"ok": True, "must_change_pw": bool(u["must_change_pw"])}
+
+
+@app.post("/api/pair/start")
+def pair_start(request: Request):
+    """TV: start a 6-character sign-in code (and QR URL) that a signed-in phone can approve."""
+    return pair.start(request, _base_url(request))
+
+
+def _pair_poll_result(request, response, token):
+    r = pair.poll(request, token or "")
+    tok = r.pop("token", None)
+    if tok:
+        _set_cookie(request, response, tok)
+    return r
+
+
+@app.get("/api/pair/poll")
+def pair_poll_get(request: Request, response: Response, token: str = ""):
+    return _pair_poll_result(request, response, token)
+
+
+@app.post("/api/pair/poll")
+def pair_poll_post(request: Request, response: Response, body: dict = Body(default={})):
+    return _pair_poll_result(request, response, (body or {}).get("token") or request.query_params.get("token") or "")
+
+
+@app.get("/api/pair/info")
+def pair_info(request: Request, code: str = "", u=Depends(auth.require_user)):
+    return pair.info(request, code, u)
+
+
+@app.post("/api/pair/approve")
+def pair_approve(request: Request, body: dict = Body(...), u=Depends(auth.require_user)):
+    return pair.approve(request, (body or {}).get("code") or "", u)
+
+
+@app.post("/api/pair/deny")
+def pair_deny(request: Request, body: dict = Body(...), u=Depends(auth.require_user)):
+    return pair.deny(request, (body or {}).get("code") or "", u)
 
 
 @app.post("/api/logout")

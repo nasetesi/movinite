@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.2 -- 2026-11-25
+Builds on 2.0.1, plus easier sign-in on a television:
+
+- **Sign in with a phone code, like Netflix.** The TV sign-in screen shows a 6-character code (no easily confused letters) and a QR code. Scan it with a phone that's already signed in to Movinite, or open the link and tap **Approve**. The approval page names the television. The TV picks up its own session for that person — no typing a username or password with the remote. Codes last about 10 minutes, work once, and new codes are rate-limited. You can still sign in with a username and password if you want.
+- **The TV remembers the server and stays signed in.** After this, the session is refreshed while you use it (30 days from last activity, same cookie as other devices). Sign out is still in the menu.
+- **Servers you've used are listed** on the sign-in screen, so you can pick one instead of typing the address again. On the local network the server also advertises itself (`_movinite._tcp`) for the Android app and other LAN tools. The first time you enter a server address in the 2.0 Android app still uses the typed field (see below). Manual entry remains the fallback.
+- **The remote can move through the new screens** (Get a new code, Sign in with a password, Approve / Don't approve), with the same purple focus ring as the rest of TV mode.
+- **The remote can reach Sign out.** Up from the first row of posters (or from Home in the sidebar) moves to the header. Left and Right walk search, poster sounds, the status pill and the account button in the top-right corner. OK opens the account menu; Up and Down move through My account, Settings, poster sounds and Sign out; Back closes the menu and returns to the account button. Settings > My account also has a Sign out button. The Sign out link at the bottom of the sidebar is reachable too.
+
+**Android app:** the installed 2.0 app (`movinite-android-v2.0.apk`) already keeps the server address and the session cookie, so "stay signed in" works with this server release alone. It does **not** show the code-and-QR screen on first sign-in or after sign-out: when there is no session it opens the native username/password form and never loads the web page. First-run server discovery (listing Movinite servers on the LAN) also needs the app: the 2.0 Setup screen has no network discovery. A source patch for app 2.0.2 (TV loads the web sign-in when signed out; Setup lists LAN servers; remote-friendly) is included with this release. It is not a signed APK — use the 2.0 app until a signed 2.0.2 build is issued. Typing a password on the TV web page is still available as a fallback.
+
+**Schema stays 11.** A `pair_codes` table is created on startup (`CREATE TABLE IF NOT EXISTS`); there is no migrate() snapshot and no `pre-schema12` file. Library sharing in 2.1 can still use schema 12.
+
+
 ## 2.0.1 -- 2026-11-25
 Builds on 2.0, plus D-pad control of the video player on a television:
 
