@@ -188,7 +188,10 @@
       document.addEventListener("focusin", (e) => {
         if (self.menuOpen) return;
         const card = e.target && e.target.closest && e.target.closest("#view .card");
-        if (card) self.showHero(card);
+        if (card) {
+          self.rememberContent(card);
+          self.showHero(card);
+        }
       });
       const after = TV.afterRoute.bind(TV);
       TV.afterRoute = function () {
@@ -216,22 +219,40 @@
       };
       const onKey = TV.onKey.bind(TV);
       TV.onKey = function (e) {
+        const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
         if (authOpen()) { onKey(e); return; }
-        if (self.onKey(e)) return;
-        onKey(e);
+        if (!self.onKey(e)) onKey(e);
+        if (isHome() && !playerOn() && !authOpen()) self.ensureFocus();
+        const dt = ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - t0;
+        self._lastKeyMs = dt;
+        const arr = window.__tvKeyMs || (window.__tvKeyMs = []);
+        arr.push(dt);
+        if (arr.length > 40) arr.splice(0, arr.length - 40);
       };
       const candidates = TV.candidates.bind(TV);
       TV.candidates = function () {
         if (self.menuOpen) return self.menuItems();
-        const base = candidates();
-        if (authOpen()) return base;
-        const filtered = base.filter((el) => !(el.closest && el.closest(".side, .top, .tabbar")));
+        if (authOpen()) return candidates();
+        const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        if (self._candCache && (now - self._candAt) < 80) return self._candCache;
+        let list;
         if (isHome() && !playerOn()) {
-          const extra = [];
-          document.querySelectorAll("#tv-tabs button, #tv-rail button").forEach((n) => extra.push(n));
-          return extra.concat(filtered);
+          const extra = [...document.querySelectorAll("#tv-tabs button, #tv-rail button")];
+          const vh = window.innerHeight || 1080, vw = window.innerWidth || 1920;
+          const cards = [];
+          document.querySelectorAll("#view .card").forEach((el) => {
+            const r = el.getBoundingClientRect();
+            if (r.bottom < -240 || r.top > vh + 480 || r.width < 2 || r.height < 2) return;
+            if (r.right < -480 || r.left > vw + 480) return;
+            cards.push(el);
+          });
+          list = extra.concat(cards);
+        } else {
+          list = candidates().filter((el) => !(el.closest && el.closest(".side, .top, .tabbar")));
         }
-        return filtered;
+        self._candCache = list;
+        self._candAt = now;
+        return list;
       };
     },
 
@@ -312,19 +333,53 @@
     },
 
     showHero(card) {
-      const id = card && (card.dataset.id || (card.dataset.href || "").split("/").pop());
-      if (id && !this.items[String(id)]) {
-        this.ensureItems().then(() => this.paintHero(card, id));
-        return;
+      if (!card) return;
+      this._heroCard = card;
+      if (this._heroTimer) {
+        clearTimeout(this._heroTimer);
+        this._heroTimer = 0;
       }
-      this.paintHero(card, id);
+      const run = () => {
+        this._heroTimer = 0;
+        const c = this._heroCard;
+        if (!c) return;
+        const id = c.dataset.id || (c.dataset.href || "").split("/").pop();
+        if (id && !this.items[String(id)]) {
+          this.ensureItems().then(() => {
+            if (this._heroCard === c) this.paintHero(c, id);
+          });
+          return;
+        }
+        this.paintHero(c, id);
+        this.preloadNeighbors(c);
+      };
+      // First backdrop can paint immediately; later moves wait ~300 ms so the remote stays snappy.
+      if (!this.heroId) run();
+      else this._heroTimer = setTimeout(run, 300);
+    },
+
+    preloadNeighbors(card) {
+      const st = card && card.closest && card.closest(".strip, .hs");
+      if (!st) return;
+      const cards = [...st.querySelectorAll(".card")];
+      const i = cards.indexOf(card);
+      [cards[i - 1], cards[i + 1]].forEach((c) => {
+        if (!c) return;
+        const id = c.dataset.id || (c.dataset.href || "").split("/").pop();
+        const it = this.items[String(id)] || {};
+        const name = it.backdrop || it.poster;
+        if (!name) return;
+        const im = new Image();
+        im.src = "/api/thumb/" + name;
+      });
     },
 
     paintHero(card, id) {
       const it = this.items[String(id)] || {};
-      const title = it.title || (card.querySelector(".t") && card.querySelector(".t").textContent) || "";
+      const title = it.title || (card && card.querySelector(".t") && card.querySelector(".t").textContent) || "";
       const hero = document.getElementById("tv-hero");
       if (!hero) return;
+      if (String(id || "") && String(this.heroId) === String(id)) return;
       const bg = it.backdrop ? "/api/thumb/" + it.backdrop : (it.poster ? "/api/thumb/" + it.poster : "");
       const a = document.getElementById("tv-hero-a");
       const b = document.getElementById("tv-hero-b");
@@ -377,25 +432,31 @@
       document.getElementById("tv-hero-cast").textContent = cast.length ? "Cast  " + cast.join(", ") : "";
     },
 
-    setTab(name) {
+    setTab(name, opts) {
       this.tab = name;
       document.querySelectorAll("#tv-tabs button").forEach((b) => b.classList.toggle("on", b.getAttribute("data-tab") === name));
       if (!isHome()) { location.hash = "#/home"; return; }
+      const keepFocus = !!(opts && opts.keepFocus);
       const heads = [...document.querySelectorAll("#view .row-head")];
       let target = null;
       if (name === "added") {
         target = heads.find((h) => /recently added/i.test(h.textContent));
       } else if (name === "libraries") {
-        this.openMenu(null, "lib");
-        return;
+        // Libraries is a selectable tab: scroll to the first library row. The slide-out
+        // still opens from a second Left on the rail, not from this tab.
+        target = heads.find((h) => !/continue watching|recently added/i.test(h.textContent)) || heads[1] || heads[0];
       } else {
         target = heads[0];
       }
       if (target) {
-        const row = target.parentElement;
-        const card = (row && row.querySelector(".card")) || document.querySelector("#view .card");
-        if (card && window.TV) TV.focus(card);
-        target.scrollIntoView({ block: "center", behavior: "smooth" });
+        try { target.scrollIntoView({ block: "start", behavior: "auto", inline: "nearest" }); } catch (e) {
+          target.scrollIntoView(true);
+        }
+        if (!keepFocus) {
+          const row = target.parentElement;
+          const card = (row && row.querySelector(".card")) || document.querySelector("#view .card");
+          if (card && window.TV) TV.focus(card);
+        }
       }
     },
 
@@ -417,17 +478,31 @@
       const acct = document.getElementById("tv-acct");
       if (acct) acct.classList.remove("open");
       document.documentElement.classList.add("tv-menu-open");
-      const finish = () => {
+      const finish = (keepAct) => {
         this.drawMenu();
         document.querySelectorAll("#tv-menu [data-act='home']").forEach((n) => n.classList.toggle("on", isHome()));
         let focus = document.querySelector("#tv-menu [data-act='home']");
-        if (focusAct === "lib") focus = document.querySelector("#tv-menu [data-act='lib']") || focus;
-        if (focusAct === "profile") focus = document.querySelector("#tv-menu [data-act='profile']") || focus;
+        const want = keepAct || focusAct;
+        if (want === "lib") focus = document.querySelector("#tv-menu [data-act='lib']") || focus;
+        if (want === "profile") focus = document.querySelector("#tv-menu [data-act='profile']") || focus;
+        if (want && want !== "lib" && want !== "profile") {
+          const named = document.querySelector("#tv-menu [data-act='" + want + "']");
+          if (named) focus = named;
+        }
         if (window.TV && focus) TV.focus(focus);
         else if (focus) focus.focus();
       };
-      if (this.libs && this.libs.length) finish();
-      else this.ensureItems().then(finish);
+      // Paint immediately so Left feels instant; refresh library rows if they were not cached.
+      finish();
+      if (!(this.libs && this.libs.length)) {
+        const stay = focusAct;
+        this.ensureItems().then(() => {
+          if (!this.menuOpen) return;
+          const cur = document.activeElement;
+          const keep = (cur && cur.getAttribute && cur.getAttribute("data-act")) || stay;
+          finish(keep);
+        });
+      }
     },
 
 
@@ -451,7 +526,7 @@
       const tab = el.closest && el.closest("#tv-tabs button[data-tab]");
       if (tab) {
         const name = tab.getAttribute("data-tab");
-        this._pendingPreview = () => { if (document.activeElement === tab) this.setTab(name); };
+        this._pendingPreview = () => { if (document.activeElement === tab) this.setTab(name, { keepFocus: true }); };
         this.previewTimer = setTimeout(() => { this.flushPreview(); }, 250);
         return;
       }
@@ -483,8 +558,15 @@
       if (acct) acct.classList.remove("open");
       document.documentElement.classList.remove("tv-menu-open");
       if (silent) return;
-      const back = this.returnEl && document.contains(this.returnEl) ? this.returnEl
-        : document.querySelector("#view .card");
+      let back = this.returnEl && document.contains(this.returnEl) ? this.returnEl : null;
+      if (back && back.closest && back.closest("#tv-rail") && !(window.TV && TV.visible(back))) {
+        back = document.querySelector("#tv-rail button[data-rail='home']") || document.querySelector("#tv-rail button");
+      }
+      if (!back) {
+        back = document.querySelector("#tv-rail button[data-rail='home']")
+          || (this.contentEl && document.contains(this.contentEl) && this.contentEl)
+          || document.querySelector("#view .card");
+      }
       this.returnEl = null;
       if (back && window.TV) TV.focus(back);
       else if (back) back.focus();
@@ -522,10 +604,93 @@
     },
 
     firstInRow(card) {
-      const st = card.closest(".strip");
-      if (!st) return true;
-      const cards = [...st.querySelectorAll(".card")];
-      return cards[0] === card;
+      if (!card) return false;
+      const st = card.closest(".strip, .hs, .cast-strip");
+      if (st) {
+        const cards = [...st.querySelectorAll(".card")];
+        return cards[0] === card;
+      }
+      const row = card.parentElement;
+      const cards = row ? [...row.querySelectorAll(":scope > .card")] : [];
+      return !cards.length || cards[0] === card;
+    },
+
+    isTopContentRow(card) {
+      if (!card) return false;
+      const st = card.closest(".strip, .hs");
+      if (st && st.classList.contains("cw")) return true;
+      const first = document.querySelector("#view .strip, #view .hs");
+      if (st && first && st === first) return true;
+      const r = card.getBoundingClientRect();
+      const heads = document.querySelectorAll("#view .row-head");
+      if (heads[0]) {
+        const strip = heads[0].parentElement && heads[0].parentElement.querySelector(".strip, .hs");
+        if (strip && strip.contains(card)) return true;
+      }
+      // No other card sits clearly above this one (first visible row, including under the hero).
+      const cards = document.querySelectorAll("#view .card");
+      for (let i = 0; i < cards.length && i < 24; i++) {
+        const c = cards[i];
+        if (c === card) continue;
+        const b = c.getBoundingClientRect();
+        if (b.height >= 2 && b.bottom < r.top - 20) return false;
+      }
+      return true;
+    },
+
+    rememberContent(el) {
+      if (el && el.classList && el.classList.contains("card") && el.closest && el.closest("#view")) {
+        this.contentEl = el;
+      }
+    },
+
+    railButtons() {
+      return [...document.querySelectorAll("#tv-rail button")];
+    },
+
+    currentRailButton() {
+      if (this.tab === "libraries") {
+        return document.querySelector("#tv-rail button[aria-label='Libraries']")
+          || document.querySelector("#tv-rail button[data-rail='menu']:not(.tv-rail-av)");
+      }
+      return document.querySelector("#tv-rail button[data-rail='home']") || this.railButtons()[2] || this.railButtons()[0];
+    },
+
+    focusRail(preferred) {
+      const el = preferred || this.currentRailButton();
+      if (!el) return null;
+      if (window.TV) TV.focus(el);
+      else el.focus();
+      return el;
+    },
+
+    isTvChrome(el) {
+      if (!el || !el.closest) return false;
+      if (this.menuOpen) return !!el.closest("#tv-menu");
+      if (el.closest("#tv-tabs") || el.closest("#tv-rail") || el.closest("#tv-menu")) return true;
+      if (el.classList && el.classList.contains("card") && el.closest("#view")) return true;
+      if (el.closest("#view") && el.matches && el.matches("button, a, [tabindex], .btn, .lib-li, .card")) return true;
+      return false;
+    },
+
+    ensureFocus() {
+      const cur = document.activeElement;
+      if (this.isTvChrome(cur)) return cur;
+      let fallback = null;
+      if (this.menuOpen) fallback = (this.menuItems() || [])[0];
+      if (!fallback && this.contentEl && document.contains(this.contentEl) && this.isTvChrome(this.contentEl)) {
+        fallback = this.contentEl;
+      }
+      if (!fallback) {
+        fallback = document.querySelector("#view .card")
+          || document.querySelector("#tv-tabs button.on")
+          || document.querySelector("#tv-rail button[data-rail='home']");
+      }
+      if (fallback) {
+        if (window.TV) TV.focus(fallback);
+        else fallback.focus();
+      }
+      return fallback;
     },
 
     onKey(e) {
@@ -566,39 +731,82 @@
         return false;
       }
 
-      const cur = document.activeElement;
+      let cur = document.activeElement;
+      if (!this.isTvChrome(cur)) cur = this.ensureFocus() || document.activeElement;
       const onCard = cur && cur.classList && cur.classList.contains("card");
       const onTab = cur && cur.closest && cur.closest("#tv-tabs");
       const onRail = cur && cur.closest && cur.closest("#tv-rail");
+      if (onCard) this.rememberContent(cur);
 
-      if ((key === "ArrowLeft" && onCard && this.firstInRow(cur)) ||
-          (key === "ArrowLeft" && onTab) ||
-          (key === "ArrowLeft" && onRail)) {
+      // Left on the first poster focuses the slim rail; the slide-out stays closed.
+      if (key === "ArrowLeft" && onCard && this.firstInRow(cur)) {
+        e.preventDefault(); e.stopPropagation();
+        this.focusRail();
+        return true;
+      }
+      // Left on the rail opens the slide-out. Mid-row Left is left to TV.move.
+      if (key === "ArrowLeft" && onRail) {
         e.preventDefault(); e.stopPropagation();
         this.openMenu(cur);
+        return true;
+      }
+      if (key === "ArrowRight" && onRail) {
+        e.preventDefault(); e.stopPropagation();
+        const back = (this.contentEl && document.contains(this.contentEl))
+          ? this.contentEl : document.querySelector("#view .card");
+        if (back && window.TV) TV.focus(back);
+        else if (back) back.focus();
+        return true;
+      }
+      if ((key === "ArrowUp" || key === "ArrowDown") && onRail) {
+        e.preventDefault(); e.stopPropagation();
+        const items = this.railButtons();
+        const i = items.indexOf(cur);
+        const n = key === "ArrowDown" ? items[Math.min(items.length - 1, Math.max(0, i) + 1)]
+                                      : items[Math.max(0, i - 1)];
+        if (n && n !== cur) this.focusRail(n);
+        return true;
+      }
+      if ((key === "Enter" || key === " " || key === "NumpadEnter") && onRail) {
+        e.preventDefault(); e.stopPropagation();
+        this.cancelPreview();
+        cur.click();
+        return true;
+      }
+      // Left from the first tab goes to the rail; later tabs move Left/Right among themselves.
+      if (key === "ArrowLeft" && onTab) {
+        e.preventDefault(); e.stopPropagation();
+        const tabs = [...document.querySelectorAll("#tv-tabs button")];
+        const i = tabs.indexOf(cur);
+        if (i <= 0) this.focusRail();
+        else {
+          if (window.TV) TV.focus(tabs[i - 1]);
+          else tabs[i - 1].focus();
+          this.armPreview(tabs[i - 1]);
+        }
         return true;
       }
       if (key === "ArrowUp" && onTab) {
         e.preventDefault(); e.stopPropagation();
         return true;
       }
-      if (key === "ArrowUp" && onCard) {
-        const st = cur.closest(".strip");
-        const firstStrip = document.querySelector("#view .strip");
-        if (st && firstStrip && (st === firstStrip || st.classList.contains("cw"))) {
-          e.preventDefault(); e.stopPropagation();
-          const tab = document.querySelector("#tv-tabs button.on") || document.querySelector("#tv-tabs button");
-          if (tab && window.TV) { TV.focus(tab); this.armPreview(tab); }
-          return true;
+      if (key === "ArrowUp" && onCard && this.isTopContentRow(cur)) {
+        e.preventDefault(); e.stopPropagation();
+        const tab = document.querySelector("#tv-tabs button.on") || document.querySelector("#tv-tabs button");
+        if (tab) {
+          if (window.TV) TV.focus(tab);
+          else tab.focus();
+          this.armPreview(tab);
         }
+        return true;
       }
       if (key === "ArrowDown" && onTab) {
         e.preventDefault(); e.stopPropagation();
         this.flushPreview();
-        if (!(document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("card"))) {
-          const card = document.querySelector("#view .strip.cw .card, #view .card");
-          if (card && window.TV) TV.focus(card);
-        }
+        const card = (this.contentEl && document.contains(this.contentEl) && this.contentEl)
+          || document.querySelector("#view .strip.cw .card, #view .card");
+        if (card && window.TV) TV.focus(card);
+        else if (card) card.focus();
         return true;
       }
       if (key === "ArrowRight" && onTab) {
