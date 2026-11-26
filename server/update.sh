@@ -24,6 +24,8 @@
 #      1.5.2: if hardware transcoding was never set up, it scans for a video card, installs its drivers,
 #      tests it and saves the result; a value already saved (by install or in Settings) is always kept.
 #      If anything fails after the mirror, the previous code is restored from the backup automatically.
+#      2.0: before the schema 11 upgrade it also saves a checked copy of the database as
+#      data/media-server.db.pre-schema11 (mode 600).
 #
 # Your .env, database, users, libraries, watch progress and mounted shares are preserved.
 #
@@ -279,12 +281,56 @@ say "Python dependencies"
 ok "dependencies up to date"
 
 system_bits
-mkdir -p "$PROJECT_DIR/data/thumbs" "$PROJECT_DIR/data/transcode" "$PROJECT_DIR/data/prefetch" "$PROJECT_DIR/data/subs"
+mkdir -p "$PROJECT_DIR/data/thumbs" "$PROJECT_DIR/data/transcode" "$PROJECT_DIR/data/prefetch" "$PROJECT_DIR/data/subs" \
+         "$PROJECT_DIR/data/offline"
 [ -n "$SVC_USER" ] && chown -R "$SVC_USER:$SVC_USER" "$PROJECT_DIR/data"
+
+# 2.0: a separate, checked snapshot of the database before schema 11 (devices, offline downloads),
+# data/media-server.db.pre-schema11 (mode 600), in addition to the full backup tarball above.
+# If the snapshot can't be made or doesn't pass an integrity check, the update stops and the previous code comes back.
+db_snapshot_before() {
+  local want="$1" db="$PROJECT_DIR/data/media-server.db" dest
+  dest="$PROJECT_DIR/data/media-server.db.pre-schema${want}"
+  [ -f "$db" ] || return 0
+  [ -f "$dest" ] && { ok "database snapshot already there: $dest"; return 0; }
+  python3 - "$db" "$dest" "$want" <<'PY'
+import os, sqlite3, sys
+src_p, dest, want = sys.argv[1], sys.argv[2], int(sys.argv[3])
+src = sqlite3.connect(src_p, timeout=60)
+try:
+    cur = int((src.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() or ["0"])[0])
+except sqlite3.Error:
+    cur = 0
+if cur >= want:
+    print("schema %d already" % cur)
+    sys.exit(0)
+tmp = dest + ".tmp"
+if os.path.exists(tmp):
+    os.unlink(tmp)
+old = os.umask(0o077)
+dst = sqlite3.connect(tmp)
+with dst:
+    src.backup(dst)
+ok = dst.execute("PRAGMA integrity_check").fetchone()[0]
+dst.close(); src.close()
+os.umask(old)
+if ok != "ok":
+    os.unlink(tmp)
+    sys.exit("integrity check failed: %s" % ok)
+os.chmod(tmp, 0o600)
+os.replace(tmp, dest)
+print("saved schema %d snapshot" % cur)
+PY
+  [ -f "$dest" ] && { [ -n "$SVC_USER" ] && chown "$SVC_USER:$SVC_USER" "$dest"; ok "database backup before schema ${want}: $dest"; }
+  return 0
+}
+say "Database backup before schema 11"
+db_snapshot_before 11
 
 # 1.7.9: migrate() also writes data/media-server.db.pre-schema9 (mode 600) before the new
 # subtitle / prefetch / probe-cache tables. The tarball above already has a full DB snapshot.
 # 1.9: likewise data/media-server.db.pre-schema10 before roles, invites, activity and hashed sessions.
+# 2.0: the pre-schema11 snapshot was already made (and checked) by db_snapshot_before above.
 say "Database upgrade"
 ( cd "$PROJECT_DIR" && run_as "$VENV_PY" -m app.cli init ) | grep -E '^database:' | sed 's/^/    /'
 find "$PROJECT_DIR" -path "$PROJECT_DIR/.venv" -prune -o -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true

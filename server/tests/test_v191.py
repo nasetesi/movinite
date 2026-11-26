@@ -28,7 +28,7 @@ def check(cond, msg):
 
 print("version and stamps")
 check(tuple(int(x) for x in VERSION.split(".")) >= (1, 9, 1), "version is 1.9.1 or later (%s)" % VERSION)
-check('__version__ = "1.9.1"' in (ROOT / "app/version.py").read_text() or VERSION == "1.9.1", "version.py is 1.9.1")
+check(tuple(int(x) for x in VERSION.split(".")) >= (1, 9, 1), "version.py is 1.9.1 or later")
 check("## 1.9.1" in ch and ch.find("## 1.9.1") < ch.find("## 1.9 --"), "CHANGELOG has 1.9.1 above 1.9")
 check("TV mode" in ch or "spatial navigation" in ch.lower() or "D-pad" in ch, "changelog describes TV / D-pad navigation")
 
@@ -72,7 +72,7 @@ print("cache-bust")
 idx = (ROOT / "app/static/index.html").read_text()
 # stamps are injected at serve time from __version__, not hardcoded in the file
 from app.version import __version__
-check(__version__ == "1.9.1", "served ?v= stamp will be 1.9.1")
+check(tuple(int(x) for x in __version__.split(".")) >= (1, 9, 1), "served ?v= stamp follows the version (%s)" % __version__)
 
 if fails:
     print("\n%d failed" % fails)

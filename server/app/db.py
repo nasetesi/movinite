@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from . import config
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 -- 1.4: categories
@@ -219,6 +219,38 @@ CREATE TABLE IF NOT EXISTS gmail_accounts (
 );
 CREATE TABLE IF NOT EXISTS gmail_sends (user_id INTEGER NOT NULL, ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS gmail_sends_user ON gmail_sends(user_id, ts);
+-- 2.0: offline downloads (schema 11). Devices are kept as tombstones (revoked_at) so a revoked or deleted
+-- account's phone still gets a signed "wipe" answer on its next sync.
+CREATE TABLE IF NOT EXISTS devices (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
+    name TEXT, platform TEXT, app_version TEXT,
+    pubkey TEXT NOT NULL UNIQUE,          -- base64 DER SubjectPublicKeyInfo (EC P-256 from the Android Keystore)
+    fp TEXT NOT NULL,                     -- base64url sha256 of the DER key (the grant "dev" field)
+    caps TEXT,                            -- JSON: what the device can decode (h264, hevc, av1, ac3, eac3, dts, maxh)
+    created_at INTEGER NOT NULL, last_sync INTEGER, last_ip TEXT,
+    revoked_at INTEGER, revoke_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
+CREATE TABLE IF NOT EXISTS offline_grants (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, device_id INTEGER NOT NULL, item_id INTEGER NOT NULL,
+    profile TEXT NOT NULL,                -- original | 1080p | 720p | 480p (+ ".hevc")
+    audio INTEGER NOT NULL DEFAULT 0,
+    job_id INTEGER,                       -- offline_jobs row for a transcoded profile
+    bytes INTEGER, sha256 TEXT,           -- of the file the device receives
+    title TEXT,                           -- kept for the admin list after the item is gone
+    issued_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, renewed_at INTEGER,
+    state TEXT NOT NULL,                  -- preparing | ready | downloaded | deleted | revoked | failed
+    revoked_at INTEGER, revoke_reason TEXT, done_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS offline_grants_user ON offline_grants(user_id, state);
+CREATE INDEX IF NOT EXISTS offline_grants_device ON offline_grants(device_id, state);
+CREATE TABLE IF NOT EXISTS offline_jobs (
+    id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL, profile TEXT NOT NULL, audio INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,                 -- queued | running | paused | ready | failed
+    progress REAL, path TEXT, bytes INTEGER, sha256 TEXT, encoder TEXT, error TEXT, mtime REAL,
+    created_at INTEGER, started_at INTEGER, finished_at INTEGER, last_access INTEGER,
+    UNIQUE(item_id, profile, audio)
+);
 """
 
 _local = threading.local()
@@ -292,6 +324,10 @@ ADDED_COLUMNS = [
     ("sessions", "ua", "TEXT"),
     ("sessions", "last_seen", "INTEGER"),
     ("sessions", "device", "TEXT"),
+    # 2.0: per-user download limits (NULL = the server default, 0 = unlimited)
+    ("users", "dl_titles", "INTEGER"),
+    ("users", "dl_gb", "REAL"),
+    ("users", "dl_devices", "INTEGER"),
 
     # 1.4: categories (collection / franchise, age rating; cat_v = version of the category fields fetched)
     ("metadata", "collection_id", "INTEGER"),
@@ -316,6 +352,8 @@ def migrate():
             _backup_db(c, 9)              # 1.7.9: snapshot before start-cache tables (idempotent)
         if old_pre and int(old_pre[0]) < 10:
             _backup_db(c, 10)             # 1.9: snapshot before roles / invites / hashed sessions (idempotent)
+        if old_pre and int(old_pre[0]) < 11:
+            _backup_db(c, 11)             # 2.0: snapshot before devices / offline downloads (idempotent)
         c.executescript(SCHEMA)
         for table, col, typ in ADDED_COLUMNS:
             have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}

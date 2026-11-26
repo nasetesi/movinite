@@ -34,7 +34,7 @@ import javax.net.ssl.SSLException;
 /**
  * Native sign-in screen. Posts the username and password to the server's /api/login (the same call the web page makes),
  * puts the returned ms_session cookie into the WebView's cookie store and opens Home. The password is never saved.
- * The gear at the top right (or a long-press on the logo) opens Server settings to change the server address.
+ * The gear at the top right (or a long-press on the logo) opens Server settings (advanced: a LAN address instead of https://movies.example.com).
  */
 public class LoginActivity extends Activity {
     static final String EXTRA_MESSAGE = "message";
@@ -83,8 +83,9 @@ public class LoginActivity extends Activity {
         server = Prefs.serverUrl(this);           // may have changed in Server settings
         if (server == null) { startActivity(SetupActivity.firstRun(this)); finish(); return; }
         if (Session.signedIn(server)) { openHome(); return; }
-        serverLine.setText("Server: " + server);
-        serverLine.setVisibility(View.VISIBLE);
+        boolean custom = server != null;
+        serverLine.setText(custom ? "Server: " + server : "");
+        serverLine.setVisibility(custom ? View.VISIBLE : View.GONE);
     }
 
     /** 1.5: like the web page's .auth-box -- full width on a phone, at most 380 dp wide on tablets / in landscape. */

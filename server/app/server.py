@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 
 from . import artwork, auth, browse, folderart, liborder, playlists, preload, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
-from . import gmail, mailer, guard, invites, keys, netutil, useractivity
+from . import gmail, mailer, guard, invites, keys, netutil, offline, useractivity
 from .version import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -25,6 +25,7 @@ STATIC = Path(__file__).parent / "static"
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 app = FastAPI(title="Movinite", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(guard.Guard)    # 1.9: per-library access + Activity > Now playing
+app.include_router(offline.router)  # 2.0: devices, offline grants, sync, Settings > Downloads
 _stop = False
 
 
@@ -47,6 +48,7 @@ def _startup():
     threading.Thread(target=hwaccel.warm_up, daemon=True, name="hw-detect").start()
     folderart.start_backfill(lambda: _stop)    # 1.7.3
     preload.start_loop(lambda: _stop)          # 1.7.9: subtitle / remux / opening-clip caches
+    threading.Thread(target=offline.loop, args=(lambda: _stop,), daemon=True, name="offline-jobs").start()   # 2.0
     log.info("Movinite (media-server) v%s started; data in %s", __version__, config.DATA_DIR)
 
 
@@ -55,6 +57,7 @@ def _shutdown():
     global _stop
     _stop = True
     scanner._stop = True
+    offline.stop()
     transcode.shutdown()
 
 
@@ -175,7 +178,8 @@ def me(u=Depends(auth.require_user)):
     return {"id": u["id"], "username": u["username"], "is_admin": bool(u["is_admin"]), "role": role,
             "role_label": auth.ROLE_LABEL.get(role), "email": u.get("email"),
             "all_libraries": u.get("libs") is None, "session_id": u.get("sid"),
-            "must_change_pw": bool(u["must_change_pw"]), "version": __version__, "show_status": _status_visible(u)}
+            "must_change_pw": bool(u["must_change_pw"]), "version": __version__, "show_status": _status_visible(u),
+            "can_download": offline.can_download(u) and offline.cfg("offline_enabled")}
 
 
 def _status_visible(u):
@@ -306,6 +310,10 @@ def edit_user(uid: int, body: dict = Body(...), u=Depends(auth.require_admin)):
             else:
                 c.execute("UPDATE users SET disabled_at=NULL WHERE id=?", (uid,))
     auth.invalidate_cache()
+    if body.get("disabled"):
+        offline.forget_user(uid, "account disabled")       # 2.0: its phones wipe their downloads on the next sync
+    elif role != old_role and role == "view":
+        offline.revoke_user_grants(uid, "role changed")     # 2.0: Viewer can't keep downloads
     if role != old_role:
         useractivity.record("role_changed", user=u, detail={"username": t["username"], "from": old_role, "to": role})
         if old_role == "admin":
@@ -327,6 +335,7 @@ def delete_user(uid: int, u=Depends(auth.require_admin)):
     if auth.norm_role(target.get("role"), target.get("is_admin")) == "admin" and _admins_left(uid) < 1:
         raise HTTPException(400, "Cannot delete the last admin")
     gmail.forget_user(uid)
+    offline.forget_user(uid, "account deleted")             # 2.0: tombstone devices so the phones wipe
     with db.tx() as c:
         c.execute("DELETE FROM users WHERE id=?", (uid,))
         c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))

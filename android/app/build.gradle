@@ -5,11 +5,6 @@ plugins { id 'com.android.application' }
 def ksPropsPath = project.findProperty('keystoreProps') ?: System.getenv('KEYSTORE_PROPS')
 def ksProps = new Properties()
 if (ksPropsPath && file(ksPropsPath).exists()) { file(ksPropsPath).withInputStream { ksProps.load(it) } }
-// CI (GitHub Actions): the same four values can come from environment variables instead of a file.
-['storeFile': 'MOVINITE_KEYSTORE_FILE', 'storePassword': 'MOVINITE_KEYSTORE_PASSWORD',
- 'keyAlias': 'MOVINITE_KEY_ALIAS', 'keyPassword': 'MOVINITE_KEY_PASSWORD'].each { k, env ->
-    if (!ksProps[k] && System.getenv(env)) ksProps[k] = System.getenv(env)
-}
 
 android {
     namespace 'org.movinite.app'
@@ -18,14 +13,15 @@ android {
         applicationId 'org.movinite.app'
         minSdk 24
         targetSdk 34
-        versionCode 7
-        versionName '1.6'
+        versionCode 8
+        versionName '2.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     signingConfigs {
         release {
             if (ksProps['storeFile']) {
                 def sf = new File(ksProps['storeFile'])
-                storeFile((sf.isAbsolute() || !ksPropsPath) ? sf : new File(file(ksPropsPath).parentFile, ksProps['storeFile']))
+                storeFile sf.isAbsolute() ? sf : new File(file(ksPropsPath).parentFile, ksProps['storeFile'])
                 storePassword ksProps['storePassword']
                 keyAlias ksProps['keyAlias']
                 keyPassword ksProps['keyPassword']
@@ -43,4 +39,18 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     lint { abortOnError false; checkReleaseBuilds false }
+    testOptions { unitTests.returnDefaultValues = true }
+    packaging { resources { excludes += ['META-INF/*.kotlin_module', 'META-INF/versions/9/OSGI-INF/MANIFEST.MF'] } }
+}
+
+// 2.0: offline downloads -- Media3 (ExoPlayer) player, WorkManager background downloads, Tink (AES-GCM store, Ed25519 licences)
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.media3:media3-ui:1.4.1'
+    implementation 'androidx.media3:media3-datasource:1.4.1'
+    implementation 'androidx.work:work-runtime:2.9.1'
+    implementation 'com.google.crypto.tink:tink-android:1.15.0'
+    implementation 'androidx.annotation:annotation:1.8.2'     // one copy (Media3 and WorkManager pull different ones)
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
 }

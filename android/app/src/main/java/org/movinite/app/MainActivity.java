@@ -57,13 +57,14 @@ public class MainActivity extends Activity {
     static final String ACTION_OPEN = "org.movinite.app.OPEN";
     static final String ACTION_SETTINGS = "org.movinite.app.SERVER_SETTINGS";
     static final String ACTION_RELOAD = "org.movinite.app.RELOAD";
+    static final String ACTION_DOWNLOADS = "org.movinite.app.DOWNLOADS";
     private static final int REQ_STORAGE = 7;
 
     private WebView web;
     private View loading, error, fullscreenBox;
     private TextView errorText, loadingText;
     private ProgressBar progress;
-    private String server;            // e.g. https://movies.example.com or http://my-server:8099
+    private String server;            // e.g. https://movies.example.com
     private boolean firstLoadDone = false;
     private boolean mainFrameFailed = false;
     private View customView;
@@ -80,6 +81,11 @@ public class MainActivity extends Activity {
             finish();
             return;
         }
+
+        // 2.0: offline downloads -- the offline window is over: remove them; no connection: the offline screen
+        Offline off = Offline.get(this);
+        if (off.windowExpired()) off.wipe("offline for too long");
+        if (off.registered() && !off.online()) { startActivity(new Intent(this, OfflineActivity.class)); finish(); return; }
         if (!Session.signedIn(server)) {          // not signed in: the native sign-in screen (Server settings on top if asked for)
             Intent login = new Intent(this, LoginActivity.class);
             if (ACTION_SETTINGS.equals(getIntent().getAction())) startActivities(new Intent[]{login, new Intent(this, SetupActivity.class)});
@@ -97,7 +103,9 @@ public class MainActivity extends Activity {
         fullscreenBox = findViewById(R.id.fullscreen);
         findViewById(R.id.retry).setOnClickListener(v -> retry());
         findViewById(R.id.change_server).setOnClickListener(v -> openSettings());
+        findViewById(R.id.offline_btn).setOnClickListener(v -> { startActivity(new Intent(this, OfflineActivity.class)); finish(); });
 
+        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) WebView.setWebContentsDebuggingEnabled(true);   // debug builds only
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);          // localStorage: sound settings, quality choice ...
@@ -109,20 +117,53 @@ public class MainActivity extends Activity {
         s.setAllowContentAccess(false);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
+        if (isTelevision()) s.setTextZoom(100); // 1.9.2 / 2.0: TVs (4K) ignore the system font scale so the 1920-wide layout isn't zoomed in; phones keep the user's font size
+        s.setSupportZoom(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        s.setUserAgentString(s.getUserAgentString() + " MediaServerAndroid/" + BuildConfigInfo.VERSION);
+        String agent = s.getUserAgentString() + " MediaServerAndroid/" + BuildConfigInfo.VERSION;
+        if (isTelevision()) agent += " AndroidTV";      // 1.9.1 web app: TV / D-pad navigation
+        s.setUserAgentString(agent);
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);               // the login cookie survives app restarts
         cm.setAcceptThirdPartyCookies(web, false);
         web.setBackgroundColor(getColor(R.color.bg));
         web.setWebViewClient(new Client());
         web.setWebChromeClient(new Chrome());
-        web.addJavascriptInterface(new Bridge(), "MSAndroid");
+        bridge = new Bridge();
+        bridge.attach(web);
+        web.addJavascriptInterface(bridge, "MSAndroid");
+        web.setFocusable(true);
+        web.setFocusableInTouchMode(true);
+        web.requestFocus();
         web.setDownloadListener((url, ua, disposition, mime, length) -> download(url, ua, disposition, mime));
 
         if (b != null && web.restoreState(b) != null) { firstLoadDone = true; loading.setVisibility(View.GONE); }
         else load(server);
         handleIntent(getIntent());
+        if (off.registered()) { off.syncSoon(); off.schedulePeriodicSync(); healthCheck(); }
+    }
+
+    private Bridge bridge;
+
+    boolean isTelevision() {
+        return (getResources().getConfiguration().uiMode & Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION;
+    }
+
+    /** 2.0: the server doesn't answer within 3 s and this phone has downloads: offer them straight away */
+    private void healthCheck() {
+        final String base = server;
+        new Thread(() -> {
+            boolean ok;
+            try {
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(base + "/api/health").openConnection();
+                c.setConnectTimeout(3000); c.setReadTimeout(3000);
+                ok = c.getResponseCode() < 500; c.disconnect();
+            } catch (Exception e) { ok = false; }
+            if (!ok) runOnUiThread(() -> {
+                if (web == null || leaving || firstLoadDone) return;
+                if (Offline.get(this).hasDownloads()) { startActivity(new Intent(this, OfflineActivity.class)); finish(); }
+            });
+        }).start();
     }
 
     private void load(String url) {
@@ -149,6 +190,7 @@ public class MainActivity extends Activity {
         if (ACTION_SETTINGS.equals(a)) { i.setAction(Intent.ACTION_MAIN); openSettings(); }
         else if (ACTION_RELOAD.equals(a)) { i.setAction(Intent.ACTION_MAIN); retry(); }
         else if (ACTION_OPEN.equals(a)) { i.setAction(Intent.ACTION_MAIN); }
+        else if (ACTION_DOWNLOADS.equals(a)) { i.setAction(Intent.ACTION_MAIN); web.evaluateJavascript("location.hash='#/downloads'", null); }
     }
 
     @Override
@@ -227,6 +269,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         stopTilt();
+        if (bridge != null) bridge.detach();
         if (web != null) { web.stopLoading(); web.setWebChromeClient(null); web.destroy(); web = null; }
         super.onDestroy();
     }
@@ -238,6 +281,7 @@ public class MainActivity extends Activity {
         if (error.getVisibility() == View.VISIBLE || web == null) { appMenu(); return; }
         // let the web app close its video player / side menu first
         web.evaluateJavascript("(function(){try{var d=document;"
+            + "if(window.__msTvBack&&window.__msTvBack())return 'closed';"
             + "var p=d.getElementById('player');"
             + "if(p&&!p.classList.contains('hidden')){var c=d.getElementById('pl-close');if(c){c.click();return 'closed';}}"
             + "var m=d.getElementById('modal');"
@@ -295,9 +339,18 @@ public class MainActivity extends Activity {
         + "if(v&&v!==last){last=v;var w=d.getElementById('whoami');MSAndroid.state(v,w?w.textContent:'');}}"
         + "var mo=new MutationObserver(chk);var a=d.getElementById('auth'),s=d.getElementById('shell');"
         + "if(a)mo.observe(a,{childList:true,attributes:true,attributeFilter:['class']});"
-        + "if(s)mo.observe(s,{attributes:true,attributeFilter:['class']});chk();}catch(e){}})()";
+        + "if(s)mo.observe(s,{attributes:true,attributeFilter:['class']});chk();"
+        + "d.addEventListener('click',function(e){var t=e.target&&e.target.closest&&e.target.closest('#logout');if(t&&MSAndroid.signingOut)MSAndroid.signingOut();},true);"
+        + "}catch(e){}})()";
 
-    private class Bridge {
+    private class Bridge extends OfflineBridge {
+        Bridge() { super(MainActivity.this, false); }
+        /** 1.9.1: the web app's TV mode */
+        @android.webkit.JavascriptInterface
+        public boolean isTv() { return isTelevision(); }
+        /** 2.0: the web Sign out link was pressed: this phone's downloads and keys go too */
+        @android.webkit.JavascriptInterface
+        public void signingOut() { new Thread(() -> Offline.get(MainActivity.this).signOut()).start(); }
         @android.webkit.JavascriptInterface
         public void state(String v, String who) {
             runOnUiThread(() -> onWebState(v, who));
@@ -375,6 +428,7 @@ public class MainActivity extends Activity {
         if ("ready".equals(v) || "other".equals(v)) {
             if ("ready".equals(v)) { webReady = true; if (who != null && !who.isEmpty()) signedInAs = who; }
             firstLoadDone = true; loading.setVisibility(View.GONE);
+            if (web != null) web.requestFocus();
             return;
         }
         if ("login".equals(v)) {
@@ -415,6 +469,7 @@ public class MainActivity extends Activity {
     /** same as the web app's Sign out link: ends the session on the server, then the watcher brings up the native screen */
     private void signOut() {
         if (web == null) return;
+        new Thread(() -> Offline.get(this).signOut()).start();     // 2.0: downloads and keys go with the account
         web.evaluateJavascript("(function(){var l=document.getElementById('logout');if(l){l.click();return 'ok';}return 'no';})()", r -> {
             if (r == null || !r.contains("ok")) toLogin(null);
             else ui.postDelayed(() -> { if (!leaving) toLogin("You've been signed out."); }, 4000);   // fallback
@@ -508,6 +563,7 @@ public class MainActivity extends Activity {
         loading.setVisibility(View.GONE);
         progress.setVisibility(View.GONE);
         errorText.setText(Uri.parse(server).getHost() + "\n" + why + "\n\nCheck your connection, or that the server is on.");
+        findViewById(R.id.offline_btn).setVisibility(Offline.get(this).hasDownloads() ? View.VISIBLE : View.GONE);
         error.setVisibility(View.VISIBLE);
     }
 

@@ -165,9 +165,33 @@ narrower than 600 px (swipe the row) and small and subtle on tablets.
 From v1.4.7 Home posters are up to 330 px wide, and posters everywhere pop out on mouse hover or keyboard focus
 (Tab to a poster, Enter opens it). "Reduce motion" in the operating system turns the movement off.
 
-## Android TV remote (1.9.1)
+## Offline downloads in the Android app (2.0)
+
+Needs the **Movinite Android app 2.0** (`movinite-android-v2.0.apk`, installs over 1.x and keeps the sign-in) and server 2.0.
+
+* **Who can download:** admins and people with the **Viewer + Downloads** role. Turn the feature on or off and set the
+  limits in **Settings > Downloads** (defaults: 20 titles or 100 GB per person, 3 devices, admins unlimited).
+* **In the app:** a **Download** button on detail pages. You pick a quality each time (720p suggested; 1080p, 720p and
+  480p are prepared by the server on the GPU and pause while anyone is watching; **Original** only when the phone can
+  play the file as it is). The **Downloads** tab (it replaces My List in the bottom tabs; My List stays on Home and in
+  the account menu) shows progress, storage, quota and what is ready to watch.
+* **Offline:** when the server can't be reached the app opens its offline screen after you confirm with your
+  fingerprint, face or screen lock (or a 6-digit Movinite PIN; one is required if the phone has no screen lock).
+  Films are stored encrypted inside the app and play only in its own player. Progress is sent back at the next sync.
+* **Licences:** each download has a 30-day licence signed by the server key and tied to that phone. It renews whenever
+  the app syncs. A download is deleted at the next sync if it is removed from the server, the person loses the role or
+  the library, or the device is removed (**Settings > Downloads**, or **My account > Devices & downloads**). After 30
+  days without a sync, or on sign-out, the app removes every download.
+* **Honest limits:** this is trust-based protection for family and friends, not studio-grade DRM. A determined person
+  with a rooted phone could copy a film; screenshots and screen recording of the player are blocked.
+* Prepared versions are cached in `data/offline` (200 GB by default, oldest removed first). `update.sh` saves
+  `data/media-server.db.pre-schema11` before the schema 11 upgrade.
+
+## Android TV remote (1.9.1, 1.9.2)
 
 The web app (including the Android 1.5 WebView on a television) can be driven with a D-pad: arrow keys move a large purple focus ring across the sidebar, rows, posters and player controls; OK or Enter opens the focused item; Back closes the player or goes back. Televisions are detected automatically. On a browser you can turn it on with `localStorage.msTvMode = 1` and reload (set it to `0` to turn it off).
+
+From 1.9.2, opening a movie or show focuses Resume or Play (not the Similar movies row). Up and down stay inside the details: buttons, then cast or episodes, then Similar movies. The page is laid out at 1920×1080 and scaled to the WebView's CSS size, so a 4K television does not look zoomed in. The wide banner on the Android TV home screen comes from the app (2.0), not this server release.
 
 ## Phones and admin-only tools (v1.4.9)
 

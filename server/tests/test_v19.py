@@ -152,7 +152,7 @@ def db_bytes():
 
 def main():
     print("version / docs / UI")
-    check(__version__ == "1.9" or __version__.startswith("1.9."), "version is 1.9")
+    check(tuple(int(x) for x in __version__.split(".")) >= (1, 9), "version is 1.9 or later")
     ch = (ROOT / "CHANGELOG.md").read_text()
     check(ch.find("## 1.9") != -1 and ch.find("## 1.9") < ch.find("## 1.8.1"), "CHANGELOG has 1.9 above 1.8.1")
     check((ROOT / "docs/gmail-setup.md").is_file() and (ROOT / "app/static/gmail-setup.html").is_file(),
@@ -177,8 +177,8 @@ def main():
 
     print("migration to schema 10")
     db.migrate()
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] in ("10", 10) if db.row("SELECT name FROM sqlite_master WHERE name='meta'") else True,
-          "schema_version is 10")
+    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] in ("10", 10, "11", 11) if db.row("SELECT name FROM sqlite_master WHERE name='meta'") else True,
+          "schema_version is 10 or later")
     if OLD_TOKEN:
         bk = Path(DATA) / "media-server.db.pre-schema10"
         check(bk.is_file() and stat.S_IMODE(bk.stat().st_mode) == 0o600, "pre-schema10 backup written, mode 600")

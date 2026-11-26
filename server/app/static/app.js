@@ -171,12 +171,21 @@ function fixMatchDialog(kind, query, year, apply) {
   });
 }
 // lazy artwork: big libraries render thousands of cards; load posters only near the viewport
+function artBg(el) {
+  // In TV mode, prefer the w780 poster-large when present so 4K / high-DPR panels stay sharp.
+  const hi = el.dataset.bgHi;
+  const lo = el.dataset.bg;
+  if (hi && document.documentElement.classList.contains("tv-mode")) {
+    return `url('${hi}'),url('${lo}')`;
+  }
+  return `url('${lo}')`;
+}
 const lazyIO = ("IntersectionObserver" in window) ? new IntersectionObserver((ents) => ents.forEach(e => {
-  if (e.isIntersecting) { e.target.style.backgroundImage = `url('${e.target.dataset.bg}')`; lazyIO.unobserve(e.target); }
+  if (e.isIntersecting) { e.target.style.backgroundImage = artBg(e.target); lazyIO.unobserve(e.target); }
 }), { rootMargin: "800px 200px" }) : null;
 new MutationObserver(() => $$("[data-bg]:not([data-lz])").forEach(el => {
   el.dataset.lz = "1";
-  if (lazyIO) lazyIO.observe(el); else el.style.backgroundImage = `url('${el.dataset.bg}')`;
+  if (lazyIO) lazyIO.observe(el); else el.style.backgroundImage = artBg(el);
 })).observe(document.body, { childList: true, subtree: true });
 const ico = (body) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 const KIND_ICON = {   // 1.7.4: outlined theme icons (24px grid, currentColor)
@@ -528,6 +537,7 @@ const MOB = (() => {
     if (p === "libraries" || p === "library" || p === "show" || p === "album") return "libraries";
     if (p === "search") return "search";
     if (p === "mylist") return "mylist";
+    if (p === "downloads") return "downloads";
     if (p === "settings") return "settings";
     return "";
   }
@@ -544,6 +554,7 @@ const MOB = (() => {
     $("#acct-ver").textContent = "Movinite v" + ME.version;
     $("#acct-settings").hidden = !ME.is_admin;
     $("#tab-set-l").textContent = ME.is_admin ? "Settings" : "Account";
+    OFF.applyTabs();   // 2.0: in the Android app (with the download role) Downloads replaces My List in the tab bar
     tab();
   }
   av.onclick = (e) => { e.stopPropagation(); open(menu.classList.contains("hidden")); };
@@ -662,6 +673,7 @@ async function route() {
       case "search": setActive(""); await viewSearch(parts.slice(1).join("/")); break;
       case "libraries": setActive(""); await viewLibraries(); break;
       case "mylist": setActive(""); await viewMyList(); break;
+      case "downloads": setActive(""); await viewDownloads(); break;
       case "settings": setActive("settings"); await viewSettings(parts[1] || ""); break;
       default: setActive("home"); await viewHome();
     }
@@ -690,7 +702,7 @@ function cardItem(i, opts) {
   // 1.4.7: info that fades in over the poster on hover / keyboard focus
   const hov = i.media_type === "audio" ? "" : `<div class="hov" aria-hidden="true"><b>${esc(t)}</b><span>${[i.year, i.rating ? "&#9733; " + (+i.rating).toFixed(1) : "", i.duration ? fmtLen(i.duration) : ""].filter(Boolean).join(" · ")}</span></div>`;
   return `<div class="card ${cls}${opts.resume ? " resume" : ""}" tabindex="0" data-href="#/item/${i.id}"${opts.resume ? ` title="${esc(t)} -- resume from ${fmtDur(i.position || 0)}"` : ""} data-id="${i.id}">
-    <div class="art"${img ? ` data-bg="${thumbUrl(img)}"` : ""}>
+    <div class="art"${img ? ` data-bg="${thumbUrl(img)}"${(!land && i.id && i.kind !== "episode" && i.media_type !== "audio") ? ` data-bg-hi="/api/items/${i.id}/poster-large"` : ""}` : ""}>
       ${img ? "" : `<div class="ph">${i.media_type === "audio" ? "&#9835;" : "&#127902;"}</div>`}
       ${i.watched ? `<span class="badge">&#10003;</span>` : ""}
       ${i.needs_review ? `<span class="badge rv" title="Match needs review">?</span>` : ""}
@@ -1144,6 +1156,9 @@ async function viewHome(live) {
   }
   // 1.4.1: Continue watching first (only when something is part-watched); click resumes where you stopped
   if (d.continue.length) html += rowHead("Continue watching") + `<div class="strip hs cw">${d.continue.map(i => cardItem(i, { resume: true })).join("")}</div>`;
+  if (OFF.on()) {   // 2.0: the Downloads tab took My List's place, so My List's recently watched films get a home row
+    try { const ml = await api("/api/mylist"); if (ml.watched.length) html += rowHead("My List", "#/mylist", { sub: "Recently watched" }) + `<div class="strip hs">${ml.watched.slice(0, 20).map(i => cardItem(i)).join("")}</div>`; } catch (e) { /* row is optional */ }
+  }
   const nMovieLibs = d.libraries.filter(L => L.library.kind === "movies").length;
   for (const L of d.libraries) {
     const lib = L.library;
@@ -1703,6 +1718,7 @@ async function viewItem(id) {
     <div class="actions main-actions">
       ${it.position > 30 ? `<button class="btn big" id="resume">&#9654; Resume from ${fmtDur(it.position)}</button><button class="btn ghost big" id="play">Play from start</button>` : `<button class="btn big" id="play">&#9654; Play</button>`}
       <button class="btn ghost" id="watched">${it.watched ? "Mark unwatched" : "Mark watched"}</button>
+      ${OFF.on() && it.media_type === "video" ? `<button class="btn ghost dl-btn" id="dl-btn" data-item="${it.id}">${dlBtnLabel(it.id)}</button>` : ""}
       ${it.next ? `<a class="btn ghost" href="#/item/${it.next.id}">Next: ${epCode(it.next)} &rsaquo;</a>` : ""}
       ${moreMenu}
     </div>
@@ -1729,6 +1745,7 @@ async function viewItem(id) {
   if ($("#resume")) $("#resume").onclick = () => { SFX.play(); playItem(id, it.position, { exact, item: it }); };
   if ($("#accept-cand")) $("#accept-cand").onclick = async () => { try { await api(`/api/items/${id}/match`, { method: "POST", body: { accept_candidate: true } }); toast("Match accepted"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } };
   if ($("#confirm-match")) $("#confirm-match").onclick = async () => { try { await api(`/api/items/${id}/match`, { method: "POST", body: { tmdb_id: it.tmdb_id } }); toast("Match confirmed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } };
+  if ($("#dl-btn")) $("#dl-btn").onclick = () => { const d = OFF.forItem(it.id); if (d && d.state === "ready") { window.MSAndroid.playOffline(d.gid); return; } if (d) { location.hash = "#/downloads"; return; } downloadDialog(it); };
   $("#watched").onclick = async () => { await api(`/api/items/${id}/watched`, { method: "POST", body: { watched: !it.watched } }); route._keepScroll = true; route(); };
   if ($("#homerows")) $("#homerows").onclick = () => {
     const sel = (row) => { const m = (it.pins || {})[row] || 0; return `<select id="pin-${row}">${[[0, "Automatic"], [1, "Always include (pinned first)"], [-1, "Never include"]].map(([v, n]) => `<option value="${v}"${v === m ? " selected" : ""}>${n}</option>`).join("")}</select>`; };
@@ -1813,6 +1830,284 @@ async function viewMyList() {
   if (d.watched.length) html += rowHead("Watched", "", { sub: "Most recent first" }) + `<div class="grid">${d.watched.map(i => cardItem(i)).join("")}</div>`;
   if (!d.continue.length && !d.watched.length) html += `<div class="empty">Nothing here yet. Films you start or finish show up here.</div>`;
   $("#view").innerHTML = html;
+}
+
+// ---------------------------------------------------------------- 2.0: offline downloads (Android app only)
+// The native app exposes window.MSAndroid.offlineCaps / downloads / storageInfo / call / playOffline. Browsers have
+// no bridge, so nothing here shows there: the bottom tabs, detail pages and menus stay as they were.
+const ICO_DL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11.5M7 10.5l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 16.5v2.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-2.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`;
+const ICO_MYLIST = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11a1 1 0 0 1 1 1V21l-6.5-4.5L5.5 21V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></svg>`;
+const DL_HELP = `<p><b>Downloads stay inside the Movinite app.</b> Films are saved encrypted in the app's own storage and only play in the app's player, with no internet needed.</p>
+  <p><b>Each download has a licence</b> from your server that lasts <span class="dl-days">30</span> days. It renews by itself whenever the app reaches the server. If a title is taken off the server, your access changes, or this device is removed, the download is deleted the next time the app connects.</p>
+  <p><b>Signing in offline</b> uses your phone's fingerprint, face or screen lock (or a Movinite PIN you set here). If the app hasn't reached the server for 30 days, it signs you out and removes the downloads.</p>
+  <p class="dl-warn"><b>This isn't studio-grade protection.</b> It stops casual copying and lets the server owner take downloads back, but someone with a rooted phone and enough know-how could still get at a file. It's meant for family and friends, not for protecting a film studio's rights.</p>`;
+const OFF = (() => {
+  const B = () => window.MSAndroid;
+  const native = () => { try { return !!(B() && typeof B().offlineCaps === "function" && typeof B().call === "function"); } catch (e) { return false; } };
+  const on = () => native() && !!(ME && ME.can_download);
+  const j = (fn, dflt) => { try { const v = JSON.parse(B()[fn]() || "null"); return v == null ? dflt : v; } catch (e) { return dflt; } };
+  let seq = 0; const pend = {};
+  window.__msResolve = (id, ok, data) => {
+    const p = pend[id]; if (!p) return; delete pend[id];
+    let d = data; try { if (typeof d === "string") d = JSON.parse(d); } catch (e) { /* plain text */ }
+    if (ok) p.res(d); else { const det = d && (d.detail || d.error || d.message); p.rej(Object.assign(new Error(typeof det === "string" ? det : (det && det.detail) || String(d || "Something went wrong")), { data: d })); }
+  };
+  function call(name, args, timeoutMs) {
+    return new Promise((res, rej) => {
+      const id = ++seq; pend[id] = { res, rej };
+      try { B().call(id, name, JSON.stringify(args || {})); } catch (e) { delete pend[id]; rej(e); return; }
+      setTimeout(() => { if (pend[id]) { delete pend[id]; rej(new Error("The app didn't answer. Try again.")); } }, timeoutMs || 45000);
+    });
+  }
+  const list = () => j("downloads", []);
+  const caps = () => j("offlineCaps", {});
+  const storage = () => j("storageInfo", {});
+  const ACTIVE = ["queued", "preparing", "downloading", "paused", "waiting_wifi", "ready"];
+  const forItem = (iid) => list().find(d => d.item_id === iid && ACTIVE.includes(d.state));
+  function applyTabs() {
+    const a = $('#tabbar a[data-tab="mylist"], #tabbar a[data-tab="downloads"]');
+    if (a) {
+      if (on()) { a.href = "#/downloads"; a.dataset.tab = "downloads"; a.innerHTML = ICO_DL + "<span>Downloads</span>"; }
+      else { a.href = "#/mylist"; a.dataset.tab = "mylist"; a.innerHTML = ICO_MYLIST + "<span>My List</span>"; }
+    }
+    const m = $("#acct-mylist"); if (m) m.hidden = !on();
+    const d = $("#acct-downloads"); if (d) d.hidden = !on();
+  }
+  window.__msDownloadsChanged = () => {
+    try {
+      if ((location.hash || "").startsWith("#/downloads")) drawDownloads();
+      const b = $("#dl-btn"); if (b) b.innerHTML = dlBtnLabel(+b.dataset.item);
+    } catch (e) { /* page changed */ }
+  };
+  return { native, on, call, list, caps, storage, forItem, applyTabs };
+})();
+
+function dlLeft(exp) { if (!exp) return ""; const d = Math.floor((exp - Date.now() / 1000) / 86400); return d < 0 ? "licence expired" : d === 0 ? "expires today" : `expires in ${d} day${d === 1 ? "" : "s"}`; }
+function dlBtnLabel(iid) {
+  const d = OFF.forItem(iid);
+  if (!d) return `${ICO_DL}<span>Download</span>`;
+  if (d.state === "ready") return `<span class="dl-ok">&#10003;</span><span>Downloaded</span>`;
+  if (d.state === "preparing") return `${ICO_DL}<span>Preparing ${Math.round(100 * (d.prep || 0))}%</span>`;
+  if (d.state === "paused" || d.state === "waiting_wifi") return `${ICO_DL}<span>${d.state === "paused" ? "Paused" : "Waiting for Wi-Fi"}</span>`;
+  return `${ICO_DL}<span>Downloading ${Math.round(100 * (d.progress || 0))}%</span>`;
+}
+function dlUsageLine(u) {
+  if (!u) return "";
+  const t = u.titles_max == null ? `${u.titles} title${u.titles === 1 ? "" : "s"}` : `${u.titles} of ${u.titles_max} titles`;
+  const g = u.bytes_max == null ? fmtSize(u.bytes) || "0 GB" : `${(u.bytes / 1073741824).toFixed(1)} / ${Math.round(u.bytes_max / 1073741824)} GB`;
+  return `${t} · ${g}`;
+}
+
+// the quality sheet: Original (only when this device can play the file), 1080p / 720p / 480p made by the server
+async function downloadDialog(it) {
+  modal(`<h2>Download for offline</h2><div class="dl-load muted">Checking what this device can play...</div>`);
+  let o;
+  try { o = await OFF.call("options", { item_id: it.id }); }
+  catch (e) { modal(`<h2>Download for offline</h2><div class="err">${esc(e.message)}</div><div class="modal-actions"><button class="btn" id="dl-x">Close</button></div>`, () => { $("#dl-x").onclick = closeModal; }); return; }
+  const caps = OFF.caps(), st = OFF.storage();
+  const want = caps.quality && caps.quality !== "ask" ? o.profiles.find(p => p.available && p.id.split(".")[0] === caps.quality) : null;
+  let pick = (want || o.profiles.find(p => p.id === o.default) || o.profiles.find(p => p.available) || {}).id;
+  const free = st.free || 0;
+  const row = (p) => `<label class="dl-q${p.available ? "" : " off"}"><input type="radio" name="dlq" value="${esc(p.id)}" ${p.id === pick ? "checked" : ""} ${p.available ? "" : "disabled"}>
+      <span class="dl-q-n"><b>${esc(p.label)}</b>${p.id === o.default ? ` <span class="chip pill">Recommended</span>` : ""}<span class="muted">${esc(p.note || "")}</span></span>
+      <span class="dl-q-s">${p.bytes ? "about " + fmtSize(p.bytes) : ""}</span></label>`;
+  const ex = o.existing;
+  const auds = (o.audio || []).length > 1 ? `<label for="dl-aud" class="dl-lbl">Audio</label><select id="dl-aud">${o.audio.map(a => `<option value="${a.index}">${esc(a.label)}${a.codec ? " · " + esc(String(a.codec).toUpperCase()) : ""}${a.channels ? " " + a.channels + "ch" : ""}</option>`).join("")}</select>` : "";
+  modal(`<h2>Download for offline</h2><div class="dl-title">${esc(o.title || it.title)}</div>
+    ${ex ? `<div class="dl-have"><span class="dl-ok">&#10003;</span> On this device in <b>${esc(ex.quality)}</b>. Delete it first to download another quality.</div>` : ""}
+    <div class="dl-qs" role="radiogroup" aria-label="Quality">${o.profiles.map(row).join("")}</div>
+    ${auds}
+    <div class="dl-meta"><span>${esc(dlUsageLine(o.usage))}</span>${free ? `<span>${fmtSize(free)} free on this device</span>` : ""}</div>
+    <div class="dl-warn-sp hidden" id="dl-space">Not enough space on this device for this quality.</div>
+    ${caps.wifi_only ? `<div class="help">Downloads use Wi-Fi only (change it in Downloads settings).</div>` : ""}
+    <details class="dl-help"><summary>How downloads work</summary>${DL_HELP.replace('<span class="dl-days">30</span>', o.days || 30)}</details>
+    <div class="err" id="dl-err"></div>
+    <div class="modal-actions">${ex ? `<button class="btn danger" id="dl-del">Delete download</button>` : ""}<button class="btn ghost" id="dl-cancel">Cancel</button>${ex ? "" : `<button class="btn" id="dl-go">${ICO_DL} Download</button>`}</div>`, (box) => {
+    box.classList.add("dl-box");
+    const size = () => { const p = o.profiles.find(x => x.id === pick); const over = p && free && p.bytes > free; $("#dl-space").classList.toggle("hidden", !over); if ($("#dl-go")) $("#dl-go").disabled = !!over || !p; };
+    $$('input[name="dlq"]', box).forEach(r => r.onchange = () => { pick = r.value; size(); });
+    size();
+    $("#dl-cancel").onclick = closeModal;
+    if ($("#dl-del")) $("#dl-del").onclick = async () => { try { await OFF.call("remove", { grant_id: ex.id }); closeModal(); toast("Download deleted"); route._keepScroll = true; route(); } catch (e) { $("#dl-err").textContent = e.message; } };
+    if ($("#dl-go")) $("#dl-go").onclick = async () => {
+      $("#dl-go").disabled = true; $("#dl-err").textContent = "";
+      try {
+        const r = await OFF.call("download", { item_id: it.id, profile: pick, audio: $("#dl-aud") ? +$("#dl-aud").value : 0 });
+        closeModal();
+        toast(r && r.state === "preparing" ? "The server is preparing this download. It starts by itself when ready." : "Downloading " + (o.title || it.title));
+        const b = $("#dl-btn"); if (b) b.innerHTML = dlBtnLabel(it.id);
+      } catch (e) { $("#dl-err").textContent = e.message; $("#dl-go").disabled = false; }
+    };
+  });
+}
+
+// the Downloads tab (in the app): storage and quota, then Downloading / Ready / Needs attention
+let DL_USAGE = null;
+async function viewDownloads() {
+  if (!OFF.native()) { $("#view").innerHTML = `<h2 class="pg-h">Downloads</h2><div class="empty">Downloads work in the Movinite Android app. <a href="#/mylist">My List</a></div>`; return; }
+  if (!ME.can_download) { $("#view").innerHTML = `<h2 class="pg-h">Downloads</h2><div class="empty">Downloading needs the <b>Viewer + Downloads</b> role. Ask the server's admin.</div>`; return; }
+  drawDownloads();
+  try { DL_USAGE = (await api("/api/devices")).usage; drawDownloads(); } catch (e) { /* quota line stays empty */ }
+  try { OFF.call("sync", {}, 20000).then(() => drawDownloads()).catch(() => {}); } catch (e) { /* offline */ }
+  const tok = route._token;
+  clearInterval(route._poll);
+  route._poll = setInterval(() => { if (route._token !== tok) { clearInterval(route._poll); return; } if (OFF.list().some(d => ["queued", "preparing", "downloading"].includes(d.state))) drawDownloads(); }, 2000);
+}
+function dlCard(d) {
+  const img = d.poster_url ? `style="background-image:url('${esc(d.poster_url)}')"` : "";
+  const busy = ["queued", "preparing", "downloading", "paused", "waiting_wifi"].includes(d.state);
+  const pct = d.state === "preparing" ? (d.prep || 0) : (d.progress || 0);
+  const sub = busy ? (d.state === "preparing" ? `Server is preparing ${esc(d.quality)} · ${Math.round(100 * pct)}%${d.queue > 1 ? ` · ${d.queue - 1} ahead` : ""}`
+      : d.state === "paused" ? `Paused · ${fmtSize(d.done_bytes) || "0 B"} of ${fmtSize(d.bytes)}`
+      : d.state === "waiting_wifi" ? "Waiting for Wi-Fi" : d.state === "queued" ? "Waiting to start"
+      : `${fmtSize(d.done_bytes) || "0 B"} of ${fmtSize(d.bytes)} · ${Math.round(100 * pct)}%`)
+    : d.state === "ready" ? `${esc(d.quality)} · ${fmtSize(d.bytes)} · ${dlLeft(d.expires_at)}`
+    : `<span class="dl-bad">${esc(d.error || ({ failed: "Download failed", expired: "Licence expired. Connect to renew it.", revoked: "Removed by the server" })[d.state] || d.state)}</span>`;
+  const resume = d.state === "ready" && d.position > 30 && d.duration ? `<div class="dl-res"><div style="width:${Math.min(100, 100 * d.position / d.duration)}%"></div></div>` : "";
+  const acts = d.state === "ready" ? `<button class="btn small" data-dlplay="${d.gid}">&#9654; ${d.position > 30 ? "Resume" : "Play"}</button>`
+    : d.state === "downloading" || d.state === "queued" || d.state === "waiting_wifi" ? `<button class="btn ghost small" data-dlpause="${d.gid}">Pause</button>`
+    : d.state === "paused" ? `<button class="btn ghost small" data-dlresume="${d.gid}">Resume</button>`
+    : d.state === "failed" ? `<button class="btn ghost small" data-dlretry="${d.gid}">Try again</button>` : "";
+  return `<div class="dl-card st-${esc(d.state)}" data-gid="${d.gid}"><div class="dl-art" ${img}>${img ? "" : "&#127902;"}${d.state === "ready" ? `<span class="dl-qchip">${esc(String(d.quality || "").replace(" HEVC", ""))}</span>` : ""}</div>
+    <div class="dl-body"><div class="dl-t">${esc(d.title)}</div>${d.subtitle ? `<div class="dl-s muted">${esc(d.subtitle)}</div>` : ""}<div class="dl-s">${sub}</div>
+      ${busy ? `<div class="dl-prog${d.state === "preparing" ? " prep" : ""}"><div style="width:${Math.max(2, Math.round(100 * pct))}%"></div></div>` : resume}
+      <div class="dl-acts">${acts}<button class="iconbtn small dl-more" data-dlmore="${d.gid}" aria-label="More for ${esc(d.title)}" title="More">&#8943;</button></div></div></div>`;
+}
+function drawDownloads() {
+  const v = $("#view"); if (!v || v.dataset.view !== "downloads") return;
+  const L = OFF.list(), st = OFF.storage(), caps = OFF.caps();
+  const going = L.filter(d => ["queued", "preparing", "downloading", "paused", "waiting_wifi"].includes(d.state));
+  const ready = L.filter(d => d.state === "ready");
+  const bad = L.filter(d => ["failed", "expired", "revoked"].includes(d.state));
+  const used = st.used || 0, total = st.total || 0, free = st.free || 0;
+  const pctUsed = total ? Math.min(100, 100 * used / total) : 0, pctOther = total ? Math.min(100 - pctUsed, 100 * (total - free - used) / total) : 0;
+  let html = `<div class="dl-head"><h2 class="pg-h">Downloads</h2><button class="iconbtn" id="dl-set" title="Download settings" aria-label="Download settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 2.8l1.6 2.3 2.7-.7.7 2.7 2.3 1.6-1.2 2.5 1.2 2.5-2.3 1.6-.7 2.7-2.7-.7L12 21.2l-1.6-2.3-2.7.7-.7-2.7-2.3-1.6L5.9 12 4.7 9.5 7 7.9l.7-2.7 2.7.7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button></div>
+    <div class="dl-store"><div class="dl-bar"><div class="mv" style="width:${pctUsed}%"></div><div class="ot" style="width:${pctOther}%"></div></div>
+      <div class="dl-store-l"><span><i class="k mv"></i>Movinite ${fmtSize(used) || "0 B"}</span><span><i class="k fr"></i>${fmtSize(free) || "?"} free</span>${DL_USAGE ? `<span class="dl-quota">${esc(dlUsageLine(DL_USAGE))}</span>` : ""}</div></div>`;
+  if (going.length) html += `<h3 class="dl-sec">Downloading <span class="muted">${going.length}</span></h3><div class="dl-list">${going.map(dlCard).join("")}</div>`;
+  if (ready.length) html += `<h3 class="dl-sec">Ready to watch offline <span class="muted">${ready.length}</span></h3><div class="dl-list">${ready.map(dlCard).join("")}</div>`;
+  if (bad.length) html += `<h3 class="dl-sec">Needs attention <span class="muted">${bad.length}</span></h3><div class="dl-list">${bad.map(dlCard).join("")}</div>`;
+  if (!L.length) html += `<div class="empty dl-empty">${ICO_DL}<b>Nothing downloaded yet</b><span>Open a movie or an episode and tap <b>Download</b> to watch it without internet.</span></div>`;
+  html += `<details class="dl-help panel"><summary>How downloads work</summary>${DL_HELP}</details>`;
+  html += `<p class="help dl-mylist">Looking for My List? It's on <a href="#/home">Home</a> and in your account menu: <a href="#/mylist">open My List</a>.</p>`;
+  v.innerHTML = html;
+  $("#dl-set").onclick = () => downloadSettings(caps);
+  $$("[data-dlplay]", v).forEach(b => b.onclick = () => { try { window.MSAndroid.playOffline(+b.dataset.dlplay); } catch (e) { toast("Couldn't open the player", true); } });
+  const act = (sel, name, msg) => $$(sel, v).forEach(b => b.onclick = async () => { b.disabled = true; try { await OFF.call(name, { grant_id: +Object.values(b.dataset)[0] }); if (msg) toast(msg); } catch (e) { toast(e.message, true); } drawDownloads(); });
+  act("[data-dlpause]", "pause"); act("[data-dlresume]", "resume"); act("[data-dlretry]", "retry", "Trying again");
+  $$("[data-dlmore]", v).forEach(b => b.onclick = () => dlMore(L.find(d => d.gid === +b.dataset.dlmore)));
+}
+function dlMore(d) {
+  if (!d) return;
+  modal(`<h2>${esc(d.title)}</h2><div class="dl-more-l">
+      ${d.state === "ready" ? `<button class="btn ghost" id="dm-play">&#9654; Play</button>` : ""}
+      ${d.item_id ? `<button class="btn ghost" id="dm-other">Download in another quality</button><a class="btn ghost" href="#/item/${d.item_id}" id="dm-open">Open details</a>` : ""}
+      <button class="btn danger" id="dm-del">${["downloading", "queued", "preparing", "paused", "waiting_wifi"].includes(d.state) ? "Cancel download" : "Delete download"}</button></div>
+      <div class="help">${d.state === "ready" ? `${esc(d.quality)} · ${fmtSize(d.bytes)} · ${dlLeft(d.expires_at)}` : ""}</div>
+      <div class="modal-actions"><button class="btn" id="dm-x">Close</button></div>`, () => {
+    $("#dm-x").onclick = closeModal;
+    if ($("#dm-open")) $("#dm-open").onclick = closeModal;
+    if ($("#dm-play")) $("#dm-play").onclick = () => { closeModal(); window.MSAndroid.playOffline(d.gid); };
+    $("#dm-del").onclick = async () => { try { await OFF.call("remove", { grant_id: d.gid }); closeModal(); toast("Download deleted"); drawDownloads(); } catch (e) { toast(e.message, true); } };
+    if ($("#dm-other")) $("#dm-other").onclick = async () => {
+      if (!confirm(`Delete the ${d.quality} download of "${d.title}" and pick another quality?`)) return;
+      try { await OFF.call("remove", { grant_id: d.gid }); closeModal(); downloadDialog({ id: d.item_id, title: d.title }); } catch (e) { toast(e.message, true); }
+    };
+  });
+}
+function downloadSettings(caps) {
+  const sw = (id, on, title, hint) => `<label class="aw-row" for="${id}"><span class="sw"><input type="checkbox" id="${id}" ${on ? "checked" : ""}><i></i></span><span class="aw-txt"><b>${title}</b><span class="aw-hint">${hint}</span></span></label>`;
+  const lockTxt = { biometric: "Fingerprint or face unlock", device: "Your phone's screen lock (PIN, pattern or password)", pin: "A Movinite PIN", none: "Nothing yet" }[caps.lock || "none"];
+  modal(`<h2>Download settings</h2>
+    ${sw("ds-wifi", caps.wifi_only !== false, "Wi-Fi only", "Don't use mobile data for downloads.")}
+    <div class="form"><label for="ds-q">Quality</label><select id="ds-q">${[["ask", "Ask each time (720p suggested)"], ["720p", "Always 720p"], ["1080p", "Always 1080p"]].map(([k, n]) => `<option value="${k}" ${(caps.quality || "ask") === k ? "selected" : ""}>${n}</option>`).join("")}</select>
+    ${caps.external_available ? `<label for="ds-loc">Save downloads on</label><select id="ds-loc"><option value="internal" ${caps.storage !== "external" ? "selected" : ""}>This device</option><option value="external" ${caps.storage === "external" ? "selected" : ""}>SD card</option></select>` : ""}</div>
+    <h3>Offline sign-in</h3><p class="help">When there's no connection, the app opens your downloads after you unlock with: <b>${esc(lockTxt)}</b>.</p>
+    ${sw("ds-pin", !!caps.pin, "Movinite PIN", caps.device_secure ? "Ask for a separate 6-digit PIN too." : "Your phone has no screen lock, so set a PIN to protect offline sign-in.")}
+    <div class="modal-actions"><button class="btn danger" id="ds-all">Delete all downloads</button><button class="btn" id="ds-ok">Done</button></div>`, () => {
+    const set = (k, val) => OFF.call("setting", { key: k, value: val }).catch(e => toast(e.message, true));
+    $("#ds-wifi").onchange = (e) => set("wifi_only", e.target.checked);
+    $("#ds-q").onchange = (e) => set("quality", e.target.value);
+    if ($("#ds-loc")) $("#ds-loc").onchange = (e) => set("storage", e.target.value);
+    $("#ds-pin").onchange = async (e) => { try { await OFF.call(e.target.checked ? "setupPin" : "clearPin", {}, 300000); toast(e.target.checked ? "Movinite PIN set" : "Movinite PIN removed"); } catch (er) { e.target.checked = !e.target.checked; if (er.message !== "cancelled") toast(er.message, true); } };
+    $("#ds-all").onclick = async () => { if (!confirm("Delete every download on this device?")) return; try { await OFF.call("deleteAll", {}); closeModal(); toast("All downloads deleted"); drawDownloads(); } catch (e) { toast(e.message, true); } };
+    $("#ds-ok").onclick = () => { closeModal(); drawDownloads(); };
+  });
+}
+
+// Settings > My account > Devices & downloads (any browser): what is downloaded where, so quota can be freed from a laptop
+function dlGrantRows(gs, admin) {
+  if (!gs.length) return `<div class="muted dl-none">No downloads on this device.</div>`;
+  return `<div class="dl-grants">${gs.map(g => `<div class="dl-g"><span class="dl-g-t">${esc(g.title || "#" + g.item_id)}</span>
+    <span class="chip pill">${esc(g.quality)}</span><span class="muted">${g.state === "preparing" ? "preparing" + (g.job ? " " + Math.round(100 * g.job.progress) + "%" : "") : g.state === "ready" ? "not downloaded yet" : g.state === "failed" ? "failed" : fmtSize(g.bytes)}${g.state === "downloaded" || g.state === "ready" ? " · " + dlLeft(g.expires_at) : ""}</span>
+    <button class="btn ghost small" data-rmgrant="${g.id}">${admin ? "Revoke" : "Remove"}</button></div>`).join("")}</div>`;
+}
+async function accountDownloads(v) {
+  let d;
+  try { d = await api("/api/devices"); } catch (e) { return; }
+  if (!d.can_download && !d.devices.length) return;
+  const box = document.createElement("div");
+  box.innerHTML = `<div class="panel dl-acct" style="max-width:760px"><h3 style="margin-top:0">Devices &amp; downloads</h3>
+    <p class="help">Phones and tablets with the Movinite app that can keep films for offline viewing. ${esc(dlUsageLine(d.usage))}${d.usage.devices_max != null ? ` · ${d.usage.devices} of ${d.usage.devices_max} devices` : ""}.</p>
+    ${d.devices.length ? d.devices.map(dv => `<div class="dl-dev"><div class="row-head"><div><b>${esc(dv.name || "Android device")}</b> <span class="muted">· set up ${fmtWhen(dv.created_at)} · last sync ${ago(dv.last_sync)}</span></div>
+      <button class="btn danger small" data-rmdev="${dv.id}">Remove device</button></div>${dlGrantRows(dv.grants, false)}</div>`).join("")
+      : `<div class="muted">No devices yet. Sign in to the Movinite Android app and tap Download on a film.</div>`}
+    <p class="help">Removing a download frees your quota; the app deletes the file the next time it connects. Removing a device deletes all of its downloads and signs it out of offline mode.</p>
+    <details class="dl-help"><summary>How downloads work</summary>${DL_HELP.replace('<span class="dl-days">30</span>', d.days || 30)}</details></div>`;
+  v.appendChild(box);
+  $$("[data-rmgrant]", box).forEach(b => b.onclick = async () => { try { await api("/api/offline/grants/" + b.dataset.rmgrant, { method: "DELETE" }); toast("Download removed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-rmdev]", box).forEach(b => b.onclick = async () => { if (!confirm("Remove this device? Its downloads are deleted the next time it connects.")) return;
+    try { await api("/api/devices/" + b.dataset.rmdev, { method: "DELETE" }); toast("Device removed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } });
+}
+
+// Settings > Downloads (admin): limits, the transcode queue, and every user's devices and downloads
+async function viewOfflineAdmin(v, html) {
+  const d = await api("/api/admin/offline");
+  const s = d.settings;
+  const num = (id, val, lbl, hint, step) => `<label for="${id}">${lbl}</label><div><input type="number" id="${id}" value="${val}" min="0" step="${step || 1}" style="max-width:120px"> <span class="help">${hint}</span></div>`;
+  const lim = (u) => u.role === "admin" ? `<span class="muted">unlimited (admin)</span>` : `${u.usage.titles}${u.limits.titles != null ? " / " + u.limits.titles : ""} titles · ${fmtSize(u.usage.bytes) || "0 B"}${u.limits.gb != null ? " / " + u.limits.gb + " GB" : ""} · ${u.usage.devices}${u.limits.devices != null ? " / " + u.limits.devices : ""} devices`;
+  html += `<div class="panel" style="max-width:760px"><h3 style="margin-top:0">Offline downloads</h3>
+    <p class="help" style="margin-top:0">People with the <b>Viewer + Downloads</b> role (and admins) can download films in the Movinite Android app to watch without internet. Downloads are encrypted in the app and carry a licence that renews whenever the app connects; you can take them back here at any time. This is trust-based protection for family and friends, not studio-grade DRM.</p>
+    <label class="aw-row" for="of-on"><span class="sw"><input type="checkbox" id="of-on" ${s.enabled ? "checked" : ""}><i></i></span><span class="aw-txt"><b>Allow downloads</b><span class="aw-hint">Turning this off removes every download the next time each phone connects.</span></span></label>
+    <div class="form of-form">
+      ${num("of-titles", s.titles, "Titles per user", "0 = unlimited")}
+      ${num("of-gb", s.gb, "GB per user", "0 = unlimited", "0.5")}
+      ${num("of-dev", s.devices, "Devices per user", "0 = unlimited")}
+      ${num("of-days", s.days, "Licence length (days)", "7 to 90; renewed on every sync")}
+      ${num("of-wipe", s.wipe_days, "Offline sign-in window (days)", "7 to 90; after this long without reaching the server the app removes its downloads")}
+      ${num("of-cache", s.cache_gb, "Prepared-file cache (GB)", `${fmtSize(d.cache.bytes) || "0 B"} used in ${d.cache.files} file${d.cache.files === 1 ? "" : "s"}; oldest are removed above this`)}
+    </div><div class="err" id="of-err"></div><button class="btn" id="of-save">Save</button>
+    <p class="help">Admins are always unlimited. Downloads in 1080p, 720p or 480p are prepared by the server on <b>${esc(d.encoder)}</b>, one at a time, and pause whenever someone is watching.</p></div>`;
+  html += `<div class="panel" style="max-width:760px"><h3 style="margin-top:0">Being prepared</h3>${d.jobs.length ? `<div class="dl-grants">${d.jobs.map(j => `<div class="dl-g"><span class="dl-g-t">${esc(j.title || "#" + j.item_id)}</span><span class="chip pill">${esc(j.profile.replace(".hevc", " HEVC"))}</span>
+      <span class="muted">${j.status === "failed" ? `<span class="dl-bad">failed: ${esc(j.error || "")}</span>` : j.status === "paused" ? "paused while someone watches · " + Math.round(100 * j.progress) + "%" : j.status === "running" ? `${Math.round(100 * j.progress)}% on ${esc((j.encoder || "").toUpperCase())}` : "waiting"} · ${j.waiting} waiting</span></div>`).join("")}</div>` : `<div class="muted">Nothing in the queue.</div>`}</div>`;
+  html += `<div class="panel"><h3 style="margin-top:0">Users and devices</h3>${d.users.length ? d.users.map(u => `<div class="dl-user"><div class="row-head"><div><b>${esc(u.username)}</b> ${roleChip(u.role)} <span class="muted">${lim(u)}</span></div>
+      ${u.role !== "admin" ? `<button class="btn ghost small" data-uplim="${u.id}">Limits</button>` : ""}</div>
+      ${u.devices.length ? u.devices.map(dv => `<div class="dl-dev"><div class="row-head"><div>${esc(dv.name || "Android device")} <span class="muted">· app ${esc(dv.app_version || "?")} · last sync ${ago(dv.last_sync)} · key ${esc(dv.fp_short)}</span></div><button class="btn danger small" data-rmdev="${dv.id}">Remove device</button></div>${dlGrantRows(dv.grants, true)}</div>`).join("") : `<div class="muted dl-none">No devices set up.</div>`}</div>`).join("")
+    : `<div class="muted">Nobody has the Viewer + Downloads role yet. Change a role in Users, or pick it when you invite someone.</div>`}</div>`;
+  v.innerHTML = html;
+  $("#of-save").onclick = async () => {
+    try {
+      await api("/api/settings/offline", { method: "PUT", body: { enabled: $("#of-on").checked, titles: +$("#of-titles").value, gb: +$("#of-gb").value, devices: +$("#of-dev").value,
+        days: +$("#of-days").value, wipe_days: +$("#of-wipe").value, cache_gb: +$("#of-cache").value } });
+      toast("Download settings saved"); $("#of-err").textContent = ""; route._keepScroll = true; route();
+    } catch (e) { $("#of-err").textContent = e.message; }
+  };
+  $$("[data-rmgrant]", v).forEach(b => b.onclick = async () => { if (!confirm("Revoke this download? The phone deletes it the next time it connects.")) return;
+    try { await api("/api/offline/grants/" + b.dataset.rmgrant, { method: "DELETE" }); toast("Download revoked"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-rmdev]", v).forEach(b => b.onclick = async () => { if (!confirm("Remove this device? All of its downloads are deleted the next time it connects.")) return;
+    try { await api("/api/devices/" + b.dataset.rmdev, { method: "DELETE" }); toast("Device removed"); route._keepScroll = true; route(); } catch (e) { toast(e.message, true); } });
+  $$("[data-uplim]", v).forEach(b => b.onclick = () => {
+    const u = d.users.find(x => x.id === +b.dataset.uplim); const o = u.own_limits;
+    const f = (id, val, lbl) => `<label for="${id}">${lbl}</label><input type="number" id="${id}" min="0" value="${val == null ? "" : val}" placeholder="server default">`;
+    modal(`<h2>Download limits for ${esc(u.username)}</h2><div class="form">${f("ul-t", o.titles, "Titles")}${f("ul-g", o.gb, "GB")}${f("ul-d", o.devices, "Devices")}
+      <div class="help">Leave empty to use the server default (${s.titles} titles, ${s.gb} GB, ${s.devices} devices). 0 = unlimited.</div></div><div class="err" id="ul-err"></div>
+      <div class="modal-actions"><button class="btn ghost" id="ul-x">Cancel</button><button class="btn" id="ul-ok">Save</button></div>`, () => {
+      $("#ul-x").onclick = closeModal;
+      $("#ul-ok").onclick = async () => { const val = (id) => $(id).value === "" ? null : +$(id).value;
+        try { await api(`/api/users/${u.id}/download-limits`, { method: "PUT", body: { titles: val("#ul-t"), gb: val("#ul-g"), devices: val("#ul-d") } }); closeModal(); toast("Limits saved"); route._keepScroll = true; route(); }
+        catch (e) { $("#ul-err").textContent = e.message; } };
+    });
+  });
 }
 
 // ---------------------------------------------------------------- settings
@@ -2071,9 +2366,12 @@ const UACT = {
   invite_revoked: ["Revoked an invite", "mail"], user_created: ["Added a user", "user"], user_deleted: ["Deleted a user", "user"], role_changed: ["Changed a role", "user"],
   libraries_changed: ["Changed library access", "user"], user_disabled: ["Turned an account off", "user"], user_enabled: ["Turned an account on", "user"], password_reset: ["Set a password", "key"],
   gmail_connected: ["Connected Gmail", "mail"], gmail_disconnected: ["Disconnected Gmail", "mail"], gmail_error: ["Gmail problem", "warn"], email_error: ["Email sending problem", "warn"], email_test: ["Sent a test email", "mail"],
-  library_added: ["Added a library", "lib"], library_removed: ["Removed a library", "lib"], scan_started: ["Started a scan", "lib"], settings_changed: ["Changed settings", "gear"], server_started: ["Server started", "gear"]
+  library_added: ["Added a library", "lib"], library_removed: ["Removed a library", "lib"], scan_started: ["Started a scan", "lib"], settings_changed: ["Changed settings", "gear"], server_started: ["Server started", "gear"],
+  device_registered: ["Set up a device for downloads", "dl"], device_revoked: ["Removed a download device", "dl"], download_requested: ["Asked to download", "dl"],
+  download_ready: ["Download prepared", "dl"], download_started: ["Started downloading", "dl"], download_complete: ["Downloaded", "dl"],
+  download_deleted: ["Deleted a download", "dl"], download_revoked: ["Download taken back", "warn"], download_failed: ["Download failed", "warn"]
 };
-const ACT_ICO = { play: `<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>`, stop: `<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>`,
+const ACT_ICO = { dl: `<path d="M12 4v10.5M7.5 10l4.5 4.5 4.5-4.5M5 17v2h14v-2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`, play: `<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>`, stop: `<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>`,
   in: `<path d="M10 17l5-5-5-5M15 12H3M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`,
   out: `<path d="M14 17l5-5-5-5M19 12H8M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`,
   warn: `<path d="M12 4l9 16H3z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M12 10v4M12 17v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
@@ -2091,6 +2389,9 @@ function actDetail(e) {
     if (d.quality && d.quality !== "remux" && d.quality !== "audio") bits.push(d.quality);
     if (d.watched_s) bits.push("watched " + fmtLen(d.watched_s));
   }
+  if ((e.kind || "").startsWith("download_") && d.quality) bits.push(d.quality);
+  if ((e.kind || "").startsWith("download_") && d.bytes) bits.push(fmtSize(d.bytes));
+  if (d.offline) bits.push("while offline");
   if (d.email) bits.push(d.email);
   if (d.username) bits.push(d.username);
   if (d.role) bits.push(ROLE_NAMES[d.role] || d.role);
@@ -2137,7 +2438,7 @@ async function viewUserActivity(v, html) {
   html += `<div class="panel"><h3 style="margin-top:0">Last 30 days</h3><div class="act-sum">${sum.users.map(x => `<button class="act-user${f.user === x.id ? " on" : ""}" data-fuser="${x.id}"><span class="gm-av sm">${esc(x.username.slice(0, 1).toUpperCase())}</span><span><b>${esc(x.username)}</b><span class="help">${x.plays} play${x.plays === 1 ? "" : "s"} · ${x.hours} h · ${x.last_active ? esc(ago(x.last_active)) : "never"}</span></span></button>`).join("")}</div></div>`;
   html += `<div class="panel"><div class="act-filters">
       <select id="af-user" aria-label="User"><option value="">Everyone</option>${users.map(x => `<option value="${x.id}" ${f.user === x.id ? "selected" : ""}>${esc(x.username)}</option>`).join("")}</select>
-      <select id="af-group" aria-label="Type"><option value="">All activity</option>${[["playback", "Playback"], ["signin", "Sign-ins"], ["accounts", "Users & invites"], ["server", "Server"]].map(([k, n]) => `<option value="${k}" ${f.group === k ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <select id="af-group" aria-label="Type"><option value="">All activity</option>${[["playback", "Playback"], ["signin", "Sign-ins"], ["accounts", "Users & invites"], ["downloads", "Downloads"], ["server", "Server"]].map(([k, n]) => `<option value="${k}" ${f.group === k ? "selected" : ""}>${n}</option>`).join("")}</select>
       <input type="date" id="af-from" value="${esc(f.from || "")}" aria-label="From"><input type="date" id="af-to" value="${esc(f.to || "")}" aria-label="To">
       <input type="search" id="af-q" value="${esc(f.q || "")}" placeholder="Search titles, devices, IPs" aria-label="Search">
       <a class="btn ghost small" id="af-csv" href="/api/admin/activity/export.csv?${esc(qs())}" download>Export CSV</a></div>
@@ -2228,7 +2529,7 @@ async function viewSettings(tab) {
   // 1.9: + Activity (users) and Email (Connect Gmail); "Scan activity" is now "Scans"
   const tq = {}; if (tab && tab.includes("?")) { new URLSearchParams(tab.split("?")[1]).forEach((v, k) => { tq[k] = v; }); tab = tab.split("?")[0]; }
   const ALL_TABS = [["libraries", "Libraries", 1], ["scans", "Scans", 1], ["activity", "Activity", 1], ["sounds", "Poster Sounds", 0], ["metadata", "Metadata", 1],
-    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["email", "Email", 1], ["account", "My account", 0], ["system", "System", 1]];
+    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["downloads", "Downloads", 1], ["email", "Email", 1], ["account", "My account", 0], ["system", "System", 1]];
   const tabs = ALL_TABS.filter(t => ME.is_admin || !t[2]).map(t => [t[0], t[1]]);
   if (!tabs.some(t => t[0] === tab)) tab = tabs[0][0];
   let html = `<h2>Settings</h2><div class="tabs set-tabs" role="tablist" aria-label="Settings sections">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? "on" : ""}" data-href="#/settings/${k}">${n}</button>`).join("")}</div>`;
@@ -2412,7 +2713,7 @@ async function viewSettings(tab) {
       <button class="btn" id="cpsave">Change password</button></div>`;
     html += `<p class="help" style="max-width:560px">Sounds for posters and buttons are in <a style="color:var(--acc-text)" href="#/settings/sounds">Poster Sounds</a>.</p>`;
     v.innerHTML = html;
-    accountExtras(v).catch(() => {});
+    accountExtras(v).then(() => accountDownloads(v)).catch(() => {});
     $("#qcap-on").onchange = () => { setQualityCap($("#qcap-on").checked); toast($("#qcap-on").checked ? "Quality will be capped to this screen" : "Screen cap off on this device"); };
     $("#cpsave").onclick = async () => {
       if ($("#np").value !== $("#np2").value) { $("#cperr").textContent = "Passwords do not match"; return; }
@@ -2441,6 +2742,8 @@ async function viewSettings(tab) {
     sndSync();
   } else if (tab === "users") {
     await viewUsers(v, html);
+  } else if (tab === "downloads") {
+    await viewOfflineAdmin(v, html);
   } else if (tab === "email") {
     await viewEmail(v, html, tq);
   } else if (tab === "activity") {
@@ -4388,8 +4691,9 @@ const TV = {
   on: false,
   _bound: false,
   detect() {
-    try { if (window.MSAndroid && typeof MSAndroid.isTv === "function" && MSAndroid.isTv()) return true; } catch (e) {}
     try { if (localStorage.getItem("msTvMode") === "1") return true; } catch (e) {}
+    // 2.0: the Android app answers isTv() from the system's UI mode, so a tablet with the app isn't mistaken for a TV
+    try { if (window.MSAndroid && typeof MSAndroid.isTv === "function") return !!MSAndroid.isTv(); } catch (e) {}
     const ua = navigator.userAgent || "";
     if (/AndroidTV|Android TV|GoogleTV|Google TV|BRAVIA|AFT[A-Z0-9]|SHIELD Android TV|SmartTV|Smart-TV|HbbTV|CrKey|AppleTV|FireTV|TV Safari/i.test(ua)) return true;
     // Android WebView on a TV often includes "Mobile" in the UA, so don't require its absence.
@@ -4405,13 +4709,44 @@ const TV = {
   prepare() {
     this.on = this.detect();
     document.documentElement.classList.toggle("tv-mode", this.on);
+    this.fitLayout();
+  },
+  // Layout at 1920×1080 CSS pixels, then scale to the WebView's CSS viewport
+  // (window.innerWidth / innerHeight — not physical pixels). On a 4K TV, Android
+  // often reports 960×540 (DPR 4) or 1920×1080 (DPR 2).
+  fitLayout() {
+    const root = document.documentElement;
+    const targetW = 1920, targetH = 1080;
+    if (!this.on) {
+      root.classList.remove("tv-scaled");
+      root.style.removeProperty("--tv-scale");
+      root.style.removeProperty("--tv-layout-w");
+      root.style.removeProperty("--tv-layout-h");
+      return;
+    }
+    const w = window.innerWidth || targetW;
+    const h = window.innerHeight || targetH;
+    const s = w / targetW;
+    if (s > 0.98 && s < 1.02) {
+      root.classList.remove("tv-scaled");
+      root.style.removeProperty("--tv-scale");
+      root.style.removeProperty("--tv-layout-w");
+      root.style.removeProperty("--tv-layout-h");
+      return;
+    }
+    root.classList.add("tv-scaled");
+    root.style.setProperty("--tv-scale", String(s));
+    root.style.setProperty("--tv-layout-w", targetW + "px");
+    root.style.setProperty("--tv-layout-h", Math.max(targetH, Math.round(h / s)) + "px");
   },
   init() {
     this.prepare();
     if (!this.on || this._bound) return;
     this._bound = true;
     document.addEventListener("keydown", (e) => this.onKey(e), true);
-    window.addEventListener("resize", () => { const was = this.on; this.prepare(); if (this.on && !was) this.afterRoute(); });
+    const onResize = () => { const was = this.on; this.prepare(); if (this.on && !was) this.afterRoute(); };
+    window.addEventListener("resize", onResize);
+    try { if (window.visualViewport) visualViewport.addEventListener("resize", onResize); } catch (e) {}
   },
   typing(e) {
     const t = e.target;
@@ -4428,7 +4763,6 @@ const TV = {
     if (!el || !el.getBoundingClientRect) return false;
     if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
     if (el.closest("[hidden]")) return false;
-    // treat our .hidden utility, but not a class that only happens to contain the letters
     let n = el;
     while (n && n !== document.documentElement) {
       if (n.classList && n.classList.contains("hidden")) return false;
@@ -4438,6 +4772,89 @@ const TV = {
     if (st.display === "none" || st.visibility === "hidden" || st.opacity === "0") return false;
     const r = el.getBoundingClientRect();
     return r.width >= 2 && r.height >= 2;
+  },
+  isSearchChrome(el) {
+    if (!el) return false;
+    if (el.id === "search" || el.id === "m-search" || el.id === "m-q") return true;
+    return !!(el.closest && el.closest(".m-qw"));
+  },
+  isDetailView() {
+    const h = (location.hash || "").replace(/^#\/?/, "");
+    return /^(item|show|album)(\/|$)/.test(h);
+  },
+  detailPrimaryAction() {
+    return $("#resume") || $("#play") || $("#playnext") || $("#playall") || $("#pl-play")
+      || $("#view .main-actions .btn, #view .actions .btn, #view .pli-actions .btn");
+  },
+  rememberOrigin(el) {
+    if (!el) return;
+    const href = (el.dataset && el.dataset.href) || el.getAttribute("href") || "";
+    const itemId = (el.dataset && (el.dataset.id || el.dataset.item)) || (href.match(/item\/(\d+)/) || [])[1] || "";
+    this._origin = { fromHash: location.hash, href, itemId: String(itemId || "") };
+  },
+  originEl() {
+    const o = this._origin;
+    if (!o) return null;
+    if (o.itemId) {
+      const by = document.querySelector(`#view .card[data-href="#/item/${o.itemId}"], #view .card[data-id="${o.itemId}"]`);
+      if (by && this.visible(by)) return by;
+    }
+    if (o.href) {
+      const el = document.querySelector(`#view [data-href="${o.href}"]`);
+      if (el && this.visible(el)) return el;
+    }
+    return null;
+  },
+  leaveDetail() { return this.back(); },
+  detailZones(items) {
+    const inView = items.filter((el) => el.closest && el.closest("#view"));
+    const actions = inView.filter((el) => el.closest(".actions, .main-actions, .pli-actions") && !el.closest(".list, .cast-strip, .strip.sim"));
+    const mid = inView.filter((el) =>
+      (el.closest(".tabs") && el.tagName === "BUTTON")
+      || (el.closest(".list") && (el.classList.contains("li") || el.matches(".li, [data-href], [data-track]")))
+      || el.closest("#pl-tracks")
+      || el.classList.contains("pli-row")
+    ).filter((el) => !actions.includes(el));
+    const cast = inView.filter((el) => el.closest(".cast-strip") && (el.classList.contains("person") || el.closest("a.person")));
+    const similar = inView.filter((el) => el.closest(".strip.sim") && el.classList.contains("card"));
+    const zones = [];
+    if (actions.length) zones.push(actions);
+    if (mid.length) zones.push(mid);
+    if (cast.length) zones.push(cast);
+    if (similar.length) zones.push(similar);
+    return zones;
+  },
+  moveInDetail(dir, cur, items) {
+    const zones = this.detailZones(items);
+    const zi = zones.findIndex((z) => z.includes(cur));
+    if (zi < 0) return false;
+    if (dir === "left" || dir === "right") {
+      const next = this.nearest(cur, zones[zi], dir);
+      if (next) this.focus(next);
+      return true;
+    }
+    const nextIn = this.nearest(cur, zones[zi], dir);
+    if (nextIn) { this.focus(nextIn, dir === "up" ? { block: "center" } : undefined); return true; }
+    if (dir === "down") {
+      for (let i = zi + 1; i < zones.length; i++) {
+        if (zones[i].length) { this.focus(zones[i][0]); return true; }
+      }
+      return true;
+    }
+    if (zi === 0) { this.leaveDetail(); return true; }
+    const last = zones.length - 1;
+    if (zi === last && zones[0] && zones[0].length) {
+      this.focus(this.detailPrimaryAction() || zones[0][0], { block: "center" });
+      return true;
+    }
+    for (let i = zi - 1; i >= 0; i--) {
+      if (zones[i].length) {
+        this.focus(i === 0 ? (this.detailPrimaryAction() || zones[i][0]) : zones[i][0], { block: "center" });
+        return true;
+      }
+    }
+    this.leaveDetail();
+    return true;
   },
   candidates() {
     const playerOn = $("#player") && !$("#player").classList.contains("hidden");
@@ -4451,7 +4868,8 @@ const TV = {
       ".side nav a", "#navlibs a",
       "#tabbar a",
       "#view .card", "#view .lib-li", "#view .person", "#view [data-href]", "#view .gchip", "#view .btn:not([disabled])",
-      "#view .set-tabs button", "#view .libtabs a", "#view .li[data-href]", "#view .see-all", "#view .rh-a",
+      "#view .set-tabs button", "#view .libtabs a", "#view .tabs button", "#view .li[data-href]", "#view .list .li",
+      "#view .see-all", "#view .rh-a",
       "#view .pli-row", "#view .iconbtn", "#view select",
       "#menubtn", "#sndbtn", "#ss-pill", "#m-avatar", "#m-search", "#search",
       "#acct-menu:not(.hidden) a, #acct-menu:not(.hidden) button",
@@ -4502,15 +4920,16 @@ const TV = {
     }
     return best;
   },
-  focus(el) {
+  focus(el, opts) {
     if (!el) return;
     try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+    const block = (opts && opts.block) || "nearest";
     const r = el.getBoundingClientRect();
     const pad = 80;
-    if (r.top < pad || r.bottom > window.innerHeight - pad || r.left < 20 || r.right > window.innerWidth - 20) {
-      el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    if (block === "center" || r.top < pad || r.bottom > window.innerHeight - pad || r.left < 20 || r.right > window.innerWidth - 20) {
+      const target = (block === "center" && el.closest && (el.closest(".actions") || el.closest(".detail"))) || el;
+      target.scrollIntoView({ block: block === "center" ? "center" : "nearest", inline: "nearest", behavior: "smooth" });
     }
-    // horizontal rows (Home strips, library grids)
     const strip = el.closest(".strip, .hs, .cast-strip");
     if (strip && typeof strip.scrollLeft === "number") {
       const sr = strip.getBoundingClientRect(), er = el.getBoundingClientRect();
@@ -4521,9 +4940,19 @@ const TV = {
   preferredStart(items) {
     if (!items.length) return null;
     const cur = document.activeElement;
-    if (cur && items.includes(cur)) return cur;
+    if (cur && items.includes(cur) && this.isDetailView() && this.detailPrimaryAction()) {
+      // After opening a title, never keep a Similar-movies card as the start focus.
+    } else if (cur && items.includes(cur) && !this.isSearchChrome(cur)) {
+      return cur;
+    }
     const playerOn = $("#player") && !$("#player").classList.contains("hidden");
     if (playerOn) return $("#pl-pp") || $("#pl-bplay") || items[0];
+    if (this.isDetailView()) {
+      const act = this.detailPrimaryAction();
+      if (act && items.includes(act)) return act;
+    }
+    const origin = this.originEl();
+    if (origin && items.includes(origin)) return origin;
     const home = items.find((el) => el.matches && el.matches("#view .card, #view .lib-li"));
     if (home) return home;
     const lib = items.find((el) => el.matches && el.matches(".side nav a[data-nav^='lib'], #navlibs a"));
@@ -4535,23 +4964,29 @@ const TV = {
     if (!items.length) return false;
     const cur = document.activeElement && items.includes(document.activeElement) ? document.activeElement : null;
     if (!cur) { this.focus(this.preferredStart(items)); return true; }
+    const atTop = !!(cur.closest && (cur.closest(".side") || cur.closest(".top")) || this.isSearchChrome(cur));
+    let pool = items;
+    if ((dir === "up" || dir === "down") && !atTop) {
+      pool = items.filter((el) => !this.isSearchChrome(el));
+    }
+    if (this.isDetailView() && cur.closest && cur.closest("#view")) {
+      if (this.moveInDetail(dir, cur, pool)) return true;
+    }
     const stripSel = ".strip, .hs, .cast-strip, .grid";
     // Stay inside a horizontal movie/library row first, so the remote cannot skip the posters
-    // and land on a row's < > button, "See all", or the next heading.
     const strip = cur.closest && cur.closest(stripSel);
     if (strip && (dir === "left" || dir === "right")) {
-      const inStrip = items.filter((el) => strip.contains(el));
+      const inStrip = pool.filter((el) => strip.contains(el));
       const next = this.nearest(cur, inStrip, dir);
       if (next) { this.focus(next); return true; }
     }
     // Right from the sidebar (Home / library list) should enter the first poster or library tile, not jump over it.
     if (dir === "right" && cur.closest && cur.closest(".side")) {
-      const content = items.filter((el) => el.closest("#view"));
-      const preferred = content.filter((el) => el.matches && el.matches(".card, .lib-li, .person, .li[data-href]"));
+      const content = pool.filter((el) => el.closest("#view"));
+      const preferred = content.filter((el) => el.matches && el.matches(".card, .lib-li, .person, .li[data-href], .btn"));
       const next = this.nearest(cur, preferred.length ? preferred : content, dir) || preferred[0];
       if (next) { this.focus(next); return true; }
     }
-    // Down from a row heading or "See all" should enter that row's posters.
     if (dir === "down" && cur.closest && (cur.closest(".row-head") || cur.classList.contains("rh-a") || cur.classList.contains("see-all"))) {
       let row = cur.closest(".hrow") || cur.closest(".row-head");
       let st = row && (row.querySelector(stripSel) || (row.nextElementSibling && row.nextElementSibling.matches(stripSel) ? row.nextElementSibling : null) || (row.nextElementSibling && row.nextElementSibling.querySelector && row.nextElementSibling.querySelector(stripSel)));
@@ -4561,17 +4996,19 @@ const TV = {
         st = kids.slice(i + 1).map((n) => (n.matches && n.matches(stripSel) ? n : n.querySelector && n.querySelector(stripSel))).find(Boolean);
       }
       if (st) {
-        const cards = items.filter((el) => st.contains(el));
+        const cards = pool.filter((el) => st.contains(el));
         if (cards.length) { this.focus(cards[0]); return true; }
       }
     }
-    const next = this.nearest(cur, items, dir);
+    const next = this.nearest(cur, pool, dir);
     if (next) { this.focus(next); return true; }
-    return true; // eat the key so the page doesn't just scroll away
+    return true;
   },
   activate(el) {
     if (!el) return false;
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") { el.focus(); return true; }
+    const href = (el.dataset && el.dataset.href) || el.getAttribute("href") || "";
+    if (/#\/(item|show|album)\//.test(href)) this.rememberOrigin(el);
     if (el.classList && el.classList.contains("card") && el.dataset.href) { el.click(); return true; }
     el.click();
     return true;
@@ -4613,17 +5050,16 @@ const TV = {
     const playerOn = $("#player") && !$("#player").classList.contains("hidden");
     const key = e.key;
     const center = key === "Enter" || key === "Go" || key === "Select" || e.keyCode === 23;
-    if (key === "Escape" || key === "BrowserBack" || e.keyCode === 4) {
-      if (this.typing(e) && key === "Escape") return;
+    if (key === "Escape" || key === "BrowserBack" || key === "GoBack" || key === "Backspace" || e.keyCode === 4 || e.keyCode === 166) {
+      if (this.typing(e) && (key === "Escape" || key === "Backspace")) return;
       if (this.back()) { e.preventDefault(); e.stopPropagation(); }
       return;
     }
     if (this.typing(e) && !center) return;
     if (key === "ArrowRight" || key === "ArrowLeft" || key === "ArrowUp" || key === "ArrowDown") {
-      // In the player, arrows move between controls. Left/Right on the seek bar still skip.
       if (playerOn && typeof OV !== "undefined") OV.show();
       const onSeek = document.activeElement && document.activeElement.id === "pl-seek";
-      if (playerOn && onSeek && (key === "ArrowLeft" || key === "ArrowRight")) return; // existing skip handler
+      if (playerOn && onSeek && (key === "ArrowLeft" || key === "ArrowRight")) return;
       const items = this.candidates();
       const focused = document.activeElement && items.includes(document.activeElement);
       if (playerOn && !focused) {
@@ -4649,20 +5085,35 @@ const TV = {
     }
   },
   ensureFocusable() {
-    // Library tiles are <a class="lib-li"> (no data-href). Poster cards already have tabindex=0.
-    // Re-apply so nothing in a row or the library list is skipped by the WebView's own D-pad nav.
-    $$("#view .card, #view .lib-li, #view .person, #view .li[data-href], #navlibs a, #view .rh-a, #view .see-all").forEach((el) => {
-      if (!el.hasAttribute("tabindex")) el.tabIndex = 0;
+    $$("#view .card, #view .lib-li, #view .person, #view .li[data-href], #view .list .li, #view .tabs button, #navlibs a, #view .rh-a, #view .see-all, #view .actions .btn, #view .main-actions .btn").forEach((el) => {
+      if (!el.hasAttribute("tabindex") && el.tagName !== "BUTTON" && el.tagName !== "SELECT" && el.tagName !== "INPUT" && el.tagName !== "A") el.tabIndex = 0;
+      else if (!el.hasAttribute("tabindex") && (el.tagName === "A" || el.classList.contains("li") || el.classList.contains("card"))) el.tabIndex = 0;
     });
   },
   afterRoute() {
     if (!this.on) return;
     this.ensureFocusable();
     const typ = document.activeElement && this.typing({ target: document.activeElement });
-    if (typ) return;
+    if (typ && !this.isSearchChrome(document.activeElement)) return;
     const items = this.candidates();
     if (!items.length) return;
-    if (document.activeElement && items.includes(document.activeElement) && this.visible(document.activeElement)) {
+    const playerOn = $("#player") && !$("#player").classList.contains("hidden");
+    if (playerOn) { this.focus(this.preferredStart(items)); return; }
+    if (this.isDetailView()) {
+      const act = this.detailPrimaryAction();
+      if (act && items.includes(act)) {
+        this.focus(act, { block: "center" });
+        return;
+      }
+    }
+    const origin = this.originEl();
+    if (origin) {
+      this.focus(origin);
+      this._origin = null;
+      return;
+    }
+    if (document.activeElement && items.includes(document.activeElement) && this.visible(document.activeElement)
+        && !this.isSearchChrome(document.activeElement)) {
       this.focus(document.activeElement);
       return;
     }

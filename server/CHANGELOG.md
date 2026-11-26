@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.0 -- 2026-11-25
+Builds on 1.9.2 (TV remote navigation, TV details focus and the 1920-wide TV layout), plus offline downloads in the Android app (schema 11):
+
+- **Download films and episodes in the Android app 2.0.** People with the **Viewer + Downloads** role (and admins) get a **Download** button on detail pages in the app. Pick a quality each time (**720p** is suggested; 1080p and 480p are made by the server; **Original** only when the phone can play the file as-is), and the audio track when there are several. Downloads continue in the background with a notification, resume after a dropped connection, and use Wi-Fi only unless you allow mobile data.
+- **A Downloads tab** replaces My List in the app's bottom tabs: storage used and free, your quota, what's downloading (with pause, resume and cancel), what's ready to watch offline (with resume position), and anything needing attention. My List is still there as a Home row and in the account menu. Browsers don't change.
+- **Watch offline.** Downloads are stored encrypted inside the app and play in its own player (Media3/ExoPlayer) with subtitles and resume. When the server can't be reached, the app opens an offline screen after you unlock it with your fingerprint, face or screen lock, or a Movinite PIN you set. Watch progress made offline is sent to the server at the next sync.
+- **Licences you can take back.** Each download carries a licence signed by the server key, tied to that phone's own key, valid **30 days** and renewed whenever the app syncs (on launch and every few hours). A download is deleted at the next sync when it's removed from the server, the person loses access to the library or the download role, or the device is removed. If the app hasn't reached the server for 30 days, or on sign-out, it removes the offline profile and every download. This is trust-based protection for family and friends, not studio-grade DRM, and the app says so.
+- **Server-prepared versions.** 1080p, 720p and 480p are transcoded on the GPU (VAAPI, also Quick Sync or NVENC when that's what Transcoding uses, otherwise CPU), one at a time, and pause whenever anyone starts watching, like the 1.8 background jobs. A finished version is kept in `data/offline` and shared by everyone who picks the same quality, up to a cache size you set (200 GB by default; oldest removed first).
+- **Quotas.** By default each person can keep **20 titles or 100 GB**, on up to **3 devices**; admins are unlimited. Change the defaults in **Settings > Downloads** or per person (**Limits**).
+- **Settings > Downloads** (admin): turn downloads on or off, the limits, licence and offline sign-in windows, the cache, the preparation queue, and every person's devices and downloads with **Revoke** and **Remove device**.
+- **My account > Devices & downloads**: see and remove your own download devices and downloads from any browser, to free quota.
+- **Activity** records devices set up and removed, download requests, prepared, started, finished, deleted, revoked and failed, with a **Downloads** filter.
+
+- **Android app 2.0** (`movinite-android-v2.0.apk`, versionCode 8, same signing key as 1.5, installs over it): the downloads, offline screen and player above, plus the TV changes from 1.9.1 and 1.9.2 (remote focus, Back for the TV web app, the Movinite wordmark banner for the Android TV home screen at mdpi and xhdpi, and, on televisions, WebView text zoom pinned at 100% with a wide viewport so 4K sets show the 1920-wide layout instead of a zoomed-in page). Signing out in the app removes all downloads and tells the server to remove that device.
+
+**Schema 11.** `update.sh` saves a checked copy of the database to `data/media-server.db.pre-schema11` before migrating (and still makes its usual backup). Rolling back to 1.9 works; the new tables are ignored.
+
+## 1.9.2 -- 2026-11-25
+Builds on 1.9.1, plus TV details focus, a 1920-wide TV layout, and a TV home-screen banner (app patch):
+
+- **Opening a title on a television focuses Resume or Play.** In 1.9.1, OK on a poster opened the details page, then spatial nav focused the first Similar movies card and scrolled the play buttons off the screen. Up from that row jumped to the search box. 1.9.2 focuses the primary action (Resume if you were part-way through, otherwise Play) and keeps that section in view. Up and down move through the details in order: buttons, then season/episode or album tracks and cast if they are there, then Similar movies. Up from Similar goes back to the buttons; left and right move between the buttons; up from the buttons, or Back, closes the details and returns to the poster you came from. Search is not a vertical-nav target unless you are already at the top of the page (the sidebar or the top bar). The same pattern applies to TV show and music album pages, and closing the player returns focus to Resume or Play.
+- **TV layout is no longer zoomed in.** Some Android TV WebViews (especially on 4K sets) report a CSS viewport of 960×540 or treat a 1920×1080 UI as magnified, so posters looked huge and only a few fitted on a row. In TV mode the page is laid out at 1920×1080 and scaled to `window.innerWidth` (not physical pixels), and Home / Similar posters are sized so about seven or eight fit on a 1080p-wide row. The purple focus ring stays. In TV mode, movie posters prefer the high-res (w780) artwork so they stay sharp on a 4K panel (typical WebView DPR 2), falling back to the regular 500–600 px thumb.
+- No database schema change. Settings and libraries are untouched.
+
+The Android TV home-screen tile (the wide banner) is not a server change: the installed 1.5 app has no `android:banner` or Leanback launcher. A source-only patch (banner + WebView zoom settings) is staged for app 2.0.
+
+
 ## 1.9.1 -- 2026-11-25
 Builds on 1.9, plus TV remote navigation for the web app (and the Android 1.5 WebView):
 

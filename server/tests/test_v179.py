@@ -69,7 +69,7 @@ def main():
     check("status='retry'" in dbpy, "old empty keyframe rows become retryable")
 
     db.migrate()
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] in ("9", "10"),
+    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] in ("9", "10", "11"),
           "fresh install is schema 9 or later")
     check(db.row("SELECT name FROM sqlite_master WHERE type='table' AND name='subtitle_cache'"),
           "subtitle_cache exists")
@@ -83,7 +83,7 @@ def main():
     bak = data / "media-server.db.pre-schema9"
     check(bak.is_file(), "schema 8 -> 9 writes media-server.db.pre-schema9")
     check(oct(bak.stat().st_mode & 0o777) == "0o600", "pre-schema9 mode is 600 (got %s)" % oct(bak.stat().st_mode & 0o777))
-    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] in ("9", "10"),
+    check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] in ("9", "10", "11"),
           "migrate stamps schema 9 or later")
 
     print("playlist / kickoff / remux cache")

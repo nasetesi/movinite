@@ -1,9 +1,9 @@
 # Movinite for Android
 
-A small native Android app for your Movinite server. It has a native sign-in screen, and once you're signed in it shows
-the server's web app in a WebView, with picture-in-picture and rotate-to-full-screen added.
+A native Android app for your Movinite server. It has a native sign-in screen, and once you're signed in it shows
+the server's web app in a WebView, with picture-in-picture, rotate-to-full-screen, and (from 2.0) offline downloads.
 
-* Package `org.movinite.app`, Android 7.0+ (minSdk 24, targetSdk 34).
+* Package `org.movinite.app`, Android 7.0+ (minSdk 24, targetSdk 34). **2.0** is `versionCode` 8.
 * **First launch:** a welcome screen asks for your server's address (for example `https://movies.example.com`, or
   `http://192.0.2.10:8099` on your home network). **Test** checks it with the server's `/api/health`, and **Connect** saves it.
   Then the native **Sign in** screen appears.
@@ -14,6 +14,15 @@ the server's web app in a WebView, with picture-in-picture and rotate-to-full-sc
 * **Picture in picture** (Android 8+): tap the PiP button in the player, or press Home while a film plays.
 * **Rotate = full screen:** while the player is open, turning the phone sideways hides the system bars and makes the player
   full screen. Turning it upright brings the bars back.
+* **2.0 — offline downloads:** people with the Viewer + Downloads role (and admins) can download films and episodes in the app.
+  A **Downloads** tab replaces My List in the bottom tabs (My List stays on Home and in the account menu). Downloads run in
+  the background over Wi-Fi by default, are stored encrypted, and play in the app's own player when you're offline. Unlock
+  with your fingerprint, face, screen lock, or a Movinite PIN. Licences last 30 days and renew when the app syncs; sign-out,
+  revoke, or 30 days without a sync removes the downloads. This is trust-based protection for family and friends, not
+  studio-grade DRM, and the app says so.
+* **2.0 — Android TV:** the app includes a Leanback launcher and a Movinite wordmark banner for the TV home row, plus
+  WebView zoom settings (`setTextZoom(100)` on televisions only, wide viewport) so a 4K TV shows the server's 1920-wide
+  layout instead of a zoomed-in page. The D-pad uses the server's TV remote navigation (1.9.1 and 1.9.2).
 
 ## Build
 

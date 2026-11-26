@@ -24,6 +24,8 @@ KINDS = {
     "accounts": ("invite_created", "invite_sent", "invite_send_failed", "invite_accepted", "invite_revoked",
                  "user_created", "user_deleted", "role_changed", "libraries_changed", "user_disabled", "user_enabled",
                  "password_reset", "gmail_connected", "gmail_disconnected", "gmail_error", "email_error", "email_test"),
+    "downloads": ("device_registered", "device_revoked", "download_requested", "download_ready", "download_started",
+                  "download_complete", "download_deleted", "download_revoked", "download_failed"),
     "server": ("library_added", "library_removed", "scan_started", "settings_changed", "server_started"),
 }
 KIND_GROUP = {k: g for g, ks in KINDS.items() for k in ks}

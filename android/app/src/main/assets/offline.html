@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Movinite offline</title>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--panel2:#1f232c;--line:#2a2f3a;--text:#e8e9ec;--muted:#8d93a0;--acc:#9637FA;--acc-text:#B07CFF;--acc-fill:#8424EA;--warn:#e5a00d;--bad:#e5534b;--ok:#3fb950}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+.top{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 16px 10px;background:color-mix(in srgb,var(--panel) 88%,var(--acc) 12%);border-bottom:1px solid color-mix(in srgb,var(--acc) 32%,var(--line))}
+.brand{font-weight:800;letter-spacing:.2px;font-size:18px}.brand b{color:var(--acc-text)}
+.pill{margin-left:auto;font-size:12px;font-weight:700;color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 55%,transparent);border-radius:20px;padding:3px 10px;display:flex;align-items:center;gap:6px}
+.pill i{width:7px;height:7px;border-radius:50%;background:var(--warn)}
+main{padding:16px;max-width:900px;margin:0 auto}
+.btn{background:var(--acc-fill);color:#fff;border:0;border-radius:9px;padding:11px 18px;font-weight:700;font-size:15px}
+.btn.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+.btn.small{padding:7px 13px;font-size:13.5px}
+.btn.danger{background:transparent;color:var(--bad);border:1px solid color-mix(in srgb,var(--bad) 50%,var(--line))}
+.lock{display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px;padding:56px 18px}
+.lock svg{width:64px;height:64px;color:var(--acc-text)}
+.lock h1{font-size:21px;margin:6px 0 0}.lock p{color:var(--muted);max-width:340px;margin:0}
+.lock .err{color:var(--bad);min-height:20px}
+h2{font-size:20px;margin:4px 0 4px}.sub{color:var(--muted);font-size:13.5px;margin-bottom:14px}
+.list{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
+.card{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+.card.bad{border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+.art{flex:0 0 76px;height:114px;border-radius:7px;background:var(--panel2) center/cover;display:flex;align-items:center;justify-content:center;font-size:26px;position:relative}
+.q{position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.72);color:#fff;font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 5px}
+.body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.s{color:var(--muted);font-size:13px}.s.bad{color:var(--bad)}
+.res{height:5px;border-radius:3px;background:var(--panel2);overflow:hidden;margin:4px 0}.res div{height:100%;background:var(--warn)}
+.acts{display:flex;gap:8px;margin-top:auto;padding-top:6px}
+.empty{color:var(--muted);text-align:center;padding:40px 10px}
+details{margin-top:22px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+summary{font-weight:700;color:var(--acc-text)}details p{font-size:14px}
+.warn{border-left:3px solid var(--warn);padding-left:10px}
+.foot{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+</style></head>
+<body>
+<div class="top"><span class="brand">Movin<b>ite</b></span><span class="pill"><i></i>Offline</span></div>
+<main id="main"></main>
+<script>
+"use strict";
+const B = window.MSAndroid;
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtSize = (b) => { if (!b) return ""; const u = ["B","KB","MB","GB","TB"]; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return b.toFixed(i > 2 ? 1 : 0) + " " + u[i]; };
+const LOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.9"/></svg>`;
+const DL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11.5M7 10.5l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 16.5v2.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-2.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`;
+let caps = {};
+try { caps = JSON.parse(B.offlineCaps()); } catch (e) { caps = {}; }
+const days = caps.wipe_days || 30;
+const HELP = `<details><summary>How downloads work</summary>
+  <p><b>Downloads stay inside the Movinite app.</b> They are saved encrypted in the app's own storage and only play in its player.</p>
+  <p><b>Each download has a licence</b> from your server that lasts ${caps.offline_days || 30} days and renews whenever the app reaches the server. Titles taken off the server, or a device removed by the server's owner, are deleted the next time the app connects.</p>
+  <p><b>Offline sign-in</b> uses your fingerprint, face or screen lock (and your Movinite PIN if you set one). If the app hasn't reached the server for ${days} days, it signs out and removes the downloads.</p>
+  <p class="warn"><b>This isn't studio-grade protection.</b> It stops casual copying and lets the server owner take downloads back, but someone with a rooted phone and enough know-how could still get at a file.</p></details>`;
+let pending = {}, seq = 0;
+window.__msResolve = (id, ok, data) => { const p = pending[id]; if (!p) return; delete pending[id]; let d = data; try { d = JSON.parse(d); } catch (e) {} ok ? p.res(d) : p.rej(new Error((d && d.detail) || "Something went wrong")); };
+const call = (name, args) => new Promise((res, rej) => { const id = ++seq; pending[id] = { res, rej }; B.call(id, name, JSON.stringify(args || {})); });
+
+function left(exp) { if (!exp) return ""; const d = Math.floor((exp - Date.now() / 1000) / 86400); return d < 0 ? "licence expired" : d === 0 ? "expires today" : `expires in ${d} day${d === 1 ? "" : "s"}`; }
+function lockView(msg, bad) {
+  $("#main").innerHTML = `<div class="lock">${LOCK}<h1>You're offline</h1><p>Unlock to watch what you downloaded${caps.username ? ` as <b>${esc(caps.username)}</b>` : ""}.</p>
+    <button class="btn" id="unlock">Unlock</button><div class="err">${esc(bad ? msg : "")}</div>${!bad && msg ? `<p>${esc(msg)}</p>` : ""}
+    <button class="btn ghost small" id="retry">Try to connect</button></div>`;
+  $("#unlock").onclick = () => B.unlock();
+  $("#retry").onclick = () => B.reconnect();
+}
+function noneView() {
+  $("#main").innerHTML = `<div class="lock">${DL}<h1>No downloads on this phone</h1><p>Connect to the internet, sign in and tap <b>Download</b> on a film to watch it offline.</p>
+    <button class="btn" id="retry">Try to connect</button></div>`;
+  $("#retry").onclick = () => B.reconnect();
+}
+function card(d) {
+  const ready = d.state === "ready";
+  const img = d.has_poster ? B.posterData(d.gid) : "";
+  const sub = ready ? `${esc(d.quality)} · ${fmtSize(d.bytes)} · ${left(d.expires_at)}`
+    : d.state === "expired" ? `<span class="bad">Licence expired. Connect to renew it.</span>`
+    : d.state === "revoked" ? `<span class="bad">${esc(d.error || "Removed by the server")}</span>`
+    : d.state === "failed" ? `<span class="bad">${esc(d.error || "Download failed")}</span>` : "Not finished. Connect to continue downloading.";
+  const pct = ready && d.position > 30 && d.duration ? Math.min(100, 100 * d.position / d.duration) : 0;
+  return `<div class="card${ready ? "" : " bad"}"><div class="art" ${img ? `style="background-image:url('${img}')"` : ""}>${img ? "" : "&#127902;"}${ready ? `<span class="q">${esc(String(d.quality || "").replace(" HEVC", ""))}</span>` : ""}</div>
+    <div class="body"><div class="t">${esc(d.title)}</div>${d.subtitle ? `<div class="s">${esc(d.subtitle)}</div>` : ""}<div class="s">${sub}</div>${pct ? `<div class="res"><div style="width:${pct}%"></div></div>` : ""}
+    <div class="acts">${ready ? `<button class="btn small" data-play="${d.gid}">&#9654; ${pct ? "Resume" : "Play"}</button>` : ""}<button class="btn ghost small" data-del="${d.gid}">Delete</button></div></div></div>`;
+}
+function draw() {
+  if (!B.unlocked()) return;
+  let L = [];
+  try { L = JSON.parse(B.downloads()); } catch (e) {}
+  let st = {}; try { st = JSON.parse(B.storageInfo()); } catch (e) {}
+  const ready = L.filter(d => d.state === "ready"), other = L.filter(d => d.state !== "ready");
+  let h = `<h2>Downloads</h2><div class="sub">${ready.length} ready to watch · ${fmtSize(st.used) || "0 B"} used · ${fmtSize(st.free) || "?"} free</div>`;
+  if (ready.length) h += `<div class="list">${ready.map(card).join("")}</div>`;
+  if (other.length) h += `<h2 style="margin-top:20px;font-size:16px">Needs a connection</h2><div class="list">${other.map(card).join("")}</div>`;
+  if (!L.length) h += `<div class="empty">Nothing downloaded yet. Connect to the internet and tap <b>Download</b> on a film.</div>`;
+  h += HELP + `<div class="foot"><button class="btn ghost" id="retry">Try to connect</button><button class="btn danger" id="out">Sign out and remove downloads</button></div>`;
+  $("#main").innerHTML = h;
+  document.querySelectorAll("[data-play]").forEach(b => b.onclick = () => B.playOffline(+b.dataset.play));
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => { if (!confirm("Delete this download from your phone?")) return; try { await call("remove", { grant_id: +b.dataset.del }); } catch (e) { alert(e.message); } draw(); });
+  $("#retry").onclick = () => B.reconnect();
+  $("#out").onclick = () => { if (confirm("Sign out and remove every download from this phone?")) B.signOutAll(); };
+}
+window.__msDownloadsChanged = draw;
+const WHY = { cancelled: "", no_lock: "Set a screen lock or a Movinite PIN while you're online to protect offline downloads.",
+  setup_needed: "Your screen lock changed since you set up downloads. Connect to the internet once to unlock offline again.",
+  rearm: "Your screen lock changed since you set up downloads. Connect to the internet once to unlock offline again.",
+  wiped: "Too many wrong PINs: the downloads were removed.", no_device_lock: "" };
+window.__offState = (s) => {
+  if (s === "unlocked") draw();
+  else if (s === "none") noneView();
+  else if (s === "wiped") noneView();
+  else lockView(WHY[s] != null ? WHY[s] : s, !!WHY[s] || !(s in WHY));
+};
+if (!caps.registered) noneView(); else if (B.unlocked()) draw(); else { lockView(""); B.unlock(); }
+</script>
+</body></html>

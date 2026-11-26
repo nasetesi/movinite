@@ -152,7 +152,8 @@ class Guard:
         if allowed is None or method != "GET":
             return await self.app(scope, receive, send)
         if RE_HLS.match(path) or RE_FILE.match(path) or path.startswith("/api/thumb/") or path.endswith(".vtt") \
-                or path.endswith("/poster-large") or path.endswith("/photo") or path.endswith(".csv"):
+                or path.endswith("/poster-large") or path.endswith("/photo") or path.endswith(".csv") \
+                or path.startswith("/api/offline/"):     # 2.0: offline files stream (GBs); access is checked there
             return await self.app(scope, receive, send)
 
         # ---- buffer and scrub JSON for restricted users
