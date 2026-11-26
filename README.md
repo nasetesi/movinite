@@ -37,6 +37,10 @@ On servers with a supported video card, transcoding can run on the GPU.
 | ![Player with the settings gear focused](docs/screenshots/tv-player-settings-gear-1920x1080.png) | ![Player settings menu open with an option focused](docs/screenshots/tv-player-settings-menu-1920x1080.png) |
 | **Download dialog** | **Devices and downloads** |
 | ![Download quality dialog](docs/screenshots/web-download-dialog.png) | ![My account, Devices and downloads](docs/screenshots/web-account-devices-downloads.png) |
+| **TV sign-in with a phone code (2.0.2)** | **Approve on the phone** |
+| ![TV sign-in with a short code and QR code](docs/screenshots/2.0.2/tv-pair-code-qr-1920x1080.png) | ![Approve a TV from a signed-in phone](docs/screenshots/2.0.2/phone-pair-approve.png) |
+| **TV account menu with Sign out** | **Settings > My account, Sign out** |
+| ![Account menu on a TV with Sign out focused](docs/screenshots/2.0.2/tv-account-menu-signout-1920x1080.png) | ![My account with a Sign out button](docs/screenshots/2.0.2/tv-settings-account-signout-1920x1080.png) |
 
 <p>
 <img src="docs/screenshots/phone-home.png" width="200" alt="Phone home">
@@ -67,7 +71,7 @@ On servers with a supported video card, transcoding can run on the GPU.
 <img src="docs/screenshots/phone-offline-playing.png" width="200" alt="Phone playing a download offline">
 </p>
 
-*The screenshots use generated test media, placeholder posters, and made-up names at example.com. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p. The 1.9 shots show Users and Invite, Email (Gmail app password), Activity, signed-in devices, Trusted proxies, and the join page, with documentation addresses such as 192.0.2.10. The 1.9.1 shot shows the Home row on a 1920×1080 television with the purple D-pad focus ring on a poster. The 2.0 shots show the 4K TV home and a movie page with Resume focused, the Downloads tab, the download dialog, Settings > Downloads, and the offline screens. The 2.0.1 shots show the video player on a television with the settings gear focused, and the settings menu open with an option focused.*
+*The screenshots use generated test media, placeholder posters, and made-up names at example.com. The 4K quality-menu shot was taken with **Cap quality to this screen** turned off, so 4K options stay visible; the tablet shot shows the default cap at 1080p. The 1.9 shots show Users and Invite, Email (Gmail app password), Activity, signed-in devices, Trusted proxies, and the join page, with documentation addresses such as 192.0.2.10. The 1.9.1 shot shows the Home row on a 1920×1080 television with the purple D-pad focus ring on a poster. The 2.0 shots show the 4K TV home and a movie page with Resume focused, the Downloads tab, the download dialog, Settings > Downloads, and the offline screens. The 2.0.1 shots show the video player on a television with the settings gear focused, and the settings menu open with an option focused. The 2.0.2 shots show TV sign-in with a short code and QR code, approving it from a phone, and reaching Sign out with the remote.*
 
 ## Features
 
@@ -79,7 +83,7 @@ On servers with a supported video card, transcoding can run on the GPU.
 - **Playback in the browser:** direct play, remux (including HEVC to fMP4) or HLS transcode with quality choices (360p to 1080p, plus 2K/4K with a GPU). Auto quality prefers direct play or remux over a transcode. Subtitles (`.srt`, embedded) are see-through and stay on after a seek or quality change; pinch to fit or fill the picture on a phone. The music player has a beat-reactive visualizer, playlists with Play and Shuffle (and play-from-track), mute and a reachable volume control, and a 10-band equalizer with presets (including Dynamic). The top bar, mini player and phone tab bar use the same frosted glass as the server status popup.
 - **Hardware transcoding:** Intel VAAPI/QSV (plus AMD VAAPI and NVIDIA NVENC, both untested). Video cards are detected on install. Concurrent 4K streams use extra GPU surfaces and the card's low-power encoder; a stream that cannot stay on the GPU falls back once and stays there, with the reason logged. The same account can play on more than one device at a time.
 - **Home rows** (Continue watching, Recently added, Recommended), My List, search, genres, decades, tags and collections.
-- **Phone layout** with a bottom tab bar and filter sheets, plus an installable web app (PWA) and a native **Android app**. On a television, a D-pad moves a purple focus ring across libraries, poster rows and player controls (1.9.1). Opening a title focuses Resume or Play (1.9.2), and the TV layout is authored at 1920×1080 so a 4K set is not zoomed in. While a film is playing, the remote reaches every player control, including the settings gear at the bottom right (2.0.1).
+- **Phone layout** with a bottom tab bar and filter sheets, plus an installable web app (PWA) and a native **Android app**. On a television, a D-pad moves a purple focus ring across libraries, poster rows and player controls (1.9.1). Opening a title focuses Resume or Play (1.9.2), and the TV layout is authored at 1920×1080 so a 4K set is not zoomed in. While a film is playing, the remote reaches every player control, including the settings gear at the bottom right (2.0.1). A TV can sign in by scanning a code with a phone that's already signed in, stays signed in, and the remote reaches the account menu and Sign out (2.0.2).
 - **Multiple users** with Admin, Viewer, and Viewer + Downloads roles, per-library access, email invites sent from your own Gmail (or a copyable link and QR code), a signed-in device list, and Settings > Activity (now playing and a timeline). Existing accounts keep their access after the update. A themed server status panel shows CPU and RAM icons and rings, disks, idle GPU, and background cache jobs that pause when you press play.
 - **Offline downloads (2.0, Android app):** people with Viewer + Downloads (and admins) can download films and episodes to the app, play them with the phone's network off, and manage devices and quotas from Settings > Downloads or My account. Downloads are encrypted on the phone; licences last 30 days and can be taken back.
 
@@ -142,6 +146,8 @@ The app is in [`android/`](android/). On first launch it asks for your server's 
 To change the server later, tap the gear on the sign-in screen. Picture-in-picture and rotate-to-full-screen are built in.
 Version **2.0** adds offline downloads (a Downloads tab, encrypted storage, and playback with the network off), a
 Movinite banner for the Android TV home screen, and WebView zoom settings so a 4K TV is not magnified.
+Version **2.0.2** shows the code-and-QR sign-in on a TV (no typing with the remote) and lists Movinite servers found on
+your network during setup (`_movinite._tcp`); you can still type the address.
 
 To install it, download `movinite-android-vX.Y.apk` from [Releases](../../releases) onto your phone or TV, then open it
 from the **Files** app. Allow "Install unknown apps" when Android asks. A TV also needs the 2.0 app sideloaded for the

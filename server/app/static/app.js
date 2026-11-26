@@ -207,17 +207,256 @@ $("#modal").addEventListener("mousedown", e => { if (e.target.id === "modal" && 
 function showAuth(html) {
   $("#shell").classList.add("hidden"); $("#auth").classList.remove("hidden"); $("#auth").innerHTML = html;
 }
+function focusAuth() {
+  if (!(window.TV && TV.on)) return;
+  TV.init();
+  const items = $$("#auth button, #auth input, #auth a, #auth [tabindex='0']").filter(el => TV.visible(el));
+  const prefer = $("#pair-refresh") || $("#pair-approve") || $("#pair-use-pass") || $("#loginf button") || items[0];
+  if (prefer) TV.focus(prefer);
+}
+
+// 2.0.2: short-code TV sign-in, recent-server list, stay-signed-in note
+const PAIR = { timer: null, token: null, gen: 0 };
+function stopPairPoll() { PAIR.gen++; clearTimeout(PAIR.timer); PAIR.timer = null; PAIR.token = null; }
+function isTvAuth() { return !!(window.TV && TV.on); }
+function pairCodeFromLocation() {
+  try {
+    if ((location.pathname || "").replace(/\/+$/, "") === "/pair") {
+      const q = new URLSearchParams(location.search).get("code");
+      if (q) return String(q).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    }
+  } catch (e) {}
+  const h = (location.hash || "").match(/^#\/pair\/?([A-Za-z0-9-]{4,16})/i);
+  return h ? h[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+}
+function recentServers() {
+  try { return JSON.parse(localStorage.getItem("msRecentServers") || "[]") || []; } catch (e) { return []; }
+}
+function rememberServer(url, name) {
+  url = String(url || "").replace(/\/+$/, "");
+  if (!url || !/^https?:\/\//i.test(url)) return;
+  const list = recentServers().filter(s => s.url !== url);
+  list.unshift({ url, name: name || "", last: Date.now() });
+  try { localStorage.setItem("msRecentServers", JSON.stringify(list.slice(0, 8))); } catch (e) {}
+}
+async function probeServer(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 1600);
+  try {
+    const r = await fetch(String(url).replace(/\/+$/, "") + "/.well-known/movinite.json", { signal: ctrl.signal, cache: "no-store" });
+    clearTimeout(t);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (!j || (j.service !== "movinite" && !j.version)) return null;
+    return j;
+  } catch (e) { clearTimeout(t); return null; }
+}
+async function fillRecentServers(el) {
+  if (!el) return;
+  const here = location.origin;
+  rememberServer(here);
+  const others = recentServers().filter(s => s.url && s.url !== here);
+  if (!others.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="muted pair-recent-h">Servers you've used</div>` +
+    others.map(s => `<button type="button" class="btn ghost pair-srv" data-url="${esc(s.url)}" tabindex="0">${esc(s.name || s.url)}</button>`).join("");
+  el.querySelectorAll(".pair-srv").forEach(b => { b.onclick = () => { location.href = b.dataset.url + "/"; }; });
+  for (const s of others) {
+    const j = await probeServer(s.url);
+    if (!j) continue;
+    const label = (j.name || "Movinite") + (j.version ? " · v" + j.version : "");
+    rememberServer(s.url, label);
+    const b = el.querySelector(`.pair-srv[data-url="${CSS.escape(s.url)}"]`);
+    if (b) b.textContent = label;
+  }
+}
+function afterLoginOrPair() {
+  const code = pairCodeFromLocation();
+  if (code) { showPairApprove(code); return; }
+  boot();
+}
 function showLogin() {
   stopAll();
-  showAuth(`<form class="auth-box" id="loginf"><h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1><div class="muted">Sign in to continue</div>
+  stopPairPoll();
+  if (isTvAuth()) { showTvPairLogin(); return; }
+  showPasswordLogin();
+}
+function showPasswordLogin(opts) {
+  opts = opts || {};
+  showAuth(`<form class="auth-box" id="loginf"><h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
+    <div class="muted">${opts.note || "Sign in to continue"}</div>
     <label>Username</label><input type="text" id="lu" autocomplete="username" autofocus>
     <label>Password</label><input type="password" id="lp" autocomplete="current-password">
-    <button class="btn" type="submit">Sign in</button><div class="err" id="lerr"></div></form>`);
+    <button class="btn" type="submit">Sign in</button>
+    ${opts.tvBack ? `<button type="button" class="btn ghost" id="pair-back-code" tabindex="0">Back to the TV code</button>` : `<button type="button" class="btn ghost" id="pair-enter" tabindex="0">Approve a TV sign-in</button>`}
+    <div id="pair-recent" class="pair-recent"></div>
+    <div class="err" id="lerr"></div></form>`);
   $("#loginf").onsubmit = async (e) => {
     e.preventDefault();
-    try { await api("/api/login", { method: "POST", body: { username: $("#lu").value, password: $("#lp").value }, noAuthRedirect: true }); boot(); }
+    try { await api("/api/login", { method: "POST", body: { username: $("#lu").value, password: $("#lp").value }, noAuthRedirect: true }); afterLoginOrPair(); }
     catch (err) { $("#lerr").textContent = err.message; }
   };
+  const back = $("#pair-back-code");
+  if (back) back.onclick = () => showTvPairLogin();
+  const enter = $("#pair-enter");
+  if (enter) enter.onclick = () => showPairCodeEntry();
+  fillRecentServers($("#pair-recent"));
+  focusAuth();
+}
+function showTvPairLogin() {
+  showAuth(`<div class="auth-box auth-tv-pair" id="pairf">
+    <h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
+    <h2 class="auth-h">Sign in with your phone</h2>
+    <p class="muted pair-lead">On a phone that's already signed in, open Movinite and scan this code — or visit the address below and enter the letters.</p>
+    <div class="pair-row">
+      <div class="pair-qr" id="pair-qr" aria-hidden="true"></div>
+      <div class="pair-side">
+        <div class="pair-code" id="pair-code">------</div>
+        <div class="muted" id="pair-status">Getting a code…</div>
+        <div class="muted pair-stay">This TV stays signed in. You can sign out later from the menu.</div>
+      </div>
+    </div>
+    <div class="pair-url muted" id="pair-url"></div>
+    <div class="pair-actions">
+      <button type="button" class="btn" id="pair-refresh" tabindex="0">Get a new code</button>
+      <button type="button" class="btn ghost" id="pair-use-pass" tabindex="0">Sign in with a username and password</button>
+    </div>
+    <div id="pair-recent" class="pair-recent"></div>
+    <div class="err" id="lerr"></div>
+  </div>`);
+  $("#pair-refresh").onclick = () => startTvPair(true);
+  $("#pair-use-pass").onclick = () => showPasswordLogin({ tvBack: true, note: "Sign in with a username and password. This TV will stay signed in." });
+  fillRecentServers($("#pair-recent"));
+  startTvPair(false);
+  focusAuth();
+}
+async function startTvPair(force) {
+  stopPairPoll();
+  const gen = ++PAIR.gen;
+  const status = $("#pair-status"), codeEl = $("#pair-code"), qr = $("#pair-qr"), err = $("#lerr"), urlEl = $("#pair-url");
+  if (!status) return;
+  if (force) status.textContent = "Getting a new code…";
+  if (err) err.textContent = "";
+  try {
+    const r = await api("/api/pair/start", { method: "POST", noAuthRedirect: true });
+    if (gen !== PAIR.gen) return;
+    PAIR.token = r.poll_token;
+    if (codeEl) codeEl.textContent = r.display || r.code;
+    if (qr) qr.innerHTML = (window.MSQR && r.url) ? MSQR.svg(r.url, 220) : "";
+    if (urlEl) urlEl.textContent = r.url ? r.url.replace(/^https?:\/\//, "") : "";
+    status.textContent = "Waiting for approval on your phone…";
+    tickPairPoll(gen);
+  } catch (e) {
+    if (gen !== PAIR.gen) return;
+    status.textContent = "";
+    if (err) err.textContent = e.message || "Couldn't start a sign-in code";
+  }
+}
+function tickPairPoll(gen) {
+  clearTimeout(PAIR.timer);
+  PAIR.timer = setTimeout(async () => {
+    if (gen !== PAIR.gen || !PAIR.token) return;
+    try {
+      const r = await api("/api/pair/poll", { method: "POST", body: { token: PAIR.token }, noAuthRedirect: true });
+      if (gen !== PAIR.gen) return;
+      if (r.status === "approved") { stopPairPoll(); afterLoginOrPair(); return; }
+      if (r.status === "pending") {
+        const st = $("#pair-status");
+        if (st && r.expires_in != null && r.expires_in < 60) st.textContent = "This code expires in less than a minute. Approve it on your phone, or get a new one.";
+        tickPairPoll(gen);
+        return;
+      }
+      if (r.status === "expired" || r.status === "denied" || r.status === "unknown") {
+        const st = $("#pair-status");
+        if (st) st.textContent = r.status === "denied" ? "Sign-in was declined. Get a new code to try again." : "This code expired. Get a new one.";
+        return;
+      }
+      tickPairPoll(gen);
+    } catch (e) {
+      if (gen !== PAIR.gen) return;
+      const err = $("#lerr");
+      if (err && e.status === 429) err.textContent = e.message;
+      tickPairPoll(gen);
+    }
+  }, 1500);
+}
+function showPairCodeEntry() {
+  showAuth(`<div class="auth-box" id="pair-entry">
+    <h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
+    <h2 class="auth-h">Approve a TV</h2>
+    <p class="muted">Enter the code shown on the television.</p>
+    <label>Code</label><input type="text" id="pair-in" maxlength="8" autocomplete="off" autocapitalize="characters" autofocus>
+    <button type="button" class="btn" id="pair-go" tabindex="0">Continue</button>
+    <button type="button" class="btn ghost" id="pair-cancel" tabindex="0">Back</button>
+    <div class="err" id="lerr"></div>
+  </div>`);
+  const go = () => {
+    const c = ($("#pair-in").value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (c.length !== 6) { $("#lerr").textContent = "Enter the 6-character code from the TV"; return; }
+    history.replaceState(null, "", "/pair?code=" + c);
+    showPairApprove(c);
+  };
+  $("#pair-go").onclick = go;
+  $("#pair-in").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  $("#pair-cancel").onclick = () => showLogin();
+  focusAuth();
+}
+async function showPairApprove(code) {
+  stopAll();
+  stopPairPoll();
+  try { ME = await api("/api/me", { noAuthRedirect: true }); }
+  catch (e) {
+    showPasswordLogin({ note: "Sign in to approve this TV, then you'll return to the confirmation." });
+    return;
+  }
+  let info;
+  try { info = await api("/api/pair/info?code=" + enc(code), { noAuthRedirect: true }); }
+  catch (e) {
+    showAuth(`<div class="auth-box" id="pair-bad">
+      <h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
+      <h2 class="auth-h">Can't approve this TV</h2>
+      <p class="err">${esc(e.message || "That code is not valid or has expired")}</p>
+      <button type="button" class="btn" id="pair-home" tabindex="0">Back</button>
+    </div>`);
+    $("#pair-home").onclick = () => { history.replaceState(null, "", "/"); boot(); };
+    focusAuth();
+    return;
+  }
+  const device = info.device || "A television";
+  showAuth(`<div class="auth-box auth-pair-ok" id="pair-ok">
+    <h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
+    <h2 class="auth-h">Approve this TV?</h2>
+    <p class="pair-device">You're about to sign <b>${esc(ME.username)}</b> in on:</p>
+    <p class="pair-device-name" id="pair-device">${esc(device)}</p>
+    <p class="muted">The TV will stay signed in until you sign out on it.</p>
+    <div class="pair-actions">
+      <button type="button" class="btn" id="pair-approve" tabindex="0">Approve</button>
+      <button type="button" class="btn ghost" id="pair-deny" tabindex="0">Don't approve</button>
+    </div>
+    <div class="err" id="lerr"></div>
+  </div>`);
+  $("#pair-approve").onclick = async () => {
+    $("#pair-approve").disabled = true;
+    try {
+      await api("/api/pair/approve", { method: "POST", body: { code }, noAuthRedirect: true });
+      showAuth(`<div class="auth-box" id="pair-done">
+        <h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
+        <h2 class="auth-h">You're signed in on the TV</h2>
+        <p class="muted">${esc(device)} should open the library in a moment.</p>
+        <button type="button" class="btn" id="pair-home" tabindex="0">Continue on this device</button>
+      </div>`);
+      $("#pair-home").onclick = () => { history.replaceState(null, "", "/"); boot(); };
+      focusAuth();
+    } catch (e) {
+      $("#pair-approve").disabled = false;
+      $("#lerr").textContent = e.message;
+    }
+  };
+  $("#pair-deny").onclick = async () => {
+    try { await api("/api/pair/deny", { method: "POST", body: { code }, noAuthRedirect: true }); } catch (e) {}
+    history.replaceState(null, "", "/");
+    boot();
+  };
+  focusAuth();
 }
 function showSetup() {
   showAuth(`<form class="auth-box" id="setupf"><h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1><h2 class="auth-h">Welcome</h2><div class="muted">Create the administrator account.</div>
@@ -436,6 +675,8 @@ if (typeof ResizeObserver === "function") {
 window.addEventListener("resize", syncTopH);
 
 async function boot() {
+  const pairCode = pairCodeFromLocation();
+  if (pairCode) { await showPairApprove(pairCode); return; }
   const inv = location.hash.match(/^#\/invite\/([A-Za-z0-9_-]{20,200})/);   // 1.9: invite link
   if (inv) { await showJoin(inv[1]); return; }
   try {
@@ -443,6 +684,8 @@ async function boot() {
     if (st.needs_setup) { showSetup(); return; }
     ME = await api("/api/me", { noAuthRedirect: true });
   } catch (e) { showLogin(); return; }
+  stopPairPoll();
+  rememberServer(location.origin, "Movinite" + (ME.version ? " · v" + ME.version : ""));
   $("#auth").classList.add("hidden"); $("#shell").classList.remove("hidden");
   $("#whoami").textContent = ME.username; $("#ver").textContent = "v" + ME.version;
   syncTopH();
@@ -545,7 +788,7 @@ const MOB = (() => {
   function sound() { const on = SFX.get().on; $("#acct-sound").textContent = "Poster sounds: " + (on ? "on" : "off"); }
   function open(v) {
     menu.classList.toggle("hidden", !v); av.setAttribute("aria-expanded", v ? "true" : "false");
-    if (v) { sound(); const f = menu.querySelector("a,button"); if (f) f.focus({ preventScroll: true }); }
+    if (v) { sound(); const f = [...menu.querySelectorAll("a,button")].find(el => !el.hidden && el.getAttribute("aria-hidden") !== "true"); if (f) f.focus({ preventScroll: true }); }
   }
   function setup() {
     const ini = (ME.username || "?").trim().charAt(0).toUpperCase() || "?";
@@ -2704,6 +2947,9 @@ async function viewSettings(tab) {
   } else if (tab === "account") {
     const capOn = qualityCapOn(), capNow = capBaseFromPx(displayLongPx()) || "1080p";
     const capHint = `This device is about ${displayLongPx() || "?"} pixels on the long side, so the cap is ${capNow}. A 1080p-class tablet will not be sent 4K, even if that quality was saved earlier. Turn this off to allow a higher quality here.`;
+    html += `<div class="panel" style="max-width:560px"><h3 style="margin-top:0">Sign out</h3>
+      <p class="help">Sign out of Movinite on this device. On a television you can also open the account button in the top-right corner.</p>
+      <button class="btn danger" type="button" id="acct-page-logout" tabindex="0">Sign out</button></div>`;
     html += `<div class="panel" style="max-width:560px"><h3 style="margin-top:0">This device</h3>
       <label class="aw-row" for="qcap-on"><span class="sw"><input type="checkbox" id="qcap-on" ${capOn ? "checked" : ""}><i></i></span><span class="aw-txt"><b>Cap quality to this screen</b><span class="aw-hint">${capHint}</span></span></label>
       <div class="help">Saved for your account in this browser.</div></div>`;
@@ -2713,6 +2959,7 @@ async function viewSettings(tab) {
       <button class="btn" id="cpsave">Change password</button></div>`;
     html += `<p class="help" style="max-width:560px">Sounds for posters and buttons are in <a style="color:var(--acc-text)" href="#/settings/sounds">Poster Sounds</a>.</p>`;
     v.innerHTML = html;
+    $("#acct-page-logout").onclick = () => $("#logout").click();
     accountExtras(v).then(() => accountDownloads(v)).catch(() => {});
     $("#qcap-on").onchange = () => { setQualityCap($("#qcap-on").checked); toast($("#qcap-on").checked ? "Quality will be capped to this screen" : "Screen cap off on this device"); };
     $("#cpsave").onclick = async () => {
@@ -4891,6 +5138,29 @@ const TV = {
     this.leaveDetail();
     return true;
   },
+  headerItems(items) {
+    items = items || this.candidates();
+    return items.filter((el) => el.closest && el.closest(".top") && !el.closest("#acct-menu") && !el.closest("#ss-panel"));
+  },
+  acctMenuOpen() {
+    const am = document.getElementById("acct-menu");
+    return !!(am && !am.classList.contains("hidden"));
+  },
+  acctMenuItems(items) {
+    items = items || this.candidates();
+    return items.filter((el) => el.closest && el.closest("#acct-menu"));
+  },
+  isTopContentRow(cur, items) {
+    if (!cur) return false;
+    if (cur.closest && cur.closest(".side")) {
+      const nav = items.filter((el) => el.closest && el.closest(".side nav"));
+      return nav[0] === cur;
+    }
+    const viewItems = items.filter((el) => el.closest && el.closest("#view") && !this.isSearchChrome(el));
+    if (!viewItems.includes(cur)) return false;
+    const topMost = Math.min(...viewItems.map((el) => el.getBoundingClientRect().top));
+    return cur.getBoundingClientRect().top <= topMost + 48;
+  },
   candidates() {
     const playerOn = $("#player") && !$("#player").classList.contains("hidden");
     const modalOn = $("#modal") && !$("#modal").classList.contains("hidden");
@@ -4914,7 +5184,9 @@ const TV = {
       "#view .see-all", "#view .rh-a",
       "#view .pli-row", "#view .iconbtn", "#view select",
       "#menubtn", "#sndbtn", "#ss-pill", "#m-avatar", "#m-search", "#search",
+      "#logout",
       "#acct-menu:not(.hidden) a, #acct-menu:not(.hidden) button",
+      "#acct-page-logout",
       "#audiobar:not(.hidden) button, #audiobar:not(.hidden) [tabindex='0']",
       "#pip-chip:not(.hidden) button"
     ].join(",");
@@ -5092,10 +5364,43 @@ const TV = {
     if (!items.length) return false;
     const cur = document.activeElement && items.includes(document.activeElement) ? document.activeElement : null;
     if (!cur) { this.focus(this.preferredStart(items)); return true; }
+    // 2.0.2: the account menu is its own zone (Up/Down through items; Back closes it)
+    if (this.acctMenuOpen() && (cur.closest && (cur.closest("#acct-menu") || cur.id === "m-avatar"))) {
+      const menu = this.acctMenuItems(items);
+      if (cur.id === "m-avatar" && (dir === "down" || dir === "up") && menu.length) {
+        this.focus(dir === "up" ? menu[menu.length - 1] : menu[0]);
+        return true;
+      }
+      const next = this.nearest(cur, menu, dir);
+      if (next) this.focus(next);
+      return true;
+    }
+    // 2.0.2: Left/Right walk the header (search, sounds, status, account); Down leaves it
+    if (cur.closest && cur.closest(".top") && !cur.closest("#view")) {
+      const heads = this.headerItems(items);
+      if (dir === "left" || dir === "right") {
+        const next = this.nearest(cur, heads, dir);
+        if (next) this.focus(next);
+        return true;
+      }
+      if (dir === "down") {
+        const content = items.filter((el) => !(el.closest && el.closest(".top")) && !this.isSearchChrome(el));
+        const start = this.preferredStart(content) || content[0];
+        if (start) this.focus(start);
+        return true;
+      }
+      return true;
+    }
     const atTop = !!(cur.closest && (cur.closest(".side") || cur.closest(".top")) || this.isSearchChrome(cur));
     let pool = items;
     if ((dir === "up" || dir === "down") && !atTop) {
       pool = items.filter((el) => !this.isSearchChrome(el));
+    }
+    // 2.0.2: Up from the first content row or Home in the sidebar reaches the header
+    if (dir === "up" && this.isTopContentRow(cur, items)) {
+      const heads = this.headerItems(items);
+      const next = this.nearest(cur, heads, "up") || heads[heads.length - 1] || document.getElementById("m-avatar") || document.getElementById("search");
+      if (next && this.visible(next)) { this.focus(next); return true; }
     }
     if (this.isDetailView() && cur.closest && cur.closest("#view")) {
       if (this.moveInDetail(dir, cur, pool)) return true;
@@ -5161,7 +5466,12 @@ const TV = {
     const sd = d.querySelector(".side.open"); if (sd) { sd.classList.remove("open"); return true; }
     const mm = d.getElementById("more-menu"); if (mm && !mm.hidden) { mm.hidden = true; return true; }
     const am = d.getElementById("acct-menu");
-    if (am && !am.classList.contains("hidden")) { const av = d.getElementById("m-avatar"); if (av) av.click(); else am.classList.add("hidden"); return true; }
+    if (am && !am.classList.contains("hidden")) {
+      const av = d.getElementById("m-avatar");
+      if (av) av.click(); else am.classList.add("hidden");
+      if (av) this.focus(av);
+      return true;
+    }
     if (typeof MLS !== "undefined" && MLS.el) { if (typeof mlClose === "function") mlClose(); return true; }
     const h = location.hash.replace(/^#\/?/, "");
     if (h && h !== "home" && h !== "") {
@@ -5188,8 +5498,10 @@ const TV = {
       if (this.back()) { e.preventDefault(); e.stopPropagation(); }
       return;
     }
-    if (this.typing(e) && !center) return;
-    if (key === "ArrowRight" || key === "ArrowLeft" || key === "ArrowUp" || key === "ArrowDown") {
+    const arrow = key === "ArrowRight" || key === "ArrowLeft" || key === "ArrowUp" || key === "ArrowDown";
+    // 2.0.2: arrow keys leave the search box so the remote can walk the header (typing letters still works)
+    if (this.typing(e) && !center && !(arrow && this.isSearchChrome(e.target))) return;
+    if (arrow) {
       const dir = key === "ArrowRight" ? "right" : key === "ArrowLeft" ? "left" : key === "ArrowDown" ? "down" : "up";
       if (playerOn) {
         const wasOn = $("#player").classList.contains("ov-on");

@@ -3,7 +3,7 @@
 A native Android app for your Movinite server. It has a native sign-in screen, and once you're signed in it shows
 the server's web app in a WebView, with picture-in-picture, rotate-to-full-screen, and (from 2.0) offline downloads.
 
-* Package `org.movinite.app`, Android 7.0+ (minSdk 24, targetSdk 34). **2.0** is `versionCode` 8.
+* Package `org.movinite.app`, Android 7.0+ (minSdk 24, targetSdk 34). **2.0.2** is `versionCode` 9.
 * **First launch:** a welcome screen asks for your server's address (for example `https://movies.example.com`, or
   `http://192.0.2.10:8099` on your home network). **Test** checks it with the server's `/api/health`, and **Connect** saves it.
   Then the native **Sign in** screen appears.

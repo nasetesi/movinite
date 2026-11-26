@@ -14,6 +14,11 @@
             android:orientation="vertical" android:background="@drawable/panel" android:padding="18dp">
             <TextView android:id="@+id/current" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="14dp"
                 android:textColor="@color/text" android:textSize="14sp" />
+            <TextView android:id="@+id/found_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="Servers on this network" android:textColor="@color/muted" android:textSize="13sp"
+                android:visibility="gone" />
+            <LinearLayout android:id="@+id/found" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:layout_marginBottom="14dp" android:visibility="gone" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Server address"
                 android:textColor="@color/muted" android:textSize="13sp" />
             <EditText android:id="@+id/url" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="8dp"

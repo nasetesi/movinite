@@ -3,6 +3,15 @@
 The full server history (1.0 to 1.9) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
 
+## 2.0.2 -- 2026-11-25
+
+Server 2.0.2 and Android app 2.0.2 (`versionCode` 9). Schema stays 11. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **Sign in on a TV with your phone:** the TV shows a short code and a QR code; approve it from a phone that's already signed in and the TV gets its own session. Codes last about 10 minutes and work once. Username and password still work.
+- **Stay signed in:** sessions refresh while you use them (30 days from last activity).
+- **Find the server:** the server advertises itself on the local network (`_movinite._tcp`, plus `/.well-known/movinite.json`); the 2.0.2 app lists servers it finds during setup. Typing the address still works.
+- **Sign out with the remote:** Up from the first row reaches the header; the account button opens a menu with Sign out. Settings > My account also has a Sign out button.
+
 ## 2.0.1 -- 2026-11-25
 
 Server 2.0.1 is a quick fix on 2.0. The Android app is unchanged (its WebView uses the same JS). Details are in [server/CHANGELOG.md](server/CHANGELOG.md).

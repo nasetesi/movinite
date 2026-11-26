@@ -78,7 +78,13 @@ def set_password(user_id, password, must_change=False):
 
 def _device_name(ua):
     ua = ua or ""
-    if "MoviniteAndroid" in ua or ("; wv)" in ua and "Android" in ua):
+    tv = "AndroidTV" in ua or "Android TV" in ua or "BRAVIA" in ua or "AFTMM" in ua or "AFTSSS" in ua
+    app = "MediaServerAndroid" in ua or "MoviniteAndroid" in ua or ("; wv)" in ua and "Android" in ua)
+    if tv and app:
+        os_ = "Movinite app (TV)"
+    elif tv:
+        os_ = "Android TV"
+    elif app:
         os_ = "Movinite app (Android)"
     elif "Android" in ua:
         os_ = "Android"
@@ -95,7 +101,7 @@ def _device_name(ua):
     else:
         os_ = "Unknown device"
     br = ""
-    if "MoviniteAndroid" in ua or "; wv)" in ua:
+    if "MediaServerAndroid" in ua or "MoviniteAndroid" in ua or "; wv)" in ua:
         br = ""
     elif "Edg/" in ua:
         br = "Edge"
@@ -172,8 +178,13 @@ def user_from_token(tok, ip=None, ua=None):
     if u and (now - (u.get("last_seen") or 0) > _SEEN_EVERY or (ip and u.get("s_ip") != ip)):
         try:
             with db.tx() as c:
-                c.execute("UPDATE sessions SET last_seen=?, ip=COALESCE(?, ip) WHERE token=?", (int(now), ip, th))
+                # 2.0.2: stay signed in — slide the expiry forward on use (SESSION_DAYS from last activity)
+                c.execute(
+                    "UPDATE sessions SET last_seen=?, expires_at=?, ip=COALESCE(?, ip) WHERE token=?",
+                    (int(now), int(now) + config.SESSION_DAYS * 86400, ip, th),
+                )
             u["last_seen"] = int(now)
+            u["expires_at"] = int(now) + config.SESSION_DAYS * 86400
             if ip:
                 u["s_ip"] = ip
         except Exception:

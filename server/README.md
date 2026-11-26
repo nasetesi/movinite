@@ -195,6 +195,13 @@ From 1.9.2, opening a movie or show focuses Resume or Play (not the Similar movi
 
 From 2.0.1, while a film is playing the remote shows the player controls and can reach every button, including the settings gear at the bottom right (quality, picture and speed). Up and down move between the seek bar and the button row; Left and Right walk the row you are on. The settings menu itself is navigable, and Back hides the controls before leaving the player.
 
+## Easier TV sign-in (2.0.2)
+Typing a server address and a password with the TV remote is awkward. From 2.0.2 the television shows a short code and a QR code. On a phone that's already signed in, scan the code or open `https://192.0.2.10/pair?code=XXXXXX` and tap Approve. The TV signs in as that person and stays signed in (the session refreshes while you use it). You can still use a username and password, and you can sign out from the menu.
+
+The sign-in screen lists Movinite servers you've used before, and the server advertises itself on the LAN (`_movinite._tcp`) so a future Android app build can offer a picker instead of typing the address. The installed 2.0 Android app still uses its native setup and password screens until a 2.0.2 app is sideloaded; stay-signed-in already works with this server release.
+
+On a television, Up from the first row reaches the header. Left and Right move across search, sounds and the account button; OK opens the account menu (including Sign out). Settings > My account also has a Sign out button.
+
 ## Phones and admin-only tools (v1.4.9)
 
 Settings work on phones: there is one swipeable line of tabs, each panel is a single column, tables become cards

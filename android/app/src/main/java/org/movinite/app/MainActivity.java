@@ -86,12 +86,20 @@ public class MainActivity extends Activity {
         Offline off = Offline.get(this);
         if (off.windowExpired()) off.wipe("offline for too long");
         if (off.registered() && !off.online()) { startActivity(new Intent(this, OfflineActivity.class)); finish(); return; }
-        if (!Session.signedIn(server)) {          // not signed in: the native sign-in screen (Server settings on top if asked for)
-            Intent login = new Intent(this, LoginActivity.class);
-            if (ACTION_SETTINGS.equals(getIntent().getAction())) startActivities(new Intent[]{login, new Intent(this, SetupActivity.class)});
-            else startActivity(login);
-            finish();
-            return;
+        if (!Session.signedIn(server)) {
+            // 2.0.2: on a television, load the web sign-in (short code + QR). Phones still use the native form.
+            // The gear / Server settings action still opens Setup, then the native form.
+            if (ACTION_SETTINGS.equals(getIntent().getAction())) {
+                Intent login = new Intent(this, LoginActivity.class);
+                startActivities(new Intent[]{login, new Intent(this, SetupActivity.class)});
+                finish();
+                return;
+            }
+            if (!isTelevision()) {
+                startActivity(new Intent(this, LoginActivity.class));
+                finish();
+                return;
+            }
         }
         setContentView(R.layout.activity_main);
         web = findViewById(R.id.web);
@@ -200,7 +208,7 @@ public class MainActivity extends Activity {
         String now = Prefs.serverUrl(this);
         if (now != null && !now.equals(server)) {   // server changed in Server settings
             server = now;
-            if (!Session.signedIn(server)) { toLogin(null); return; }
+            if (!Session.signedIn(server) && !isTelevision()) { toLogin(null); return; }
             firstLoadDone = false; web.clearHistory(); load(server);
         }
     }
@@ -457,6 +465,14 @@ public class MainActivity extends Activity {
 
     private void toLogin(String message) {
         if (leaving) return;
+        // 2.0.2: a television stays in the WebView and reloads the code-and-QR sign-in.
+        if (isTelevision() && web != null && server != null) {
+            Session.clear(server);
+            leaving = false;
+            firstLoadDone = false;
+            load(server);
+            return;
+        }
         leaving = true;
         Session.clear(server);
         Intent i = new Intent(this, LoginActivity.class);

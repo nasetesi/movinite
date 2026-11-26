@@ -11,6 +11,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.EditText;
 import android.widget.TextView;
 
@@ -38,10 +39,12 @@ public class SetupActivity extends Activity {
 
     private boolean firstRun;
     private EditText url;
-    private TextView status;
+    private TextView status, foundLabel;
+    private LinearLayout foundBox;
     private Button test, connect;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile int attempt = 0;
+    private LanServers lan;
 
     interface Result { void done(boolean ok, String message); }
 
@@ -53,6 +56,8 @@ public class SetupActivity extends Activity {
         status = findViewById(R.id.status);
         test = findViewById(R.id.test);
         connect = findViewById(R.id.connect);
+        foundLabel = findViewById(R.id.found_label);
+        foundBox = findViewById(R.id.found);
         String cur = Prefs.serverUrl(this);
         firstRun = cur == null || getIntent().getBooleanExtra(EXTRA_FIRST_RUN, false);
         url.setText(cur == null ? "" : cur);
@@ -73,6 +78,46 @@ public class SetupActivity extends Activity {
             if (id == EditorInfo.IME_ACTION_GO || (ev != null && ev.getKeyCode() == KeyEvent.KEYCODE_ENTER)) { onConnect(); return true; }
             return false;
         });
+        lan = new LanServers(this, this::showFound);
+        lan.start();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (lan != null) lan.stop();
+        super.onDestroy();
+    }
+
+    /** 2.0.2: list Movinite servers found on the LAN; tap one to fill the address. Manual entry stays. */
+    private void showFound(java.util.List<LanServers.Found> list) {
+        if (foundBox == null) return;
+        foundBox.removeAllViews();
+        if (list == null || list.isEmpty()) {
+            foundBox.setVisibility(View.GONE);
+            foundLabel.setVisibility(View.GONE);
+            return;
+        }
+        foundLabel.setVisibility(View.VISIBLE);
+        foundBox.setVisibility(View.VISIBLE);
+        float dp = getResources().getDisplayMetrics().density;
+        for (LanServers.Found f : list) {
+            Button b = new Button(this);
+            b.setAllCaps(false);
+            b.setText(f.name + "\n" + f.url);
+            b.setTextColor(getColor(R.color.text));
+            b.setTextSize(15);
+            b.setBackgroundResource(R.drawable.btn_ghost);
+            b.setFocusable(true);
+            b.setOnClickListener(v -> {
+                url.setText(f.url);
+                url.setSelection(url.getText().length());
+                runTest(null);
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, Math.round(56 * dp));
+            lp.topMargin = Math.round(8 * dp);
+            foundBox.addView(b, lp);
+        }
     }
 
     private void setBusy(boolean busy) { test.setEnabled(!busy); connect.setEnabled(!busy); }
