@@ -193,6 +193,8 @@ The web app (including the Android 1.5 WebView on a television) can be driven wi
 
 From 1.9.2, opening a movie or show focuses Resume or Play (not the Similar movies row). Up and down stay inside the details: buttons, then cast or episodes, then Similar movies. The page is laid out at 1920×1080 and scaled to the WebView's CSS size, so a 4K television does not look zoomed in. The wide banner on the Android TV home screen comes from the app (2.0), not this server release.
 
+From 2.0.1, while a film is playing the remote shows the player controls and can reach every button, including the settings gear at the bottom right (quality, picture and speed). Up and down move between the seek bar and the button row; Left and Right walk the row you are on. The settings menu itself is navigable, and Back hides the controls before leaving the player.
+
 ## Phones and admin-only tools (v1.4.9)
 
 Settings work on phones: there is one swipeable line of tabs, each panel is a single column, tables become cards

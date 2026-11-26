@@ -3,6 +3,12 @@
 The full server history (1.0 to 1.9) is in [server/CHANGELOG.md](server/CHANGELOG.md). This file covers the
 repository as a whole and the Android app.
 
+## 2.0.1 -- 2026-11-25
+
+Server 2.0.1 is a quick fix on 2.0. The Android app is unchanged (its WebView uses the same JS). Details are in [server/CHANGELOG.md](server/CHANGELOG.md).
+
+- **2.0.1 — TV player settings are reachable with the remote:** Left and Right walk every player control, including the settings gear at the bottom right (quality, picture and speed). Up and Down move between the seek bar and the button row. The settings menu is navigable; Back closes the menu, then hides the controls, then returns to the details page. When the controls are hidden, Left and Right still skip 10 seconds and OK pauses.
+
 ## 2.0 -- 2026-11-25
 
 Server 2.0 (schema 11) builds on 1.9.2 and adds offline downloads in the Android app. Details are in [server/CHANGELOG.md](server/CHANGELOG.md).

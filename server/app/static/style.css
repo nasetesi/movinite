@@ -1522,7 +1522,9 @@ html.tv-mode .pli-row:focus,html.tv-mode .pli-row:focus-visible{
 html.tv-mode .pl-big:focus,html.tv-mode .pl-big:focus-visible,
 html.tv-mode .pl-cb:focus,html.tv-mode .pl-cb:focus-visible,
 html.tv-mode #pl-close:focus,html.tv-mode #pl-close:focus-visible,
-html.tv-mode #pl-seek:focus,html.tv-mode #pl-seek:focus-visible{
+html.tv-mode #pl-seek:focus,html.tv-mode #pl-seek:focus-visible,
+html.tv-mode .pl-pop button:focus,html.tv-mode .pl-pop button:focus-visible,
+html.tv-mode #pl-vol:focus,html.tv-mode #pl-vol:focus-visible{
   outline:4px solid var(--acc);outline-offset:4px}
 html.tv-mode .side{display:flex!important;position:relative!important;transform:none!important;inset:auto!important;width:230px!important;z-index:5!important}
 html.tv-mode .tabbar,html.tv-mode #menubtn,html.tv-mode .top-brand,html.tv-mode .m-ico{display:none!important}

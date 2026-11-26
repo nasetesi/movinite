@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.1 -- 2026-11-25
+Builds on 2.0, plus D-pad control of the video player on a television:
+
+- **The remote can reach every player control, including the settings gear at the bottom right.** In 2.0, Left and Right while a film was playing often landed on the full-width seek bar and then only skipped ±10 seconds, so Quality, Subtitles, Audio and Full screen on the right of the bar were hard or impossible to reach. Any key now shows the controls. Left and Right walk the current row (the centre Play / Skip buttons, or every button on the bottom bar, including the settings gear). Up and Down move between the seek bar and the button row (and the close button above). While the seek bar is focused, Left and Right still skip ±10 seconds. OK activates the focused control. Each control shows a purple focus ring.
+- **The settings menu is navigable.** Opening Quality / speed, Subtitles or Audio focuses the current option. Up and Down move through the list (Left and Right move between the speed chips). OK selects; Back closes the menu and returns to the gear. The controls stay up while the menu is open or any player control is focused, so the overlay no longer hides mid-adjustment.
+- **Back and hidden-control shortcuts.** When the controls are hidden, Left and Right skip ±10 seconds and OK pauses or resumes (and the controls appear). Back with the controls shown hides them; Back again leaves the player and returns to the details page with Resume or Play focused.
+
+No database schema change. This release does not need a new migrate() snapshot.
+
+
+
 ## 2.0 -- 2026-11-25
 Builds on 1.9.2 (TV remote navigation, TV details focus and the 1920-wide TV layout), plus offline downloads in the Android app (schema 11):
 

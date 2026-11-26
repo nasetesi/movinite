@@ -181,7 +181,7 @@ def wait_for(fn, timeout=90, step=0.3):
 
 def main():
     print("version / schema 11 upgrade")
-    check(__version__ == "2.0", "version is 2.0")
+    check(tuple(int(x) for x in __version__.split(".")) >= (2, 0), "version is 2.0 or later (%s)" % __version__)
     check(db.SCHEMA_VERSION == 11, "schema 11")
     start_server()
     check(db.row("SELECT value FROM meta WHERE key='schema_version'")["value"] == "11", "database migrated to schema 11")

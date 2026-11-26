@@ -3847,7 +3847,7 @@ const OV = (() => {
   const bar = $("#pl-bar");
   // 1.4.12/1.4.13: keep everything up while a menu (Quality / Subtitles / Audio) is open, the seek bar is dragged,
   // or the mouse rests on the top or bottom bar
-  const held = () => overTop || BAR.busy();
+  const held = () => overTop || BAR.busy() || (window.TV && TV.on && document.activeElement && pl.contains(document.activeElement));
   function arm() { clearTimeout(hideT); hideT = null; if (!video.paused) hideT = setTimeout(() => { if (held()) arm(); else hide(); }, 3000); }
   // subtitles move up above the bottom bar while it is shown, and back down when it fades
   function liftCues() {
@@ -4019,6 +4019,7 @@ const BAR = (() => {
   }
   const pick = (sel, v) => { if (sel.value !== v) { sel.value = v; sel.dispatchEvent(new Event("change")); } sync(); };
   function render(kind) {
+    const keep = (document.activeElement && pop.contains(document.activeElement)) ? (document.activeElement.textContent || "") : "";
     pop.innerHTML = "";
     const h = (t) => { const x = document.createElement("h4"); x.textContent = t; pop.appendChild(x); };
     if (kind === "q") {
@@ -4042,6 +4043,11 @@ const BAR = (() => {
       h("Audio");
       [...aud.options].forEach(o => pop.appendChild(item(o.textContent, o.value === aud.value, () => { pick(aud, o.value); closePop(); })));
     }
+    if (keep && window.TV && TV.on && !pop.classList.contains("hidden")) {
+      const again = [...pop.querySelectorAll("button")].find(b => b.textContent === keep)
+        || pop.querySelector('[aria-checked="true"]') || pop.querySelector("button");
+      if (again) { try { TV.focus(again); } catch (e) { try { again.focus({ preventScroll: true }); } catch (e2) {} } }
+    }
   }
   function openPop(kind, anchor) {
     if (popFor === kind) { closePop(); return; }
@@ -4054,13 +4060,15 @@ const BAR = (() => {
     pop.style.bottom = Math.max(8, sr.bottom - br.top + 8) + "px";
     OV.show();
     const first = pop.querySelector('[aria-checked="true"]') || pop.querySelector("button");
-    if (first && !SFX.COARSE) first.focus({ preventScroll: true });
+    if (first && (!SFX.COARSE || (window.TV && TV.on))) first.focus({ preventScroll: true });
   }
   function closePop() {
     if (!popFor) return;
+    const anchor = $(`.pl-bar [aria-expanded="true"]`);
     popFor = null; pop.classList.add("hidden"); pop.innerHTML = "";
     $$(".pl-bar .pl-cb").forEach(b => b.setAttribute("aria-expanded", "false"));
-    if (P && OV.isOn()) OV.arm();
+    if (anchor && window.TV && TV.on) { try { TV.focus(anchor); } catch (e) { try { anchor.focus({ preventScroll: true }); } catch (e2) {} } }
+    else if (P && OV.isOn()) OV.arm();
   }
   function setRate(r) { rate = r; video.defaultPlaybackRate = r; video.playbackRate = r; sync(); }
   video.addEventListener("loadedmetadata", () => { if (video.playbackRate !== rate) video.playbackRate = rate; });
@@ -4687,6 +4695,33 @@ window.openPlaylistSheet = openPlaylistSheet;
    arrow keys, not Tab, and nothing moved focus between posters, the sidebar, or
    the player bar. This module turns those arrows into spatial focus, with a large
    purple focus ring, OK to select, and Back to go back. */
+
+// 2.0.1 tests: open the video player on a short clip without going through the library (fake login only).
+function openDummyPlayer(url) {
+  if (P && typeof closePlayer === "function") { try { closePlayer(); } catch (e) {} }
+  P = { it: { id: 0, title: "Test Film", year: 2024, kind: "movie", duration: 30, position: 0, next: null,
+              playback: { profiles: ["720p"], hires: [], direct: true } },
+        start: 0, mode: "direct", audio: 0, lastSave: 0, triedDirect: false };
+  $("#pl-title").textContent = "Test Film (2024)";
+  const q = $("#pl-quality");
+  if (q) q.innerHTML = '<option value="direct" selected>Original</option><option value="720p">Transcode 720p</option>';
+  const v = video;
+  try { v.pause(); } catch (e) {}
+  v.removeAttribute("src");
+  try { v.load(); } catch (e) {}
+  v.muted = true;
+  v.src = url;
+  const play = () => { v.play().catch(() => {}); };
+  v.addEventListener("loadeddata", play, { once: true });
+  play();
+  $("#player").classList.remove("hidden");
+  $("#player").classList.toggle("paused", !!v.paused);
+  if (typeof BAR !== "undefined" && BAR.sync) BAR.sync();
+  if (typeof OV !== "undefined") OV.show();
+  if (window.TV && TV.afterRoute) TV.afterRoute();
+}
+window.__msOpenDummyPlayer = openDummyPlayer;
+
 const TV = {
   on: false,
   _bound: false,
@@ -4863,7 +4898,14 @@ const TV = {
     let sel;
     if (authOn) sel = "#auth button, #auth input, #auth a, #auth [tabindex='0']";
     else if (modalOn) sel = "#modal button, #modal a, #modal input, #modal select, #modal [tabindex='0'], #modal [data-href]";
-    else if (playerOn) sel = "#player .pl-big, #player .pl-cb:not(.hidden), #player #pl-seek, #player #pl-close, #player .pl-bar button:not(.hidden), #player .pl-bar [tabindex='0'], #player .pl-top button, #player [role='menu'] button, #player .pl-menu button";
+    else if (playerOn) {
+      const z = this.playerControls();
+      const seen = new Set(), out = [];
+      for (const el of [...z.menu, ...z.top, ...z.mid, ...z.seek, ...z.row]) {
+        if (el && !seen.has(el)) { seen.add(el); out.push(el); }
+      }
+      return out;
+    }
     else sel = [
       ".side nav a", "#navlibs a",
       "#tabbar a",
@@ -4937,6 +4979,92 @@ const TV = {
       else if (er.right > sr.right - 16) strip.scrollLeft += er.right - sr.right + 16;
     }
   },
+  playerOn() {
+    const pl = $("#player");
+    return !!(pl && !pl.classList.contains("hidden"));
+  },
+  // While the overlay is fading in, opacity is still 0 for a frame; treat ov-on as visible.
+  playerVisibleChrome(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
+    if (el.closest && el.closest("[hidden]")) return false;
+    let n = el;
+    while (n && n !== document.documentElement) {
+      if (n.classList && n.classList.contains("hidden")) return false;
+      n = n.parentElement;
+    }
+    const st = window.getComputedStyle(el);
+    if (st.display === "none" || st.visibility === "hidden") return false;
+    const pl = $("#player");
+    const on = pl && pl.classList.contains("ov-on") && pl.contains(el);
+    if (!on && st.opacity === "0") return false;
+    const r = el.getBoundingClientRect();
+    return r.width >= 2 && r.height >= 2;
+  },
+  playerControls() {
+    const vis = (el) => this.playerVisibleChrome(el);
+    const pop = $("#pl-pop");
+    const menu = (pop && !pop.classList.contains("hidden")) ? [...pop.querySelectorAll("button")].filter(vis) : [];
+    const top = [$("#pl-close")].filter(vis);
+    const mid = [...document.querySelectorAll("#player .pl-big")].filter(vis);
+    const seek = [$("#pl-seek")].filter(vis);
+    const row = [...document.querySelectorAll("#pl-bar .pl-row .pl-cb")].filter(el => vis(el) && !el.classList.contains("hidden"));
+    const vol = $("#pl-vol");
+    if (vol && vis(vol) && window.getComputedStyle(vol).display !== "none") {
+      const i = row.findIndex(el => el.id === "pl-mute");
+      if (i >= 0) row.splice(i + 1, 0, vol); else row.push(vol);
+    }
+    return { menu, top, mid, seek, row };
+  },
+  moveInPlayer(dir) {
+    const z = this.playerControls();
+    if (z.menu.length) {
+      const items = z.menu;
+      const cur = document.activeElement;
+      const i = items.indexOf(cur);
+      if (dir === "up" || dir === "down") {
+        const n = items[(Math.max(i, 0) + (dir === "down" ? 1 : -1) + items.length) % items.length];
+        if (n) this.focus(n);
+        return true;
+      }
+      // Left / Right stay in the menu: walk speed chips sideways, otherwise stay put
+      if (cur && cur.closest && cur.closest(".sp")) {
+        const chips = [...cur.parentElement.querySelectorAll("button")].filter(el => items.includes(el));
+        const j = chips.indexOf(cur) + (dir === "right" ? 1 : -1);
+        if (j >= 0 && j < chips.length) this.focus(chips[j]);
+      }
+      return true;
+    }
+    const zones = [z.top, z.mid, z.seek, z.row].filter(a => a.length);
+    const all = zones.flat();
+    const cur = document.activeElement && all.includes(document.activeElement) ? document.activeElement : null;
+    if (!cur) { this.focus(this.preferredStart(this.candidates()) || all[0]); return true; }
+    const zi = zones.findIndex(a => a.includes(cur));
+    if (dir === "left" || dir === "right") {
+      if (z.seek.includes(cur)) {
+        if (typeof skip === "function") skip(dir === "right" ? 10 : -10, dir);
+        if (typeof OV !== "undefined") OV.show();
+        this.focus(cur);
+        return true;
+      }
+      const list = zones[zi] || [];
+      const j = list.indexOf(cur) + (dir === "right" ? 1 : -1);
+      if (j >= 0 && j < list.length) this.focus(list[j]);
+      return true;   // do not fall through to the document skip handler
+    }
+    const nj = zi + (dir === "down" ? 1 : -1);
+    if (nj < 0 || nj >= zones.length) return true;
+    const next = zones[nj];
+    const acx = cur.getBoundingClientRect().left + cur.getBoundingClientRect().width / 2;
+    let best = next[0], bestD = Infinity;
+    for (const el of next) {
+      const b = el.getBoundingClientRect();
+      const d = Math.abs((b.left + b.width / 2) - acx);
+      if (d < bestD) { bestD = d; best = el; }
+    }
+    if (best) this.focus(best);
+    return true;
+  },
   preferredStart(items) {
     if (!items.length) return null;
     const cur = document.activeElement;
@@ -4946,7 +5074,7 @@ const TV = {
       return cur;
     }
     const playerOn = $("#player") && !$("#player").classList.contains("hidden");
-    if (playerOn) return $("#pl-pp") || $("#pl-bplay") || items[0];
+    if (playerOn) return $("#pl-bplay") || $("#pl-pp") || items[0];
     if (this.isDetailView()) {
       const act = this.detailPrimaryAction();
       if (act && items.includes(act)) return act;
@@ -5018,6 +5146,11 @@ const TV = {
     const d = document;
     const player = d.getElementById("player");
     if (player && !player.classList.contains("hidden")) {
+      if (typeof BAR !== "undefined" && BAR.popOpen && BAR.popOpen()) {
+        BAR.closePop();
+        return true;
+      }
+      if (player.classList.contains("ov-on") && typeof OV !== "undefined" && OV.hide) { OV.hide(); return true; }
       const c = d.getElementById("pl-close"); if (c) c.click(); else if (typeof closePlayer === "function") closePlayer();
       return true;
     }
@@ -5057,22 +5190,40 @@ const TV = {
     }
     if (this.typing(e) && !center) return;
     if (key === "ArrowRight" || key === "ArrowLeft" || key === "ArrowUp" || key === "ArrowDown") {
-      if (playerOn && typeof OV !== "undefined") OV.show();
-      const onSeek = document.activeElement && document.activeElement.id === "pl-seek";
-      if (playerOn && onSeek && (key === "ArrowLeft" || key === "ArrowRight")) return;
-      const items = this.candidates();
-      const focused = document.activeElement && items.includes(document.activeElement);
-      if (playerOn && !focused) {
+      const dir = key === "ArrowRight" ? "right" : key === "ArrowLeft" ? "left" : key === "ArrowDown" ? "down" : "up";
+      if (playerOn) {
+        const wasOn = $("#player").classList.contains("ov-on");
+        if (typeof OV !== "undefined") OV.show();
         e.preventDefault(); e.stopPropagation();
-        this.focus(this.preferredStart(items));
+        if (!wasOn) {
+          if (dir === "left" && typeof skip === "function") skip(-10, "left");
+          else if (dir === "right" && typeof skip === "function") skip(10, "right");
+          this.focus(this.preferredStart(this.candidates()));
+          return;
+        }
+        this.moveInPlayer(dir);
         return;
       }
-      const dir = key === "ArrowRight" ? "right" : key === "ArrowLeft" ? "left" : key === "ArrowDown" ? "down" : "up";
       if (this.move(dir)) { e.preventDefault(); e.stopPropagation(); }
       return;
     }
     if (center) {
       if (this.typing(e)) return;
+      if (playerOn) {
+        const wasOn = $("#player").classList.contains("ov-on");
+        if (typeof OV !== "undefined") OV.show();
+        e.preventDefault(); e.stopPropagation();
+        if (!wasOn) {
+          if (typeof togglePlay === "function") togglePlay();
+          this.focus(this.preferredStart(this.candidates()));
+          return;
+        }
+        const el = document.activeElement;
+        const items = this.candidates();
+        if (el && items.includes(el)) this.activate(el);
+        else this.focus(this.preferredStart(items));
+        return;
+      }
       const el = document.activeElement;
       const items = this.candidates();
       if (el && items.includes(el)) {
