@@ -54,6 +54,8 @@
     returnEl: null,
     clockTimer: 0,
     heroId: "",
+    previewTimer: 0,
+    _pendingPreview: null,
 
     init() {
       if (!(window.TV && TV.on)) {
@@ -190,8 +192,27 @@
       });
       const after = TV.afterRoute.bind(TV);
       TV.afterRoute = function () {
-        after();
+        // 2.1.2: apply tv-plex-off (and the tighter #view padding) BEFORE focusing
+        // Resume/Play. In 2.1, afterRoute ran first while the home page still had
+        // 560px top padding, scrolled Play into the middle, then collapsing the
+        // padding jumped the page down and hid the button.
+        if (authOpen()) { after(); self.syncAuth(); return; }
         self.syncPage();
+        const detail = TV.isDetailView && TV.isDetailView();
+        const v = document.getElementById("view");
+        if (detail && v) v.scrollTop = 0;
+        after();
+        if (detail) {
+          const pin = () => {
+            if (v) v.scrollTop = 0;
+            const act = TV.detailPrimaryAction && TV.detailPrimaryAction();
+            if (act) {
+              try { act.focus({ preventScroll: true }); } catch (e) {}
+            }
+          };
+          pin();
+          requestAnimationFrame(pin);
+        }
       };
       const onKey = TV.onKey.bind(TV);
       TV.onKey = function (e) {
@@ -204,12 +225,13 @@
         if (self.menuOpen) return self.menuItems();
         const base = candidates();
         if (authOpen()) return base;
+        const filtered = base.filter((el) => !(el.closest && el.closest(".side, .top, .tabbar")));
         if (isHome() && !playerOn()) {
           const extra = [];
           document.querySelectorAll("#tv-tabs button, #tv-rail button").forEach((n) => extra.push(n));
-          return extra.concat(base.filter((el) => !(el.closest && el.closest(".side, .top, .tabbar"))));
+          return extra.concat(filtered);
         }
-        return base;
+        return filtered;
       };
     },
 
@@ -408,7 +430,52 @@
       else this.ensureItems().then(finish);
     },
 
+
+    cancelPreview() {
+      if (this.previewTimer) {
+        clearTimeout(this.previewTimer);
+        this.previewTimer = 0;
+      }
+      this._pendingPreview = null;
+    },
+
+    flushPreview() {
+      const fn = this._pendingPreview;
+      this.cancelPreview();
+      if (fn) fn();
+    },
+
+    armPreview(el) {
+      this.cancelPreview();
+      if (!el) return;
+      const tab = el.closest && el.closest("#tv-tabs button[data-tab]");
+      if (tab) {
+        const name = tab.getAttribute("data-tab");
+        this._pendingPreview = () => { if (document.activeElement === tab) this.setTab(name); };
+        this.previewTimer = setTimeout(() => { this.flushPreview(); }, 250);
+        return;
+      }
+      const item = el.closest && el.closest("#tv-menu button, #tv-menu a.tv-mi");
+      if (!item) return;
+      const act = item.getAttribute("data-act");
+      if (act === "signout") return;
+      if (act === "profile") {
+        if (!this.acctOpen) {
+          this.acctOpen = true;
+          const acct = document.getElementById("tv-acct");
+          if (acct) acct.classList.add("open");
+        }
+        return;
+      }
+      this._pendingPreview = () => {
+        if (document.activeElement !== item && !(item.contains && item.contains(document.activeElement))) return;
+        item.click();
+      };
+      this.previewTimer = setTimeout(() => { this.flushPreview(); }, 250);
+    },
+
     closeMenu(silent) {
+      this.cancelPreview();
       if (!this.menuOpen && !document.documentElement.classList.contains("tv-menu-open")) return;
       this.menuOpen = false;
       this.acctOpen = false;
@@ -479,13 +546,14 @@
           const cur = document.activeElement;
           const i = items.indexOf(cur);
           const n = key === "ArrowDown" ? items[Math.min(items.length - 1, i + 1)] : items[Math.max(0, i - 1)];
-          if (n && window.TV) { e.preventDefault(); e.stopPropagation(); TV.focus(n); }
+          if (n && window.TV) { e.preventDefault(); e.stopPropagation(); TV.focus(n); this.armPreview(n); }
           return true;
         }
         if (key === "Enter" || key === " " || key === "NumpadEnter") {
           const cur = document.activeElement;
           if (cur && (cur.closest && cur.closest("#tv-menu"))) {
             e.preventDefault(); e.stopPropagation();
+            this.cancelPreview();
             cur.click();
             return true;
           }
@@ -504,10 +572,14 @@
       const onRail = cur && cur.closest && cur.closest("#tv-rail");
 
       if ((key === "ArrowLeft" && onCard && this.firstInRow(cur)) ||
-          (key === "ArrowLeft" && onTab && cur === document.querySelector("#tv-tabs button")) ||
+          (key === "ArrowLeft" && onTab) ||
           (key === "ArrowLeft" && onRail)) {
         e.preventDefault(); e.stopPropagation();
         this.openMenu(cur);
+        return true;
+      }
+      if (key === "ArrowUp" && onTab) {
+        e.preventDefault(); e.stopPropagation();
         return true;
       }
       if (key === "ArrowUp" && onCard) {
@@ -516,28 +588,35 @@
         if (st && firstStrip && (st === firstStrip || st.classList.contains("cw"))) {
           e.preventDefault(); e.stopPropagation();
           const tab = document.querySelector("#tv-tabs button.on") || document.querySelector("#tv-tabs button");
-          if (tab && window.TV) TV.focus(tab);
+          if (tab && window.TV) { TV.focus(tab); this.armPreview(tab); }
           return true;
         }
       }
       if (key === "ArrowDown" && onTab) {
         e.preventDefault(); e.stopPropagation();
-        const card = document.querySelector("#view .strip.cw .card, #view .card");
-        if (card && window.TV) TV.focus(card);
+        this.flushPreview();
+        if (!(document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("card"))) {
+          const card = document.querySelector("#view .strip.cw .card, #view .card");
+          if (card && window.TV) TV.focus(card);
+        }
         return true;
       }
-      if ((key === "ArrowLeft" || key === "ArrowRight") && onTab) {
+      if (key === "ArrowRight" && onTab) {
         const tabs = [...document.querySelectorAll("#tv-tabs button")];
         const i = tabs.indexOf(cur);
-        const n = key === "ArrowRight" ? tabs[Math.min(tabs.length - 1, i + 1)] : tabs[Math.max(0, i - 1)];
+        const n = tabs[Math.min(tabs.length - 1, i + 1)];
         if (n && n !== cur) {
           e.preventDefault(); e.stopPropagation();
           if (window.TV) TV.focus(n);
+          this.armPreview(n);
+        } else {
+          e.preventDefault(); e.stopPropagation();
         }
         return true;
       }
       if ((key === "Enter" || key === " ") && onTab) {
         e.preventDefault(); e.stopPropagation();
+        this.cancelPreview();
         cur.click();
         return true;
       }
