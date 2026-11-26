@@ -18,7 +18,7 @@ from . import auth, db, netutil, useractivity
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L
 CODE_LEN = 6
 TTL_S = 10 * 60
-START_LIMIT = 8          # new codes per IP per window
+START_LIMIT = 10         # new codes per IP per window (2.1.1)
 START_WINDOW = 10 * 60
 APPROVE_LIMIT = 20
 APPROVE_WINDOW = 10 * 60
@@ -26,6 +26,7 @@ POLL_LIMIT = 90
 POLL_WINDOW = 10 * 60
 
 _hits: dict = {}
+_live: dict = {}  # ip|ua -> last pending code (in memory only)
 
 
 def _hash(kind, val) -> str:
@@ -70,17 +71,29 @@ def _cleanup(c=None, now=None):
         c.commit()
 
 
-def start(request, base_url: str = "") -> dict:
-    """Create a pending code for the TV. Returns the short code, the poll token, and a QR URL."""
+def start(request, base_url: str = "", force: bool = False) -> dict:
+    """Create a pending code for the TV. Returns the short code, the poll token, and a QR URL.
+
+    2.1.1: rate-limit buckets use netutil.client_ip (trusted_proxies / CF-Connecting-IP).
+    A new code is minted only when force=True or there is no in-memory live code for this
+    (IP, UA) still pending. The password sign-in path is not rate-limited here.
+    """
     ip = netutil.client_ip(request)
+    ua = (request.headers.get("user-agent") or "")[:400]
+    now = int(time.time())
+    live_key = "%s|%s" % (ip or "?", ua)
+    if not force:
+        live = _live.get(live_key)
+        if live and live["expires_at"] > now:
+            out = dict(live)
+            out["expires_in"] = max(0, int(live["expires_at"]) - now)
+            return out
     if not _allowed("start", ip, START_LIMIT, START_WINDOW):
         raise HTTPException(429, "Too many sign-in codes from this address; wait a few minutes")
-    ua = (request.headers.get("user-agent") or "")[:400]
     device = auth._device_name(ua) or "Television"
     if "AndroidTV" in ua or "Android TV" in ua or "BRAVIA" in ua or "AFT" in ua:
         if "TV" not in device and "Television" not in device:
             device = "Android TV"
-    now = int(time.time())
     code = poll = None
     with db.tx() as c:
         _cleanup(c, now)
@@ -100,7 +113,7 @@ def start(request, base_url: str = "") -> dict:
         )
     base = (base_url or "").rstrip("/")
     url = (base + "/pair?code=" + code) if base else ("/pair?code=" + code)
-    return {
+    out = {
         "code": code,
         "display": display(code),
         "poll_token": poll,
@@ -109,6 +122,8 @@ def start(request, base_url: str = "") -> dict:
         "url": url,
         "device": device,
     }
+    _live[live_key] = dict(out)
+    return out
 
 
 def poll(request, token: str) -> dict:

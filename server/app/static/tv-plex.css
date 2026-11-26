@@ -162,7 +162,9 @@ html.tv-mode.tv-plex #tv-top {
   align-items: center;
   z-index: 6;
   pointer-events: auto;
-  background: linear-gradient(180deg, rgba(7,7,10,.55), rgba(7,7,10,0));
+  /* 2.1.1: same dark as the slide-out side menu, not a purple/glass mix */
+  background: rgba(22, 22, 26, .96);
+  border-bottom: 1px solid rgba(255,255,255,.06);
 }
 #tv-tabs {
   display: flex;
@@ -439,3 +441,16 @@ html.tv-mode.tv-plex #view .row-head h3 .muted { display: none !important; }
 html.tv-mode.tv-plex .card { transform-origin: 50% 80%; }
 html.tv-mode.tv-plex #view .row-head { padding-top: 4px; margin-bottom: 28px; }
 html.tv-mode.tv-plex .card { transform-origin: 50% 100%; }
+
+/* 2.1.1: signed-out TV shows only the sign-in / pair screen */
+html.tv-mode.tv-auth #tv-hero,
+html.tv-mode.tv-auth #tv-top,
+html.tv-mode.tv-auth #tv-rail,
+html.tv-mode.tv-auth #tv-menu,
+html.tv-mode.tv-auth #tv-dim { display: none !important; }
+html.tv-mode #auth {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: #07070a;
+}

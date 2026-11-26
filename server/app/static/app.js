@@ -206,18 +206,27 @@ $("#modal").addEventListener("mousedown", e => { if (e.target.id === "modal" && 
 // ---------------------------------------------------------------- auth screens
 function showAuth(html) {
   $("#shell").classList.add("hidden"); $("#auth").classList.remove("hidden"); $("#auth").innerHTML = html;
+  document.documentElement.classList.add("tv-auth");
+  if (window.TVPlex && typeof TVPlex.syncAuth === "function") TVPlex.syncAuth();
+}
+function hideAuth() {
+  $("#auth").classList.add("hidden");
+  document.documentElement.classList.remove("tv-auth");
+  if (window.TVPlex && typeof TVPlex.syncAuth === "function") TVPlex.syncAuth();
 }
 function focusAuth() {
   if (!(window.TV && TV.on)) return;
   TV.init();
   const items = $$("#auth button, #auth input, #auth a, #auth [tabindex='0']").filter(el => TV.visible(el));
-  const prefer = $("#pair-refresh") || $("#pair-approve") || $("#pair-use-pass") || $("#loginf button") || items[0];
+  const err = $("#lerr");
+  const prefer = (err && err.textContent && $("#pair-use-pass"))
+    || $("#pair-refresh") || $("#pair-approve") || $("#pair-use-pass") || $("#loginf button") || items[0];
   if (prefer) TV.focus(prefer);
 }
 
 // 2.0.2: short-code TV sign-in, recent-server list, stay-signed-in note
-const PAIR = { timer: null, token: null, gen: 0 };
-function stopPairPoll() { PAIR.gen++; clearTimeout(PAIR.timer); PAIR.timer = null; PAIR.token = null; }
+const PAIR = { timer: null, token: null, gen: 0, display: null, url: null, expires_at: 0 };
+function stopPairPoll() { PAIR.gen++; clearTimeout(PAIR.timer); PAIR.timer = null; }
 function isTvAuth() { return !!(window.TV && TV.on); }
 function pairCodeFromLocation() {
   try {
@@ -336,19 +345,31 @@ async function startTvPair(force) {
   if (!status) return;
   if (force) status.textContent = "Getting a new code…";
   if (err) err.textContent = "";
-  try {
-    const r = await api("/api/pair/start", { method: "POST", noAuthRedirect: true });
-    if (gen !== PAIR.gen) return;
+  const paint = (r) => {
     PAIR.token = r.poll_token;
-    if (codeEl) codeEl.textContent = r.display || r.code;
-    if (qr) qr.innerHTML = (window.MSQR && r.url) ? MSQR.svg(r.url, 220) : "";
-    if (urlEl) urlEl.textContent = r.url ? r.url.replace(/^https?:\/\//, "") : "";
+    PAIR.display = r.display || r.code;
+    PAIR.url = r.url || "";
+    PAIR.expires_at = r.expires_at || 0;
+    if (codeEl) codeEl.textContent = PAIR.display || "------";
+    if (qr) qr.innerHTML = (window.MSQR && PAIR.url) ? MSQR.svg(PAIR.url, 220) : "";
+    if (urlEl) urlEl.textContent = PAIR.url ? PAIR.url.replace(/^https?:\/\//, "") : "";
     status.textContent = "Waiting for approval on your phone…";
     tickPairPoll(gen);
+  };
+  const now = Date.now() / 1000;
+  if (!force && PAIR.token && PAIR.expires_at > now + 15) {
+    paint({ poll_token: PAIR.token, display: PAIR.display, url: PAIR.url, expires_at: PAIR.expires_at });
+    return;
+  }
+  try {
+    const r = await api("/api/pair/start", { method: "POST", body: force ? { force: true } : {}, noAuthRedirect: true });
+    if (gen !== PAIR.gen) return;
+    paint(r);
   } catch (e) {
     if (gen !== PAIR.gen) return;
     status.textContent = "";
     if (err) err.textContent = e.message || "Couldn't start a sign-in code";
+    focusAuth();
   }
 }
 function tickPairPoll(gen) {
@@ -686,7 +707,7 @@ async function boot() {
   } catch (e) { showLogin(); return; }
   stopPairPoll();
   rememberServer(location.origin, "Movinite" + (ME.version ? " · v" + ME.version : ""));
-  $("#auth").classList.add("hidden"); $("#shell").classList.remove("hidden");
+  hideAuth(); $("#shell").classList.remove("hidden");
   $("#whoami").textContent = ME.username; $("#ver").textContent = "v" + ME.version;
   syncTopH();
   MOB.setup();

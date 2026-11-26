@@ -38,6 +38,10 @@
     const p = document.getElementById("player");
     return !!(p && !p.classList.contains("hidden"));
   }
+  function authOpen() {
+    const a = document.getElementById("auth");
+    return !!(a && !a.classList.contains("hidden"));
+  }
   function libIcon(kind) {
     return kind === "tv" ? ico.tv : kind === "music" ? ico.music : ico.film;
   }
@@ -63,7 +67,14 @@
       this.hook();
       this.tickClock();
       this.clockTimer = setInterval(() => this.tickClock(), 15000);
+      this.syncAuth();
       this.syncPage();
+    },
+
+    syncAuth() {
+      const off = authOpen();
+      document.documentElement.classList.toggle("tv-auth", off);
+      if (off && this.menuOpen) this.closeMenu(true);
     },
 
     inject() {
@@ -184,6 +195,7 @@
       };
       const onKey = TV.onKey.bind(TV);
       TV.onKey = function (e) {
+        if (authOpen()) { onKey(e); return; }
         if (self.onKey(e)) return;
         onKey(e);
       };
@@ -191,6 +203,7 @@
       TV.candidates = function () {
         if (self.menuOpen) return self.menuItems();
         const base = candidates();
+        if (authOpen()) return base;
         if (isHome() && !playerOn()) {
           const extra = [];
           document.querySelectorAll("#tv-tabs button, #tv-rail button").forEach((n) => extra.push(n));
@@ -218,6 +231,8 @@
     },
 
     syncPage() {
+      this.syncAuth();
+      if (authOpen()) return;
       const home = isHome() && !playerOn();
       document.documentElement.classList.toggle("tv-plex-off", !home);
       if (this.menuOpen && !home) this.closeMenu(true);

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.1 -- 2026-11-26
+Builds on 2.1 (schema stays 12; no database upgrade).
+
+- **Signed-out TV shows only the sign-in screen.** In 2.1 the Plex-style home chrome (hero, For You / Recently Added / Libraries tabs, clock, left rail) was drawn on top of the phone-code sign-in card, so the code and most of the card were hidden. A signed-out television now hides that chrome and keeps the sign-in / password screens on top, fully reachable with the remote. The password button stays usable even after a sign-in-code rate limit.
+- **Sign-in codes are requested once per screen.** The TV reuses the current code until it expires (or you tap Get a new code). The server also reuses a still-valid code for the same address and app. New codes are limited to 10 per address per 10 minutes, using the real client address behind a trusted proxy (CF-Connecting-IP, then X-Real-IP, then X-Forwarded-For). Password sign-in is not part of that limit.
+- **The top menu bar matches the side menu.** The header on desktop, phone, and TV (the 2.1 tab bar on a television, and the top bar on other layouts) uses the same dark color as the left sidebar / slide-out menu, instead of the purple glass mix.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update.
+
+
 ## 2.1 -- 2026-11-26
 Builds on 2.0.2. This is a schema 12 release. The first start after an update copies the current database to `data/media-server.db.pre-schema12` (mode 600) before applying the new tables.
 

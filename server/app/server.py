@@ -170,9 +170,9 @@ def login(request: Request, response: Response, body: dict = Body(...)):
 
 
 @app.post("/api/pair/start")
-def pair_start(request: Request):
+def pair_start(request: Request, body: dict = Body(default={})):
     """TV: start a 6-character sign-in code (and QR URL) that a signed-in phone can approve."""
-    return pair.start(request, _base_url(request))
+    return pair.start(request, _base_url(request), force=bool((body or {}).get("force")))
 
 
 def _pair_poll_result(request, response, token):
