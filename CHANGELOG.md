@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.2 -- 2026-11-26
+Builds on 2.1.4. Schema 13 (a `media-server.db.pre-schema13` backup, mode 600, is written once before the bump).
+
+- **Play starts on the first try when remux is not ready.** Remux (copy the original video into HLS) is only offered when a keyframe plan is already cached. If the plan is missing, the player starts a transcode immediately instead of trying remux, getting an error, and falling back. An idle, low-priority job fills missing plans (and yields the moment someone presses play).
+- **Surround sound is kept.** When the client can play AAC, remux copies 5.1 (or 7.1) AAC and transcodes other surround formats (EAC3, AC3, DTS) to AAC 5.1. Transcodes also keep 5.1 AAC. Stereo is used only when the client cannot play surround, or when the source is already stereo.
+- **HDR to SDR tone mapping is available on the GPU, off by default.** Settings > Transcoding has a toggle. When it is on, HDR10 and HLG titles that have to be transcoded use `tonemap_vaapi`. 10-bit SDR (bt709) is never tone-mapped. It is off until it has been checked on a real HDR film (a library sample during planning was 10-bit SDR). Colour tags (`color_transfer`, `color_primaries`, `color_space`) are backfilled in the background.
+- **Seek-bar thumbnails.** While the server is idle it builds a sprite strip (about one picture every 10 seconds) on the GPU. Hovering or dragging the seek bar shows the picture. Cache size is in Settings > Transcoding (default 3 GB; 0 turns it off). Work stops when someone starts playback.
+- **Up Next.** At the end of an episode (or any title with a next item) a card counts down from about 15 seconds with Play now and Cancel. Cancel leaves you on the current title.
+- **4K televisions are not capped at 1080p** just because the web view reports 1920×1080. Auto on a TV treats that as a 4K display so 4K remux and transcode stay available. Settings > Account has Auto / This is a 4K display / This is 1080p or smaller.
+- **An honest start overlay** names the mode (direct play, remux, or transcode) and shows when it is waiting for the first picture. hls.js prefetches the first segment.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update. Desktop and phone layouts are otherwise unchanged. TV remote navigation from 2.1.4 is unchanged (first Left focuses the slim rail, second Left opens the slide-out, the top tabs are selectable).
+
+
 ## 2.1.4 -- 2026-11-26
 Builds on 2.1.3 (schema stays 12; no database upgrade).
 
@@ -18,6 +32,9 @@ Builds on 2.1.2 (schema stays 12; no database upgrade).
 - **The check limit is now per code and real client address**, and is large enough for a full 10-minute code (400 checks per code+address in 10 minutes, with a separate coarser cap per address). The real client address behind a trusted proxy is still used (CF-Connecting-IP, then X-Real-IP, then X-Forwarded-For).
 - **Sign in with a username and password stays available.** Opening the password form stops the approval checks, so a "too many checks" message can no longer appear on (or block) the password screen. Password sign-in is not part of the check limit.
 
+The installed 2.0.2 Android TV app works as-is; this is a server update.
+
+
 ## 2.1.2 -- 2026-11-26
 Builds on 2.1.1 (schema stays 12; no database upgrade).
 
@@ -27,12 +44,18 @@ Builds on 2.1.1 (schema stays 12; no database upgrade).
 - **Remote: Up from the tabs stays put; Left opens the menu.** From the first poster row, Up still reaches the tabs; Down from the tabs still reaches the posters; Right still moves between tabs.
 - **Opening a title on a television focuses Resume or Play again.** In 2.1 the Plex home's tall top padding was still applied when the movie page first focused Play, then dropped away, which scrolled the page down and hid the button (the same symptom as 1.9.2). 2.1.2 applies the movie-page layout first, pins the page at the top, and focuses Resume or Play.
 
+The installed 2.0.2 Android TV app works as-is; this is a server update.
+
+
 ## 2.1.1 -- 2026-11-26
 Builds on 2.1 (schema stays 12; no database upgrade).
 
 - **Signed-out TV shows only the sign-in screen.** In 2.1 the Plex-style home chrome (hero, For You / Recently Added / Libraries tabs, clock, left rail) was drawn on top of the phone-code sign-in card, so the code and most of the card were hidden. A signed-out television now hides that chrome and keeps the sign-in / password screens on top, fully reachable with the remote. The password button stays usable even after a sign-in-code rate limit.
 - **Sign-in codes are requested once per screen.** The TV reuses the current code until it expires (or you tap Get a new code). The server also reuses a still-valid code for the same address and app. New codes are limited to 10 per address per 10 minutes, using the real client address behind a trusted proxy (CF-Connecting-IP, then X-Real-IP, then X-Forwarded-For). Password sign-in is not part of that limit.
 - **The top menu bar matches the side menu.** The header on desktop, phone, and TV (the 2.1 tab bar on a television, and the top bar on other layouts) uses the same dark color as the left sidebar / slide-out menu, instead of the purple glass mix.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update.
+
 
 ## 2.1 -- 2026-11-26
 Builds on 2.0.2. This is a schema 12 release. The first start after an update copies the current database to `data/media-server.db.pre-schema12` (mode 600) before applying the new tables.

@@ -77,6 +77,7 @@
   </div>
   <div class="pl-stage" id="pl-stage">
     <video id="video" playsinline controlslist="nofullscreen nodownload"></video>
+    <div class="pl-wait hidden" id="pl-wait" aria-live="polite"><div class="pl-wait-box"><span class="spin" aria-hidden="true"></span><div class="pl-wait-t" id="pl-wait-t">Starting…</div><div class="pl-wait-s" id="pl-wait-s"></div></div></div>
     <!-- 1.7.5: custom cue overlay (WebView often ignores ::cue; fetch+paint so captions stay after HLS/seek) -->
     <div class="pl-cues hidden" id="pl-cues" aria-live="off"></div>
     <!-- 1.4.11: tap the picture to show / hide the big buttons; double-tap the left / right side to skip -->
@@ -89,6 +90,20 @@
       </div>
     </div>
     <div class="pl-ss hidden" id="pl-ss" aria-live="off"></div>
+    <div class="pl-upnext hidden" id="pl-upnext" role="dialog" aria-label="Up next">
+      <div class="pl-upnext-card">
+        <div class="pl-upnext-art" id="pl-upnext-art"></div>
+        <div class="pl-upnext-body">
+          <div class="pl-upnext-k">Up next</div>
+          <div class="pl-upnext-title" id="pl-upnext-title"></div>
+          <div class="pl-upnext-sub" id="pl-upnext-sub"></div>
+          <div class="pl-upnext-acts">
+            <button class="btn" type="button" id="pl-upnext-play" tabindex="0">Play now</button>
+            <button class="btn ghost" type="button" id="pl-upnext-cancel" tabindex="0">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="pl-hint hidden" id="pl-hint" role="status"></div>
     <div class="pl-rip left" id="pl-rip-l" aria-hidden="true"><b></b></div>
     <div class="pl-rip right" id="pl-rip-r" aria-hidden="true"><b></b></div>
@@ -98,7 +113,7 @@
       <div class="pl-seek" id="pl-seek" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
         <div class="pl-rail"><div class="pl-buf" id="pl-buf"></div><div class="pl-prog" id="pl-prog"></div></div>
         <div class="pl-knob" id="pl-knob"></div>
-        <div class="pl-tip hidden" id="pl-tip">0:00</div>
+        <div class="pl-tip hidden" id="pl-tip"><div class="pl-tip-th hidden" id="pl-tip-th"></div><span id="pl-tip-t">0:00</span></div>
       </div>
       <div class="pl-row">
         <button class="pl-cb pl-bplay" id="pl-bplay" type="button" title="Play / Pause (Space)" aria-label="Pause"><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg></button>
