@@ -1075,6 +1075,23 @@ def _overlay_common(it, m):
     it["vote_count"] = m["vote_count"]
     it["backdrop"] = m["backdrop"]
     it["tmdb"] = True
+    if m.get("runtime"):
+        it["runtime"] = m["runtime"]
+    if m.get("certification") and not it.get("certification"):
+        it["certification"] = m.get("certification")
+    extra = {}
+    try:
+        extra = json.loads(m["extra"] or "{}") if m.get("extra") else {}
+    except Exception:
+        extra = {}
+    if extra.get("logo"):
+        it["logo"] = extra["logo"]
+    if it.get("tmdb_id") and not it.get("cast"):
+        names = [r["name"] for r in db.rows(
+            "SELECT p.name FROM movie_cast mc JOIN people p ON p.id=mc.person_id "
+            "WHERE mc.tmdb_id=? ORDER BY mc.ord LIMIT 5", (it["tmdb_id"],))]
+        if names:
+            it["cast"] = names
 
 
 def show_meta(library_id, show):

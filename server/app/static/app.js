@@ -723,14 +723,19 @@ const ICO_LOCAL = ico(`<path d="M4.25 3.35h15.5A1.7 1.7 0 0 1 21.45 5.05v8.15A1.
 function libGroups(libs) {
   const out = [], by = {};
   for (const l of (libs || LIBS)) {
-    const k = l.share_id ? "s" + l.share_id : "local";
-    if (!by[k]) { by[k] = { key: k, share: l.share_id ? (l.share || { id: l.share_id, name: "Share" }) : null, libs: [] }; out.push(by[k]); }
+    const k = l.is_remote ? "r" + (l.peer_id || l.peer_name || l.id) : (l.share_id ? "s" + l.share_id : "local");
+    if (!by[k]) {
+      by[k] = { key: k, share: l.is_remote
+        ? { id: l.peer_id, name: l.peer_name || "Shared", kind: "peer", remote: (l.share && l.share.remote) || "" }
+        : (l.share_id ? (l.share || { id: l.share_id, name: "Share" }) : null), libs: [] };
+      out.push(by[k]);
+    }
     by[k].libs.push(l);
   }
-  out.forEach(g => { g.name = g.share ? (g.share.name || "Network share") : "This server"; });
+  out.forEach(g => { g.name = g.share ? (g.share.name || (g.share.kind === "peer" ? "Shared" : "Network share")) : "This server"; });
   return out;
 }
-function libsGrouped(libs) { return (libs || LIBS).some(l => l.share_id); }
+function libsGrouped(libs) { return (libs || LIBS).some(l => l.share_id || l.is_remote); }
 // the group's status = its worst library (they share one mount, so normally all the same)
 const HSEV = { offline: 4, stuck: 3, slow: 2, checking: 1, online: 0 };
 function groupHealthLib(g) {
@@ -2766,13 +2771,156 @@ async function showJoin(token) {
   };
 }
 
+
+// ---------------------------------------------------------------- 2.1 Settings > Sharing
+async function viewSharing() {
+  const d = await api("/api/sharing");
+  const me = d.me || {};
+  const libs = d.libraries || [];
+  const peers = d.peers || [];
+  const codes = d.codes || [];
+  const remote = d.remote || [];
+  const outgoing = peers.filter(p => p.status === "active" && (p.direction === "outgoing" || p.direction === "both") && (p.grants || []).length);
+  const fmtLim = (g) => [g.max_quality, g.max_streams ? g.max_streams + " streams" : "", g.can_download ? "downloads on" : ""].filter(Boolean).join(" · ");
+  const peerCard = (p) => `<div class="panel share-card" data-peer="${p.id}">
+    <div class="row-head"><h3 style="margin:0">${esc(p.name || "Server")}</h3>
+      <span class="muted">${esc(p.fingerprint || "")}${p.live_streams ? " · " + p.live_streams + " live" : ""}</span></div>
+    <p class="muted" style="margin:0 0 8px">${esc(p.url || "No address")} · ${esc(p.status)}</p>
+    ${(p.grants || []).map(g => `<div class="share-grant">${esc(g.name)} <span class="muted">${esc(fmtLim(g))}</span></div>`).join("")}
+    <div class="row-head" style="margin-top:10px"><button class="btn danger" data-stop="${p.id}">Stop sharing</button></div>
+  </div>`;
+  const remCard = (r) => `<div class="panel share-card" data-remote="${r.id}">
+    <div class="row-head"><h3 style="margin:0">${esc(r.name)}</h3><span class="chip">${esc(r.peer_name || "Shared")}</span></div>
+    <p class="muted" style="margin:0 0 8px">${r.item_count || 0} titles · ${r.online ? "online" : "offline"}${r.last_sync ? " · synced " + agoShort(Math.max(0, (Date.now()/1000) - r.last_sync)) : ""}</p>
+    <div class="row-head"><button class="btn" data-rsync="${r.id}">Sync now</button>
+      <button class="btn danger" data-rremove="${r.id}">Remove</button></div>
+  </div>`;
+  const pending = codes.filter(c => c.status === "pending");
+  return `<div class="panel"><div class="row-head"><h3 style="margin:0">This server</h3></div>
+      <p class="help" style="margin-top:0">Share a library with another Movinite server by sending a one-time link. After that, the two servers trust each other with a signed identity (no central service). Public addresses must use HTTPS; a LAN address may use plain HTTP.</p>
+      <form id="share-name" class="row-head" style="gap:8px;align-items:center">
+        <label class="muted">Name</label>
+        <input name="name" value="${esc(me.name || "")}" maxlength="80" style="max-width:16em">
+        <button class="btn" type="submit">Save</button>
+        <span class="muted">${esc(me.fingerprint || "")}</span>
+      </form>
+    </div>
+    <div class="panel"><div class="row-head"><h3 style="margin:0">Libraries I share</h3>
+      <button class="btn" id="share-make">Share libraries</button></div>
+      ${outgoing.length ? outgoing.map(peerCard).join("") : `<p class="muted">You are not sharing any libraries yet.</p>`}
+      ${pending.length ? `<p class="muted" style="margin-top:12px">Unused share links</p>` + pending.map(c => `<div class="share-grant">${(c.libraries||[]).map(l=>esc(l.name)).join(", ")} · expires ${c.expires_at ? new Date(c.expires_at*1000).toLocaleString() : ""} <button class="btn small danger" data-revcode="${c.id}">Revoke</button></div>`).join("") : ""}
+    </div>
+    <div class="panel"><div class="row-head"><h3 style="margin:0">Shared with me</h3>
+      <button class="btn" id="share-add">Add a shared library</button></div>
+      ${remote.length ? remote.map(remCard).join("") : `<p class="muted">No libraries from other servers yet.</p>`}
+    </div>
+    <div id="share-wiz"></div>`;
+}
+function bindSharing() {
+  const box = $("#share-wiz");
+  const redraw = () => route();
+  const form = $("#share-name");
+  if (form) form.onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api("/api/sharing/name", { method: "PUT", body: { name: form.name.value } }); toast("Server name saved"); redraw(); }
+    catch (err) { toast(err.message || "Could not save the name", true); }
+  };
+  const make = $("#share-make");
+  if (make) make.onclick = async () => {
+    const d = await api("/api/sharing");
+    const libs = d.libraries || [];
+    box.innerHTML = `<div class="panel"><h3 style="margin-top:0">Share libraries</h3>
+      <p class="help">Tick the libraries, choose whether the other server can only stream or also download, then create a link. It works once and expires in 48 hours.</p>
+      ${libs.map(l => `<label class="aw-row"><input type="checkbox" name="slib" value="${l.id}"> ${esc(l.name)}</label>`).join("") || "<p class='muted'>No libraries yet.</p>"}
+      <p><label class="muted">Permission</label>
+        <select id="share-perm"><option value="stream">Stream</option><option value="download">Stream + Download</option></select>
+        <label class="muted" style="margin-left:12px">Max quality</label>
+        <select id="share-q"><option>1080p</option><option>720p</option><option>480p</option><option value="original">Original / 4K</option></select>
+      </p>
+      <button class="btn" id="share-go">Create share link</button>
+      <button class="btn ghost" id="share-cancel">Cancel</button>
+      <div id="share-result"></div>
+    </div>`;
+    $("#share-cancel").onclick = () => { box.innerHTML = ""; };
+    $("#share-go").onclick = async () => {
+      const ids = $$("input[name=slib]:checked").map(x => +x.value);
+      if (!ids.length) { toast("Pick at least one library", true); return; }
+      try {
+        const r = await api("/api/sharing/codes", { method: "POST", body: {
+          libraries: ids, perms: $("#share-perm").value, max_quality: $("#share-q").value
+        }});
+        const link = r.link || "";
+        $("#share-result").innerHTML = `<p>Send this link or the code <b class="share-code">${esc(r.code)}</b></p>
+          <p><input readonly value="${esc(link)}" style="width:100%" id="share-link"><button class="btn" id="share-copy">Copy link</button></p>
+          <p class="muted">This server's fingerprint is ${esc(r.fingerprint || "")}. The code expires in 48 hours and can be used once.</p>`;
+        $("#share-copy").onclick = async () => { try { await navigator.clipboard.writeText(link); toast("Link copied"); } catch (_) { $("#share-link").select(); } };
+      } catch (err) { toast(err.message || "Could not create a link", true); }
+    };
+  };
+  const add = $("#share-add");
+  if (add) add.onclick = () => {
+    box.innerHTML = `<div class="panel"><h3 style="margin-top:0">Add a shared library</h3>
+      <p class="help">Paste the share link, or the other server's address and the code.</p>
+      <p><input id="share-in-link" placeholder="https://media.example.com/#/share/7K3Q-M9PX-2TQA" style="width:100%"></p>
+      <p class="muted">or</p>
+      <p><input id="share-in-url" placeholder="https://media.example.com" style="width:60%">
+         <input id="share-in-code" placeholder="7K3Q-M9PX-2TQA" style="width:35%"></p>
+      <button class="btn" id="share-preview">Continue</button>
+      <button class="btn ghost" id="share-cancel2">Cancel</button>
+      <div id="share-prev"></div>
+    </div>`;
+    $("#share-cancel2").onclick = () => { box.innerHTML = ""; };
+    $("#share-preview").onclick = async () => {
+      try {
+        const r = await api("/api/sharing/accept", { method: "POST", body: {
+          link: $("#share-in-link").value, url: $("#share-in-url").value, code: $("#share-in-code").value
+        }});
+        const h = r.hello || {};
+        const offered = (h.offered || []).map(l => `${esc(l.name)} (${l.item_count || 0})`).join(", ");
+        $("#share-prev").innerHTML = `<p><b>${esc(h.name || "Other server")}</b> wants to share: ${offered || "no libraries"}.</p>
+          <p class="muted">Fingerprint ${esc(h.fingerprint || "")}</p>
+          <button class="btn" id="share-confirm">Accept</button>`;
+        $("#share-confirm").onclick = async () => {
+          try {
+            await api("/api/sharing/accept", { method: "POST", body: {
+              link: $("#share-in-link").value, url: r.url || $("#share-in-url").value, code: $("#share-in-code").value,
+              confirm: true, my_url: location.origin
+            }});
+            toast("Libraries added");
+            redraw();
+          } catch (err) { toast(err.message || "Could not accept", true); }
+        };
+      } catch (err) { toast(err.message || "Could not reach the other server", true); }
+    };
+  };
+  $$("[data-stop]").forEach(b => b.onclick = async () => {
+    if (!confirm("Stop sharing with this server? Playback tickets fail right away.")) return;
+    try { await api("/api/sharing/peers/" + b.dataset.stop + "/stop", { method: "POST", body: {} }); toast("Sharing stopped"); redraw(); }
+    catch (err) { toast(err.message || "Could not stop sharing", true); }
+  });
+  $$("[data-revcode]").forEach(b => b.onclick = async () => {
+    try { await api("/api/sharing/codes/" + b.dataset.revcode, { method: "DELETE" }); toast("Link revoked"); redraw(); }
+    catch (err) { toast(err.message || "Could not revoke", true); }
+  });
+  $$("[data-rremove]").forEach(b => b.onclick = async () => {
+    if (!confirm("Remove this shared library from this server?")) return;
+    try { await api("/api/sharing/remote/" + b.dataset.rremove, { method: "DELETE" }); toast("Removed"); redraw(); }
+    catch (err) { toast(err.message || "Could not remove", true); }
+  });
+  $$("[data-rsync]").forEach(b => b.onclick = async () => {
+    try { await api("/api/sharing/remote/" + b.dataset.rsync + "/sync", { method: "POST", body: {} }); toast("Catalog updated"); redraw(); }
+    catch (err) { toast(err.message || "Sync failed", true); }
+  });
+}
+
+
 async function viewSettings(tab) {
   // 1.4.9: non-admins only see their own tabs.  1.5.5: Poster Sounds has its own tab (for everyone).
   // 1.6: fixed left-to-right order; viewers get the same relative order; an unknown / hidden tab opens the first one
   // 1.9: + Activity (users) and Email (Connect Gmail); "Scan activity" is now "Scans"
   const tq = {}; if (tab && tab.includes("?")) { new URLSearchParams(tab.split("?")[1]).forEach((v, k) => { tq[k] = v; }); tab = tab.split("?")[0]; }
   const ALL_TABS = [["libraries", "Libraries", 1], ["scans", "Scans", 1], ["activity", "Activity", 1], ["sounds", "Poster Sounds", 0], ["metadata", "Metadata", 1],
-    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["downloads", "Downloads", 1], ["email", "Email", 1], ["account", "My account", 0], ["system", "System", 1]];
+    ["transcoding", "Transcoding", 1], ["users", "Users", 1], ["downloads", "Downloads", 1], ["sharing", "Sharing", 1], ["email", "Email", 1], ["account", "My account", 0], ["system", "System", 1]];
   const tabs = ALL_TABS.filter(t => ME.is_admin || !t[2]).map(t => [t[0], t[1]]);
   if (!tabs.some(t => t[0] === tab)) tab = tabs[0][0];
   let html = `<h2>Settings</h2><div class="tabs set-tabs" role="tablist" aria-label="Settings sections">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? "on" : ""}" data-href="#/settings/${k}">${n}</button>`).join("")}</div>`;
@@ -2991,6 +3139,10 @@ async function viewSettings(tab) {
     await viewUsers(v, html);
   } else if (tab === "downloads") {
     await viewOfflineAdmin(v, html);
+  } else if (tab === "sharing") {
+    html += await viewSharing();
+    v.innerHTML = html;
+    bindSharing();
   } else if (tab === "email") {
     await viewEmail(v, html, tq);
   } else if (tab === "activity") {

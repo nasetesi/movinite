@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from . import config
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 -- 1.4: categories
@@ -251,7 +251,7 @@ CREATE TABLE IF NOT EXISTS offline_jobs (
     created_at INTEGER, started_at INTEGER, finished_at INTEGER, last_access INTEGER,
     UNIQUE(item_id, profile, audio)
 );
--- 2.0.2: TV sign-in codes (idempotent; schema stays 11 so 2.1 can still be 12)
+-- 2.0.2: TV sign-in codes (idempotent; schema stayed 11 so 2.1 could be 12)
 CREATE TABLE IF NOT EXISTS pair_codes (
     id INTEGER PRIMARY KEY,
     code_hash TEXT NOT NULL UNIQUE,
@@ -263,6 +263,83 @@ CREATE TABLE IF NOT EXISTS pair_codes (
     user_id INTEGER, approved_at INTEGER, approver_ip TEXT
 );
 CREATE INDEX IF NOT EXISTS pair_codes_status ON pair_codes(status, expires_at);
+
+-- 2.1: library sharing between Movinite servers (schema 12)
+CREATE TABLE IF NOT EXISTS peers (
+    id INTEGER PRIMARY KEY,
+    server_id TEXT NOT NULL UNIQUE,
+    name TEXT,
+    url TEXT,
+    pubkey TEXT NOT NULL,
+    direction TEXT NOT NULL,          -- outgoing (I share to them) | incoming (they share to me) | both
+    status TEXT NOT NULL,             -- active | paused | revoked
+    created_at INTEGER,
+    last_seen INTEGER,
+    last_error TEXT,
+    proxy INTEGER NOT NULL DEFAULT 0  -- 1 = relay playback through this server
+);
+CREATE TABLE IF NOT EXISTS share_codes (
+    id INTEGER PRIMARY KEY,
+    code_hash TEXT NOT NULL UNIQUE,   -- sha256 of the one-time code; the raw code is never stored
+    libraries TEXT NOT NULL,          -- JSON list of library ids
+    perms TEXT NOT NULL,              -- stream | download
+    limits TEXT,
+    label TEXT,
+    created_by INTEGER,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER,
+    used_by_peer INTEGER,
+    revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS share_codes_exp ON share_codes(expires_at);
+CREATE TABLE IF NOT EXISTS peer_grants (
+    peer_id INTEGER NOT NULL,
+    library_id INTEGER NOT NULL,
+    can_stream INTEGER NOT NULL DEFAULT 1,
+    can_download INTEGER NOT NULL DEFAULT 0,
+    max_quality TEXT DEFAULT '1080p',
+    max_streams INTEGER DEFAULT 2,
+    max_mbps INTEGER DEFAULT 20,
+    allow_transcode INTEGER DEFAULT 1,
+    PRIMARY KEY(peer_id, library_id)
+);
+CREATE TABLE IF NOT EXISTS remote_libraries (
+    id INTEGER PRIMARY KEY,
+    peer_id INTEGER NOT NULL,
+    remote_library_id INTEGER NOT NULL,
+    name TEXT,
+    kind TEXT,
+    local_name TEXT,
+    visible_to TEXT,                  -- JSON user ids, NULL = everyone
+    last_sync INTEGER,
+    item_count INTEGER,
+    hidden_at INTEGER,
+    UNIQUE(peer_id, remote_library_id)
+);
+CREATE TABLE IF NOT EXISTS remote_items (
+    id INTEGER PRIMARY KEY,
+    remote_library_id INTEGER NOT NULL,
+    remote_item_id INTEGER NOT NULL,
+    kind TEXT,
+    title TEXT,
+    year INTEGER,
+    tmdb_id INTEGER,
+    sort_title TEXT,
+    duration REAL,
+    poster TEXT,
+    backdrop TEXT,
+    overview TEXT,
+    runtime INTEGER,
+    certification TEXT,
+    rating REAL,
+    genres TEXT,
+    added_at INTEGER,
+    updated_at INTEGER,
+    UNIQUE(remote_library_id, remote_item_id)
+);
+CREATE INDEX IF NOT EXISTS remote_items_lib ON remote_items(remote_library_id, sort_title);
+CREATE INDEX IF NOT EXISTS remote_items_title ON remote_items(title);
 """
 
 _local = threading.local()
@@ -366,6 +443,8 @@ def migrate():
             _backup_db(c, 10)             # 1.9: snapshot before roles / invites / hashed sessions (idempotent)
         if old_pre and int(old_pre[0]) < 11:
             _backup_db(c, 11)             # 2.0: snapshot before devices / offline downloads (idempotent)
+        if old_pre and int(old_pre[0]) < 12:
+            _backup_db(c, 12)             # 2.1: snapshot before server-to-server sharing (idempotent)
         c.executescript(SCHEMA)
         for table, col, typ in ADDED_COLUMNS:
             have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}

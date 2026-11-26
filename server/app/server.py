@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 
 from . import artwork, auth, browse, folderart, liborder, playlists, preload, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
-from . import gmail, mailer, guard, invites, keys, netutil, offline, useractivity, pair, discover
+from . import gmail, mailer, guard, invites, keys, netutil, offline, useractivity, pair, discover, fed
 from .version import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -50,6 +50,7 @@ def _startup():
     preload.start_loop(lambda: _stop)          # 1.7.9: subtitle / remux / opening-clip caches
     threading.Thread(target=offline.loop, args=(lambda: _stop,), daemon=True, name="offline-jobs").start()   # 2.0
     threading.Thread(target=lambda: discover.start(lambda: _stop), daemon=True, name="mdns").start()          # 2.0.2
+    threading.Thread(target=lambda: fed.sync_loop(lambda: _stop), daemon=True, name="fed-sync").start()      # 2.1
     log.info("Movinite (media-server) v%s started; data in %s", __version__, config.DATA_DIR)
 
 
@@ -880,7 +881,9 @@ def _lib_out(lib):
 
 @app.get("/api/libraries")
 def list_libraries(u=Depends(auth.require_user)):
-    return [_lib_out(l) for l in db.rows("SELECT * FROM libraries " + liborder.ORDER_SQL)]
+    out = [_lib_out(l) for l in db.rows("SELECT * FROM libraries " + liborder.ORDER_SQL)]
+    out.extend(fed.list_remote_libraries(user=u))
+    return out
 
 
 @app.post("/api/libraries/health")
@@ -1631,6 +1634,8 @@ def delete_tag(tag_id: int, u=Depends(auth.require_admin)):
 def library_items(lib_id: int, sort: str = "poster", q: str = "", offset: int = 0, limit: int = 200,
                   view: str = "", filter: str = "", genres: str = "", decade: str = "", collection: int = 0,
                   tag: int = 0, cert: str = "", facets: int = 0, u=Depends(auth.require_user)):
+    if lib_id < 0:
+        return fed.library_items(lib_id, q=q, offset=offset, limit=limit, user=u)
     lib = db.row("SELECT * FROM libraries WHERE id=?", (lib_id,))
     if not lib:
         raise HTTPException(404, "No such library")
@@ -1947,6 +1952,20 @@ def home(u=Depends(auth.require_user)):
                 rows.append({"genre": g["genre"], "count": g["n"], "items": _with_progress(its, u["id"])})
             entry["genre_rows"] = rows
             libs.append(entry)
+    try:
+        tmdb.enrich(cont)
+        for e in libs:
+            tmdb.enrich(e.get("items") or [])
+            for r in e.get("smart_rows") or []:
+                tmdb.enrich(r.get("items") or [])
+            for r in e.get("genre_rows") or []:
+                tmdb.enrich(r.get("items") or [])
+    except Exception:
+        log.exception("home enrich")
+    try:
+        libs.extend(fed.home_sections(u))
+    except Exception:
+        log.exception("home remotes")
     return {"continue": cont, "libraries": libs}
 
 
@@ -1992,6 +2011,10 @@ def search(q: str, u=Depends(auth.require_user)):
     albums = al2[:40]
     tracks = db.rows("SELECT " + ITEM_COLS + " FROM items WHERE media_type='audio' AND title LIKE ? ORDER BY sort_title LIMIT 40",
                      (like,))
+    try:
+        items = list(items) + fed.search_items(q, u)
+    except Exception:
+        log.exception("search remotes")
     return {"items": _with_progress(items, u["id"]), "episodes": _with_progress(eps, u["id"]), "shows": shows,
             "albums": albums, "tracks": tracks}
 
@@ -2016,6 +2039,11 @@ def _dedupe_shows(shows):
 
 
 def _get_item(item_id):
+    if item_id < 0:
+        it = fed.local_item(-item_id)
+        if not it:
+            raise HTTPException(404, "No such item")
+        return it
     it = db.row("SELECT * FROM items WHERE id=?", (item_id,))
     if not it:
         raise HTTPException(404, "No such item")
@@ -2092,8 +2120,35 @@ def playback_info(it, cap=None):
             "device_cap": cap, "source_fits_cap": src_fits}
 
 
+
+def _remote_item_detail(item_id, u):
+    it = fed.local_item(-item_id, u)
+    if not it:
+        raise HTTPException(404, "No such item")
+    out = dict(it)
+    out["filename"] = None
+    out["path"] = None
+    out["folder"] = None
+    out["tags"] = []
+    out["pins"] = {}
+    out["tmdb_enabled"] = settings.tmdb_enabled()
+    out["playback"] = {"remote": True, "direct": False,
+                       "src": "/api/items/%d/hls/1080p/index.m3u8" % item_id}
+    out["library"] = fed._remote_lib_out(fed.get_remote_lib(it["library_id"], u))
+    p = db.row("SELECT position, watched FROM progress WHERE user_id=? AND item_id=?", (u["id"], item_id))
+    out["position"] = p["position"] if p else 0
+    out["watched"] = bool(p["watched"]) if p else False
+    out["next"] = None
+    out["versions"] = []
+    out["copies"] = 0
+    out["similar"] = []
+    return out
+
+
 @app.get("/api/items/{item_id}")
 def item_detail(item_id: int, disp: int = 0, dec: int = 0, nocap: int = 0, u=Depends(auth.require_user)):
+    if item_id < 0:
+        return _remote_item_detail(item_id, u)
     it = _get_item(item_id)
     disp, dec, nocap_b = transcode.parse_cap_args(disp, dec, nocap)
     cap = None if nocap_b else transcode.device_cap_base(disp, dec)
@@ -2446,6 +2501,14 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
                  hevc_el: str = "", mkv: str = "", ac3: str = "", eac3: str = "", hlsjs: str = "",
                  disp: int = 0, dec: int = 0, nocap: int = 0,
                  u=Depends(auth.require_user)):
+    if item_id < 0:
+        info = fed.start_remote_play(u, item_id, profile, request)
+        if info.get("proxy"):
+            return RedirectResponse(info["src"], status_code=302)
+        # Direct: a tiny playlist that points the player at the other server
+        body = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n%s\n" % info["src"]
+        return PlainTextResponse(body, media_type="application/vnd.apple.mpegurl",
+                                 headers={"Cache-Control": "private, no-store"})
     it = _get_item(item_id)
     if not os.path.exists(it["path"]):
         raise HTTPException(404, "File is not reachable (share offline?)")
@@ -2848,6 +2911,191 @@ async def _asset_cache_headers(request: Request, call_next):
     return resp
 
 
+
+# ---- 2.1 library sharing (federation) ---------------------------------------
+def _base_url(request: Request) -> str:
+    # Prefer the public origin the client used (trusting the already-configured proxy headers).
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return "%s://%s" % (proto, host)
+
+
+@app.get("/api/fed/hello")
+def fed_hello(c: str = ""):
+    return fed.hello_public(c)
+
+
+@app.post("/api/fed/pair")
+async def fed_pair(request: Request):
+    raw = await request.body()
+    try:
+        body = json.loads(raw.decode() or "{}")
+    except Exception:
+        raise HTTPException(400, "Bad JSON")
+    request.state._fed_body = raw
+    return fed.pair_incoming(request, body)
+
+
+@app.get("/api/fed/libraries")
+async def fed_libraries(request: Request):
+    peer, _hid, _pub = fed.verify_signed(request, b"", require_peer=True)
+    return fed.fed_libraries(peer)
+
+
+@app.get("/api/fed/libraries/{lib_id}/items")
+async def fed_lib_items(lib_id: int, request: Request, since: int = 0, offset: int = 0, limit: int = 200):
+    peer, _hid, _pub = fed.verify_signed(request, b"", require_peer=True)
+    return fed.fed_library_items(peer, lib_id, since=since, offset=offset, limit=limit)
+
+
+@app.get("/api/fed/items/{item_id}")
+async def fed_item(item_id: int, request: Request):
+    peer, _hid, _pub = fed.verify_signed(request, b"", require_peer=True)
+    return fed.fed_item(peer, item_id)
+
+
+@app.get("/api/fed/thumb/{name}")
+async def fed_thumb(name: str, request: Request):
+    peer, _hid, _pub = fed.verify_signed(request, b"", require_peer=True)
+    return fed.fed_thumb(peer, name)
+
+
+@app.post("/api/fed/tickets")
+async def fed_tickets(request: Request):
+    raw = await request.body()
+    try:
+        body = json.loads(raw.decode() or "{}")
+    except Exception:
+        raise HTTPException(400, "Bad JSON")
+    peer, _hid, _pub = fed.verify_signed(request, raw, require_peer=True)
+    return fed.issue_ticket(peer, body)
+
+
+@app.options("/api/fed/play/{ticket}/{name:path}")
+def fed_play_options(ticket: str, name: str, request: Request):
+    return fed.cors_preflight(request)
+
+
+@app.get("/api/fed/play/{ticket}/index.m3u8")
+def fed_play_index(ticket: str, request: Request):
+    return fed.play_index(ticket, request)
+
+
+@app.get("/api/fed/play/{ticket}/{name:path}")
+def fed_play_part(ticket: str, name: str, request: Request):
+    return fed.play_part(ticket, name, request)
+
+
+@app.post("/api/fed/leave")
+async def fed_leave(request: Request):
+    raw = await request.body()
+    peer, _hid, _pub = fed.verify_signed(request, raw, require_peer=True)
+    return fed.leave_incoming(peer)
+
+
+@app.get("/api/sharing")
+def sharing_overview(u=Depends(auth.require_admin)):
+    return {
+        "me": fed.identity_payload(),
+        "peers": fed.list_peers(),
+        "codes": fed.list_codes(),
+        "remote": fed.list_remote_libraries(),
+        "libraries": [{"id": l["id"], "name": l["name"], "kind": l["kind"]}
+                      for l in db.rows("SELECT id, name, kind FROM libraries " + liborder.ORDER_SQL)],
+    }
+
+
+@app.put("/api/sharing/name")
+def sharing_name(body: dict = Body(...), u=Depends(auth.require_admin)):
+    return fed.set_server_name(u, body.get("name") or "")
+
+
+@app.post("/api/sharing/codes")
+def sharing_create_code(request: Request, body: dict = Body(...), u=Depends(auth.require_admin)):
+    return fed.create_share_code(u, body, _base_url(request))
+
+
+@app.get("/api/sharing/codes")
+def sharing_list_codes(u=Depends(auth.require_admin)):
+    return fed.list_codes()
+
+
+@app.delete("/api/sharing/codes/{code_id}")
+def sharing_revoke_code(code_id: int, u=Depends(auth.require_admin)):
+    return fed.revoke_code(code_id, u)
+
+
+@app.post("/api/sharing/accept")
+def sharing_accept(body: dict = Body(...), u=Depends(auth.require_admin)):
+    return fed.accept_share(u, body)
+
+
+@app.get("/api/sharing/peers")
+def sharing_peers(u=Depends(auth.require_admin)):
+    return fed.list_peers()
+
+
+@app.post("/api/sharing/peers/{peer_id}/stop")
+def sharing_stop(peer_id: int, body: dict = Body(None), u=Depends(auth.require_admin)):
+    return fed.stop_sharing(u, peer_id, (body or {}).get("library_id"))
+
+
+@app.put("/api/sharing/peers/{peer_id}/grants")
+def sharing_grants(peer_id: int, body: dict = Body(...), u=Depends(auth.require_admin)):
+    return fed.set_grants(u, peer_id, body.get("grants") or [])
+
+
+@app.put("/api/sharing/peers/{peer_id}/proxy")
+def sharing_proxy(peer_id: int, body: dict = Body(...), u=Depends(auth.require_admin)):
+    return fed.set_proxy(u, peer_id, bool(body.get("proxy")))
+
+
+@app.delete("/api/sharing/remote/{lib_id}")
+def sharing_remove_remote(lib_id: int, u=Depends(auth.require_admin)):
+    return fed.remove_remote(u, lib_id)
+
+
+@app.put("/api/sharing/remote/{lib_id}/visible")
+def sharing_visible(lib_id: int, body: dict = Body(...), u=Depends(auth.require_admin)):
+    return fed.set_visible(u, lib_id, body.get("users"))
+
+
+@app.post("/api/sharing/remote/{lib_id}/sync")
+def sharing_sync(lib_id: int, u=Depends(auth.require_admin)):
+    rl = fed.get_remote_lib(lib_id, u)
+    if not rl:
+        raise HTTPException(404, "No such shared library")
+    fed.sync_peer(rl["peer_id"])
+    return {"ok": True, "library": fed._remote_lib_out(fed.get_remote_lib(lib_id, u))}
+
+
+@app.post("/api/sharing/play")
+def sharing_play(request: Request, body: dict = Body(...), u=Depends(auth.require_user)):
+    return fed.start_remote_play(u, int(body.get("item_id") or 0), body.get("profile") or "1080p", request, _base_url(request))
+
+
+@app.get("/api/sharing/proxy/{ticket}/index.m3u8")
+def sharing_proxy_index(ticket: str, request: Request, u=Depends(auth.require_user)):
+    return fed.proxy_part(ticket, "index.m3u8", request)
+
+
+@app.get("/api/sharing/proxy/{ticket}/{name:path}")
+def sharing_proxy_part(ticket: str, name: str, request: Request, u=Depends(auth.require_user)):
+    return fed.proxy_part(ticket, name, request)
+
+
+@app.get("/api/logo/{name}")
+def logo_file(name: str, u=Depends(auth.require_user)):
+    """Optional typographic / studio logo for the TV hero (sha1-named PNG in data/logos)."""
+    if not re.match(r"^[0-9a-f]{40}\.(png|svg|webp)$", name or ""):
+        raise HTTPException(404)
+    path = config.DATA_DIR / "logos" / name
+    if not path.is_file():
+        raise HTTPException(404)
+    return FileResponse(str(path), media_type="image/png" if name.endswith(".png") else "image/svg+xml")
+
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
@@ -2884,6 +3132,8 @@ def service_worker():
         "/static/manifest.webmanifest?v=%s" % __version__,
         "/static/icon-192.png?v=%s" % __version__,
         "/static/favicon-32.png?v=%s" % __version__,
+        "/static/tv-plex.css?v=%s" % __version__,
+        "/static/tv-plex.js?v=%s" % __version__,
     ]
     body = (
         "const V=%r;\n"

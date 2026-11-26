@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1 -- 2026-11-26
+Builds on 2.0.2. This is a schema 12 release. The first start after an update copies the current database to `data/media-server.db.pre-schema12` (mode 600) before applying the new tables.
+
+- **Plex-style TV home.** On a television, the home screen uses a full-bleed backdrop of the focused title, with the name (a typographic logo when one is stored, otherwise large text), year, runtime, genres, rating, a short synopsis and cast, a slim icon rail on the left, pill tabs (For You, Recently Added, Libraries) and a clock. Focused posters are outlined and slightly enlarged. Desktop and phone layouts are unchanged.
+- **Slide-out menu.** Left from the rows opens a rounded menu over a dimmed home screen: your profile (with Sign out), My Lists, Search, Home, a Libraries list, and Settings. Each library is shown as *Name / source* — the local share name, or the other server's name for a shared library. Up/Down move, OK selects, Right or Back closes the menu and returns focus. The 2.0.2 account / Sign out path still works.
+- **Library sharing between Movinite servers.** In Settings > Sharing, an admin shares one or more libraries by creating a one-time link and code (48 hours, single use; only a hash is stored). The other server pastes the link, checks the fingerprint, and accepts. After that, the two servers authenticate with Ed25519-signed HTTP requests (this server's existing identity key). Pairing is one-way; share back with the same flow the other way. HTTPS is required for public addresses; plain HTTP is allowed only for a LAN address an admin types, for example `http://192.0.2.10:8099`.
+- **Shared libraries** appear in the library list, search, home rows and the TV menu with the source server's name. Playback uses a short-lived ticket: the player streams directly from the owner when it can, or through this server when the owner is only reachable on the LAN (toggle per peer). The owner can cap quality and simultaneous streams, and can stop sharing at any time (tickets fail immediately). Downloads by the other server's users stay off unless you turn them on.
+- **Android TV app.** The installed 2.0.2 Android TV app works as-is. The new layout and sharing are served by the server in the WebView, so you do not need a new APK for 2.1.
+
+
 ## 2.0.2 -- 2026-11-25
 Builds on 2.0.1, plus easier sign-in on a television:
 
@@ -9,7 +19,7 @@ Builds on 2.0.1, plus easier sign-in on a television:
 - **The remote can move through the new screens** (Get a new code, Sign in with a password, Approve / Don't approve), with the same purple focus ring as the rest of TV mode.
 - **The remote can reach Sign out.** Up from the first row of posters (or from Home in the sidebar) moves to the header. Left and Right walk search, poster sounds, the status pill and the account button in the top-right corner. OK opens the account menu; Up and Down move through My account, Settings, poster sounds and Sign out; Back closes the menu and returns to the account button. Settings > My account also has a Sign out button. The Sign out link at the bottom of the sidebar is reachable too.
 
-**Android app:** the installed 2.0 app (`movinite-android-v2.0.apk`) already keeps the server address and the session cookie, so "stay signed in" works with this server release alone. It does **not** show the code-and-QR screen on first sign-in or after sign-out: when there is no session it opens the native username/password form and never loads the web page. First-run server discovery (listing Movinite servers on the LAN) also needs the app: the 2.0 Setup screen has no network discovery. A source patch for app 2.0.2 (TV loads the web sign-in when signed out; Setup lists LAN servers; remote-friendly) is included with this release. Android app 2.0.2 (`versionCode` 9) includes these changes. Typing a password on the TV web page is still available as a fallback.
+**Android app:** the installed 2.0 app (`movinite-android-v2.0.apk`) already keeps the server address and the session cookie, so "stay signed in" works with this server release alone. It does **not** show the code-and-QR screen on first sign-in or after sign-out: when there is no session it opens the native username/password form and never loads the web page. First-run server discovery (listing Movinite servers on the LAN) also needs the app: the 2.0 Setup screen has no network discovery. A source patch for app 2.0.2 (TV loads the web sign-in when signed out; Setup lists LAN servers; remote-friendly) is included with this release. It is not a signed APK — use the 2.0 app until a signed 2.0.2 build is issued. Typing a password on the TV web page is still available as a fallback.
 
 **Schema stays 11.** A `pair_codes` table is created on startup (`CREATE TABLE IF NOT EXISTS`); there is no migrate() snapshot and no `pre-schema12` file. Library sharing in 2.1 can still use schema 12.
 
