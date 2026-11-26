@@ -227,7 +227,9 @@ def me(u=Depends(auth.require_user)):
             "role_label": auth.ROLE_LABEL.get(role), "email": u.get("email"),
             "all_libraries": u.get("libs") is None, "session_id": u.get("sid"),
             "must_change_pw": bool(u["must_change_pw"]), "version": __version__, "show_status": _status_visible(u),
-            "can_download": offline.can_download(u) and offline.cfg("offline_enabled")}
+            "can_download": offline.can_download(u) and offline.cfg("offline_enabled"),
+            "auto_skip_intro": bool(u.get("auto_skip_intro")),
+            "auto_skip_credits": bool(u.get("auto_skip_credits"))}
 
 
 def _status_visible(u):
@@ -254,6 +256,24 @@ def change_my_password(request: Request, response: Response, body: dict = Body(.
     _set_cookie(request, response, _new_session(request, u["id"]))
     useractivity.record("password_changed", user=u, ip=netutil.client_ip(request))
     return {"ok": True}
+
+
+@app.put("/api/me/prefs")
+def set_my_prefs(body: dict = Body(...), u=Depends(auth.require_user)):
+    """2.3: per-user auto-skip for intro and credits."""
+    fields = {}
+    for k in ("auto_skip_intro", "auto_skip_credits"):
+        if k in body:
+            v = body[k]
+            fields[k] = 1 if v in (True, 1, "1", "true", "on", "yes") else 0
+    if fields:
+        with db.tx() as c:
+            sets = ", ".join("%s=?" % k for k in fields)
+            c.execute("UPDATE users SET %s WHERE id=?" % sets, list(fields.values()) + [u["id"]])
+        auth.invalidate_cache()
+    full = db.row("SELECT auto_skip_intro, auto_skip_credits FROM users WHERE id=?", (u["id"],)) or {}
+    return {"auto_skip_intro": bool(full.get("auto_skip_intro")),
+            "auto_skip_credits": bool(full.get("auto_skip_credits"))}
 
 
 # ---------------------------------------------------------------------------
@@ -2091,12 +2111,21 @@ def playback_info(it, cap=None):
         hdr = transcode.hdr_info(it)
     subtitle_tracks = []
     for i, s in enumerate(ext_subs):
-        subtitle_tracks.append({"key": "e%d" % i, "label": s["label"] or "External", "lang": None})
+        subtitle_tracks.append({"key": "e%d" % i, "label": s["label"] or "External", "lang": None,
+                                "kind": "text", "burn": False})
+    _img = {"hdmv_pgs_subtitle": "PGS", "pgssub": "PGS", "dvd_subtitle": "VobSub", "dvdsub": "VobSub",
+            "dvb_subtitle": "DVB", "dvbsub": "DVB", "xsub": "XSUB"}
     for s in subs:
+        label = s.get("title") or s.get("lang") or "Track %d" % s["index"]
         if s.get("text"):
-            subtitle_tracks.append({"key": "s%d" % s["index"],
-                                    "label": s.get("title") or s.get("lang") or "Track %d" % s["index"],
-                                    "lang": s.get("lang")})
+            subtitle_tracks.append({"key": "s%d" % s["index"], "label": label, "lang": s.get("lang"),
+                                    "kind": "text", "burn": False})
+        else:
+            kind = _img.get((s.get("codec") or "").lower(), "image")
+            if kind not in label:
+                label = "%s (%s)" % (label, kind)
+            subtitle_tracks.append({"key": "s%d" % s["index"], "label": label, "lang": s.get("lang"),
+                                    "kind": "image", "burn": True, "codec": s.get("codec")})
     eligible = it["media_type"] == "video" and transcode.remux_eligible(it)
     # 2.2: only advertise remux when a keyframe plan is already cached, so play does not
     # try remux, 409, then transcode.
@@ -2209,6 +2238,11 @@ def item_detail(item_id: int, disp: int = 0, dec: int = 0, nocap: int = 0, u=Dep
                      "(season > ? OR (season = ? AND episode > ?)) ORDER BY season, episode LIMIT 1",
                      (it["library_id"], it["show"], it["season"] or 0, it["season"] or 0, it["episode"] or 0))
     out["next"] = nxt
+    try:
+        from . import skipintro
+        out["markers"] = skipintro.public_markers(item_id)
+    except Exception:
+        out["markers"] = {"intro_start": None, "intro_end": None, "credits_start": None, "status": "pending"}
     lib = db.row("SELECT id, name, kind FROM libraries WHERE id=?", (it["library_id"],))
     out["library"] = lib
     try:
@@ -2492,7 +2526,7 @@ def _profile_ok(profile):
         raise HTTPException(409, "2K and 4K need hardware transcoding")
 
 
-def _player_query(audio, player, start=None, surr=0):
+def _player_query(audio, player, start=None, surr=0, burn=0):
     q = "?audio=%d" % audio
     if player:
         q += "&player=%s" % transcode.normalize_player(player)
@@ -2500,6 +2534,8 @@ def _player_query(audio, player, start=None, surr=0):
         q += "&start=%d" % start
     if int(surr or 0) >= 6:
         q += "&surr=6"
+    if int(burn or 0) > 0:
+        q += "&burn=%d" % int(burn)
     return q
 
 
@@ -2507,7 +2543,7 @@ def _player_query(audio, player, start=None, surr=0):
 def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, start: int = 0,
                  player: str = "", caps: str = "", hevc: str = "", hevc_mse: str = "",
                  hevc_el: str = "", mkv: str = "", ac3: str = "", eac3: str = "", hlsjs: str = "",
-                 disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0,
+                 disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
                  u=Depends(auth.require_user)):
     if item_id < 0:
         info = fed.start_remote_play(u, item_id, profile, request)
@@ -2537,20 +2573,22 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
         bounds = transcode.remux_bounds(it)
         if not bounds:
             raise HTTPException(409, "This file cannot be remuxed; use a transcode quality")
+        if int(burn or 0) > 0:
+            raise HTTPException(409, "Image subtitles need a transcode; remux cannot burn them in")
     need_init = transcode.split_profile(profile)[1] == "hevc" or (profile == "remux" and transcode.remux_codec(it) == "hevc")
-    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr)) if need_init else None
+    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn)) if need_init else None
     # 1.7.9: start ffmpeg as soon as the playlist is requested, so the first segment overlaps the player's next RTT
     if profile != "audio":
         try:
-            s = transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr)
+            s = transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr, burn=burn)
             transcode.kickoff(s, max(0, start))
         except ValueError:
             pass
-    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr), bounds, init), media_type="application/vnd.apple.mpegurl",
+    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn), bounds, init), media_type="application/vnd.apple.mpegurl",
                              headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
-def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0, surr=0):
+def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0, surr=0, burn=0):
     it = _get_item(item_id)
     dpx, kpx, no_cap = transcode.parse_cap_args(disp, dec, nocap)
     new, device_cap, changed = transcode.clamp_profile(profile, it, dpx, kpx, no_cap)
@@ -2559,20 +2597,20 @@ def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0, 
     profile = new
     _profile_ok(profile)
     try:
-        return transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr)
+        return transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr, burn=burn)
     except ValueError as e:
         raise HTTPException(409, "This file cannot be remuxed" if profile == "remux" else str(e))
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/init.mp4")
 def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player: str = "",
-             disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0,
+             disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
              u=Depends(auth.require_user)):
     """1.5.3: init segment of an HEVC (fMP4) stream (transcode or HEVC remux)."""
     it = _get_item(item_id)
     if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr)
+    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr, burn)
     p = s.get_init(max(0, start))
     if not p:
         raise HTTPException(500, "Transcode failed" + (": " + s.failed if s.failed else ""))
@@ -2581,18 +2619,18 @@ def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player:
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.m4s")
 def hls_segment_m4s(item_id: int, profile: str, n: int, audio: int = 0, player: str = "",
-                    disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0,
+                    disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
                     u=Depends(auth.require_user)):
     it = _get_item(item_id)
     if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    return hls_segment(item_id, profile, n, audio, u, player, disp, dec, nocap, surr)
+    return hls_segment(item_id, profile, n, audio, u, player, disp, dec, nocap, surr, burn)
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.ts")
 def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(auth.require_user),
-                player: str = "", disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0):
-    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr)
+                player: str = "", disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0):
+    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr, burn)
     if n < 0 or n >= s.nseg:
         raise HTTPException(404)
     p = s.get_segment(n)
@@ -2652,6 +2690,13 @@ def _mask(key):
         return ""
     return key[:4] + "..." + key[-4:] if len(key) > 12 else "set"
 
+
+
+@app.get("/api/items/{item_id}/markers")
+def item_markers(item_id: int, u=Depends(auth.require_user)):
+    _get_item(item_id)
+    from . import skipintro
+    return skipintro.public_markers(item_id)
 
 
 @app.get("/api/items/{item_id}/trickplay")

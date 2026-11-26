@@ -3131,6 +3131,10 @@ async function viewSettings(tab) {
       <label for="d4k">This display</label>
       <select id="d4k">${[["auto","Auto (recommended)"],["on","This is a 4K display"],["off","This is 1080p or smaller"]].map(([k,l]) => `<option value="${k}" ${display4kPref()===k?"selected":""}>${l}</option>`).join("")}</select>
       <div class="help">A 4K television's web view often reports 1920×1080. Auto treats a TV as 4K so 4K remux and transcode stay available. Saved in this browser.</div></div>`;
+    const asi = !!(ME && ME.auto_skip_intro), asc = !!(ME && ME.auto_skip_credits);
+    html += `<div class="panel" style="max-width:560px"><h3 style="margin-top:0">Playback</h3>
+      <label class="aw-row" for="askip-i"><span class="sw"><input type="checkbox" id="askip-i" ${asi ? "checked" : ""}><i></i></span><span class="aw-txt"><b>Auto-skip intros</b><span class="aw-hint">When an opening is detected, jump past it. A Skip Intro button still appears if this is off. Saved for your account on every device.</span></span></label>
+      <label class="aw-row" for="askip-c"><span class="sw"><input type="checkbox" id="askip-c" ${asc ? "checked" : ""}><i></i></span><span class="aw-txt"><b>Auto-skip credits</b><span class="aw-hint">When the credits start, show the Up Next card (or jump to the end if there is no next episode). Saved for your account.</span></span></label></div>`;
     html += `<div class="panel" style="max-width:560px"><h3 style="margin-top:0">Change password</h3><div class="form">
       <label>Current password</label><input type="password" id="cp"><label>New password</label><input type="password" id="np" autocomplete="new-password">
       <label>Repeat</label><input type="password" id="np2" autocomplete="new-password"></div><div class="err" id="cperr"></div>
@@ -3141,6 +3145,16 @@ async function viewSettings(tab) {
     accountExtras(v).then(() => accountDownloads(v)).catch(() => {});
     $("#qcap-on").onchange = () => { setQualityCap($("#qcap-on").checked); toast($("#qcap-on").checked ? "Quality will be capped to this screen" : "Screen cap off on this device"); };
     if ($("#d4k")) $("#d4k").onchange = () => { setDisplay4k($("#d4k").value); toast($("#d4k").value === "on" ? "This display is treated as 4K" : $("#d4k").value === "off" ? "This display is treated as 1080p or smaller" : "Display size is automatic"); };
+    const saveSkip = async (el, key, onMsg, offMsg) => {
+      const on = el.checked;
+      try {
+        const r = await api("/api/me/prefs", { method: "PUT", body: { [key]: on ? 1 : 0 } });
+        if (ME) { ME.auto_skip_intro = r.auto_skip_intro; ME.auto_skip_credits = r.auto_skip_credits; }
+        toast(on ? onMsg : offMsg);
+      } catch (e) { el.checked = !on; toast(e.message, true); }
+    };
+    if ($("#askip-i")) $("#askip-i").onchange = () => saveSkip($("#askip-i"), "auto_skip_intro", "Intros will be skipped automatically", "Intros will not be skipped automatically");
+    if ($("#askip-c")) $("#askip-c").onchange = () => saveSkip($("#askip-c"), "auto_skip_credits", "Credits will open Up Next automatically", "Credits will not be skipped automatically");
     $("#cpsave").onclick = async () => {
       if ($("#np").value !== $("#np2").value) { $("#cperr").textContent = "Passwords do not match"; return; }
       try { await api("/api/me/password", { method: "POST", body: { current_password: $("#cp").value, new_password: $("#np").value } }); toast("Password changed"); $("#cperr").textContent = ""; ["#cp", "#np", "#np2"].forEach(s => $(s).value = ""); }
@@ -3840,6 +3854,8 @@ function capQuery() {
   if (dec) parts.push("dec=" + dec);
   if (!qualityCapOn()) parts.push("nocap=1");
   if (clientCaps().surr) parts.push("surr=6");
+  const b = burnStreamIndex();
+  if (b) parts.push("burn=" + b);
   return parts.join("&");
 }
 function itemCapQuery() {
@@ -3850,6 +3866,20 @@ function itemCapQuery() {
   if (dec) q.push("dec=" + dec);
   if (!qualityCapOn()) q.push("nocap=1");
   return q.length ? "?" + q.join("&") : "";
+}
+function subByKey(key) {
+  if (!P || !P.it || !P.it.playback || !key) return null;
+  return (P.it.playback.subtitles || []).find(s => s.key === key) || null;
+}
+function isBurnSub(key) {
+  const s = subByKey(key);
+  return !!(s && (s.burn || s.kind === "image"));
+}
+function burnStreamIndex() {
+  const key = ($("#pl-subs") && $("#pl-subs").value) || (P && P.subKey) || "";
+  if (!isBurnSub(key)) return 0;
+  const n = parseInt(String(key).replace(/^s/, ""), 10);
+  return (isFinite(n) && n > 0) ? n : 0;
 }
 function canRemux(pb) {
   if (!pb || !pb.remux) return false;
@@ -3991,6 +4021,89 @@ const UP = {
   }
 };
 
+function loadMarkers(it) {
+  if (!it || !it.id) return;
+  const apply = (j) => { if (P && P.it && P.it.id === it.id && j) P.it.markers = j; };
+  if (it.markers) apply(it.markers);
+  api("/api/items/" + it.id + "/markers").then(apply).catch(() => {});
+}
+
+// 2.3: Skip Intro / Skip Credits (ties into the Up Next card)
+const SK = {
+  autoIntro: false, autoCred: false, shownIntro: false, shownCred: false, poll: 0,
+  reset() {
+    this.shownIntro = false; this.shownCred = false;
+    this.autoIntro = !!(typeof ME !== "undefined" && ME && ME.auto_skip_intro);
+    this.autoCred = !!(typeof ME !== "undefined" && ME && ME.auto_skip_credits);
+    this.hideIntro(); this.hideCredits();
+    if (this.poll) { clearInterval(this.poll); this.poll = 0; }
+    if (P && P.it && P.it.markers && P.it.markers.status === "pending") {
+      this.poll = setInterval(() => { if (!P) { clearInterval(SK.poll); SK.poll = 0; return; } loadMarkers(P.it); }, 20000);
+    }
+  },
+  markers() { return (P && P.it && P.it.markers) || {}; },
+  hideIntro() { const b = $("#pl-skip-intro"); if (b) b.classList.add("hidden"); this.shownIntro = false; },
+  hideCredits() { const b = $("#pl-skip-credits"); if (b) b.classList.add("hidden"); this.shownCred = false; },
+  hide() { this.hideIntro(); this.hideCredits(); },
+  inIntro(t) {
+    const m = this.markers();
+    return m.intro_start != null && m.intro_end != null && t >= m.intro_start - 0.25 && t < m.intro_end - 0.4;
+  },
+  inCredits(t, d) {
+    const m = this.markers();
+    if (m.credits_start == null) return false;
+    return t >= m.credits_start - 0.25 && (!d || t < d - 0.2);
+  },
+  skipIntro() {
+    if (!P) return;
+    const m = this.markers();
+    if (m.intro_end == null) return;
+    video.currentTime = Math.max(0, m.intro_end);
+    P.lastSave = 0;
+    this.hideIntro();
+    try { if (typeof OV !== "undefined") OV.show(); } catch (e) {}
+  },
+  skipCredits() {
+    if (!P) return;
+    this.hideCredits();
+    if (P.it && P.it.next) {
+      if (typeof UP !== "undefined") UP.show(15);
+      try { if (isTvMode() && $("#pl-upnext-play")) $("#pl-upnext-play").focus(); } catch (e) {}
+    } else {
+      const d = (isFinite(video.duration) && video.duration > 0) ? video.duration : (P.it.duration || 0);
+      if (d) video.currentTime = Math.max(0, d - 0.4);
+    }
+  },
+  tick() {
+    if (!P) return;
+    const t = video.currentTime || 0;
+    const d = (isFinite(video.duration) && video.duration > 0) ? video.duration : (P.it.duration || 0);
+    const m = this.markers();
+    if (this.inIntro(t)) {
+      if (this.autoIntro && !P.didAutoIntro) {
+        P.didAutoIntro = true;
+        this.skipIntro();
+        return;
+      }
+      if (!this.shownIntro) {
+        const b = $("#pl-skip-intro");
+        if (b) { b.classList.remove("hidden"); this.shownIntro = true; try { if (isTvMode()) { if (typeof TV !== "undefined" && TV.focus) TV.focus(b); else b.focus(); } } catch (e) {} }
+      }
+    } else if (this.shownIntro) this.hideIntro();
+    if (this.inCredits(t, d)) {
+      if (this.autoCred && !P.didAutoCred) {
+        P.didAutoCred = true;
+        this.skipCredits();
+        return;
+      }
+      if (!this.shownCred) {
+        const b = $("#pl-skip-credits");
+        if (b) { b.classList.remove("hidden"); this.shownCred = true; try { if (isTvMode() && !this.shownIntro) { if (typeof TV !== "undefined" && TV.focus) TV.focus(b); else b.focus(); } } catch (e) {} }
+      }
+    } else if (this.shownCred) this.hideCredits();
+  }
+};
+
 async function playItem(id, startAt, opts) {
   opts = opts || {};
   try { probeDecoders(); } catch (e) {}   // 1.7.9: do not block first open on the decoder probe
@@ -4045,6 +4158,11 @@ async function playItem(id, startAt, opts) {
     const capOpt = [...q.options].find(o => o.value === mode || o.value.split(".")[0] === capB);
     if (capOpt && !/capped/i.test(capOpt.textContent)) capOpt.textContent = capOpt.textContent + " · Auto-capped to " + capB;
   }
+  const wantSub = (function(){ try { return localStorage.getItem("pl-subs") || ""; } catch (e) { return ""; } })();
+  const subIsBurn = (P.it.playback.subtitles || []).some(s => s.key === wantSub && (s.burn || s.kind === "image"));
+  if (subIsBurn && (mode === "direct" || mode === "remux")) {
+    mode = savedHi || (hi[0] || pb.profiles[0]);
+  }
   const a = $("#pl-audio");
   a.innerHTML = pb.audio_streams.map((s, i) => `<option value="${i}">${esc((s.title || s.lang || "Audio " + (i + 1)) + " · " + s.codec + (s.channels ? " " + s.channels + "ch" : ""))}</option>`).join("");
   a.classList.toggle("hidden", pb.audio_streams.length < 2);
@@ -4055,7 +4173,7 @@ async function playItem(id, startAt, opts) {
     const want = localStorage.getItem("pl-subs");
     if (want && [...sb.options].some(o => o.value === want)) sb.value = want;
   } catch (e) {}
-  if (pb.subtitles.length) prefetchSubs(pb.subtitles.map(s => s.key));
+  if (pb.subtitles.length) prefetchSubs(pb.subtitles.filter(s => !s.burn && s.kind !== "image").map(s => s.key));
   $("#pl-next").classList.toggle("hidden", !it.next);
   video.controls = false;          // 1.4.13: our own bar replaces the browser's controls
   BAR.closePop();
@@ -4065,6 +4183,8 @@ async function playItem(id, startAt, opts) {
   OV.show();     // 1.4.11: show the big buttons for a moment so they're discoverable
   loadTrickplay(it.id);
   UP.reset();
+  SK.reset();
+  loadMarkers(it);
 }
 
 function setStatus(t) {
@@ -4139,6 +4259,7 @@ function startStream(mode, at) {
       video.addEventListener("loadedmetadata", function onMeta() { video.removeEventListener("loadedmetadata", onMeta); if (at) video.currentTime = at; });
     } else { setStatus("This browser cannot play HLS"); return; }
   }
+  if (P) P.burning = isBurnSub(subKey);
   if (subKey) addSubTrack(subKey);
   video.play().catch(() => {});
 }
@@ -4250,6 +4371,7 @@ async function addSubTrack(key, opts) {
   $$("track", video).forEach(t => t.remove());
   SUB.key = key || "";
   try { if (key) localStorage.setItem("pl-subs", key); else if (!opts.keep) localStorage.setItem("pl-subs", ""); } catch (e) {}
+  if (isBurnSub(key)) { SUB.cues = []; SUB.waiting = false; paintCues(); return; }
   if (!key || !P) { SUB.cues = []; SUB.waiting = false; paintCues(); return; }
   const ck = subCacheKey(P.it.id, key);
   if (SUB.cache[ck]) { SUB.cues = SUB.cache[ck]; SUB.waiting = false; paintCues(); return; }
@@ -4265,9 +4387,32 @@ async function addSubTrack(key, opts) {
   }
 }
 ["timeupdate", "seeked", "seeking", "loadedmetadata"].forEach(ev => video.addEventListener(ev, paintCues));
-$("#pl-subs").onchange = () => addSubTrack($("#pl-subs").value);
+$("#pl-subs").onchange = () => {
+  const key = $("#pl-subs").value;
+  const wasBurn = !!(P && P.burning);
+  const nowBurn = isBurnSub(key);
+  try { if (key) localStorage.setItem("pl-subs", key); else localStorage.setItem("pl-subs", ""); } catch (e) {}
+  if (P && (wasBurn || nowBurn)) {
+    const pb = P.it.playback;
+    let mode = P.mode;
+    if (nowBurn && (mode === "direct" || mode === "remux")) {
+      const hi = (pb.hires || []).map(p => hiresMode(p));
+      mode = hi[0] || pb.profiles[0];
+    }
+    P.burning = nowBurn;
+    startStream(mode, video.currentTime || P.start);
+    return;
+  }
+  addSubTrack(key);
+};
 $("#pl-quality").onchange = () => {
-  const m = $("#pl-quality").value; localStorage.setItem("quality", m === "direct" ? "auto" : m);
+  let m = $("#pl-quality").value; localStorage.setItem("quality", m === "direct" ? "auto" : m);
+  if (isBurnSub($("#pl-subs").value) && (m === "direct" || m === "remux")) {
+    const pb = P.it.playback;
+    const hi = (pb.hires || []).map(p => hiresMode(p));
+    m = hi[0] || pb.profiles[0];
+    toast("Image subtitles are burned in, so this title is transcoded");
+  }
   startStream(m, video.currentTime || P.start);
 };
 $("#pl-audio").onchange = () => {
@@ -4287,7 +4432,7 @@ function saveProgress(ended) {
 video.addEventListener("timeupdate", () => { if (P && Date.now() - P.lastSave > 10000) { P.lastSave = Date.now(); saveProgress(); } });
 video.addEventListener("pause", () => saveProgress());
 video.addEventListener("ended", () => { saveProgress(true); if (P && P.it.next && !UP.cancelled) UP.go(); });
-video.addEventListener("timeupdate", () => { if (P) UP.tick(); });
+video.addEventListener("timeupdate", () => { if (P) { UP.tick(); SK.tick(); } });
 video.addEventListener("waiting", () => { if (P && P.mode !== "direct") setStatus(`${modeLabel(P.mode)} · buffering...`); });
 video.addEventListener("playing", () => { if (P) { P.played = true; setStatus(modeLabel(P.mode)); } setTimeout(() => setStatus(""), 4000); });
 
@@ -4295,12 +4440,13 @@ function teardownVideo(stopServer) {
   if (hls) { hls.destroy(); hls = null; }
   video.removeAttribute("src"); $$("track", video).forEach(t => t.remove()); video.load();
   hideWait();
+  try { if (typeof SK !== "undefined") SK.hide(); } catch (e) {}
   if (stopServer && P) api(`/api/items/${P.it.id}/stop?player=${encodeURIComponent(playerId())}`, { method: "POST" }).catch(() => {});
 }
 function closePlayer() {
   if (!P) return;
   PIP.leave(); saveProgress(); teardownVideo(true); P = null; PIP.tell();
-  OV.reset(); UP.reset();
+  OV.reset(); UP.reset(); SK.reset();
   SUB.key = ""; SUB.cues = []; SUB.waiting = false; paintCues();
   $("#player").classList.add("hidden"); ROT.close();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -4308,6 +4454,8 @@ function closePlayer() {
 }
 $("#pl-close").onclick = closePlayer;
 $("#pl-next").onclick = () => { if (P && P.it.next) { saveProgress(); const n = P.it.next.id; teardownVideo(true); playItem(n, 0); } };
+if ($("#pl-skip-intro")) $("#pl-skip-intro").onclick = () => SK.skipIntro();
+if ($("#pl-skip-credits")) $("#pl-skip-credits").onclick = () => SK.skipCredits();
 document.addEventListener("keydown", (e) => {
   const typing = e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA";
   if ((e.key === "m" || e.key === "M") && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -5522,7 +5670,7 @@ const TV = {
     else if (playerOn) {
       const z = this.playerControls();
       const seen = new Set(), out = [];
-      for (const el of [...z.menu, ...z.top, ...z.mid, ...z.seek, ...z.row]) {
+      for (const el of [...(z.skip || []), ...(z.upn || []), ...z.menu, ...z.top, ...z.mid, ...z.seek, ...z.row]) {
         if (el && !seen.has(el)) { seen.add(el); out.push(el); }
       }
       return out;
@@ -5652,7 +5800,10 @@ const TV = {
       const i = row.findIndex(el => el.id === "pl-mute");
       if (i >= 0) row.splice(i + 1, 0, vol); else row.push(vol);
     }
-    return { menu, top, mid, seek, row };
+    const skipVis = (el) => el && !el.classList.contains("hidden") && this.visible(el);
+    const skip = [$("#pl-skip-intro"), $("#pl-skip-credits")].filter(skipVis);
+    const upn = [$("#pl-upnext-play"), $("#pl-upnext-cancel")].filter(skipVis);
+    return { menu, top, mid, seek, row, skip, upn };
   },
   moveInPlayer(dir) {
     const z = this.playerControls();
@@ -5673,7 +5824,7 @@ const TV = {
       }
       return true;
     }
-    const zones = [z.top, z.mid, z.seek, z.row].filter(a => a.length);
+    const zones = [z.upn || [], z.skip || [], z.top, z.mid, z.seek, z.row].filter(a => a.length);
     const all = zones.flat();
     const cur = document.activeElement && all.includes(document.activeElement) ? document.activeElement : null;
     if (!cur) { this.focus(this.preferredStart(this.candidates()) || all[0]); return true; }
@@ -5712,7 +5863,13 @@ const TV = {
       return cur;
     }
     const playerOn = $("#player") && !$("#player").classList.contains("hidden");
-    if (playerOn) return $("#pl-bplay") || $("#pl-pp") || items[0];
+    if (playerOn) {
+      const skip = items.find(el => el && (el.id === "pl-skip-intro" || el.id === "pl-skip-credits"));
+      if (skip) return skip;
+      const un = items.find(el => el && el.id === "pl-upnext-play");
+      if (un) return un;
+      return $("#pl-bplay") || $("#pl-pp") || items[0];
+    }
     if (this.isDetailView()) {
       const act = this.detailPrimaryAction();
       if (act && items.includes(act)) return act;
@@ -5889,8 +6046,11 @@ const TV = {
       if (this.typing(e)) return;
       if (playerOn) {
         const wasOn = $("#player").classList.contains("ov-on");
-        if (typeof OV !== "undefined") OV.show();
+        const el0 = document.activeElement;
+        const skipId = el0 && (el0.id === "pl-skip-intro" || el0.id === "pl-skip-credits" || el0.id === "pl-upnext-play" || el0.id === "pl-upnext-cancel");
+        if (typeof OV !== "undefined" && !skipId) OV.show();
         e.preventDefault(); e.stopPropagation();
+        if (skipId) { this.activate(el0); return; }
         if (!wasOn) {
           if (typeof togglePlay === "function") togglePlay();
           this.focus(this.preferredStart(this.candidates()));

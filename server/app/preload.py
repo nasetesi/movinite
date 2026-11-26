@@ -207,8 +207,15 @@ def _tick():
             from . import trickplay
             if trickplay._do_one():
                 time.sleep(NAS_PAUSE_S)
+                return
         except Exception:
             log.exception("trickplay tick")
+        try:
+            from . import skipintro
+            if skipintro._do_one():
+                time.sleep(NAS_PAUSE_S)
+        except Exception:
+            log.exception("intro tick")
         return
     if _do_one_prefetch():
         evict_lru()
@@ -218,8 +225,15 @@ def _tick():
         from . import trickplay
         if trickplay._do_one():
             time.sleep(NAS_PAUSE_S)
+            return
     except Exception:
         log.exception("trickplay tick")
+    try:
+        from . import skipintro
+        if skipintro._do_one():
+            time.sleep(NAS_PAUSE_S)
+    except Exception:
+        log.exception("intro tick")
 
 
 def _drain_urgent_subs():

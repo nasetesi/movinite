@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from . import config
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA = """
 -- 1.4: categories
@@ -360,6 +360,21 @@ CREATE TABLE IF NOT EXISTS trickplay_cache (
     attempts INTEGER
 );
 CREATE INDEX IF NOT EXISTS trickplay_cache_lru ON trickplay_cache(last_access);
+
+-- 2.3: Skip Intro / Skip Credits markers (schema 14)
+CREATE TABLE IF NOT EXISTS intro_cache (
+    item_id INTEGER PRIMARY KEY,
+    intro_start REAL,
+    intro_end REAL,
+    credits_start REAL,
+    method TEXT,
+    status TEXT,
+    checked_at INTEGER,
+    attempts INTEGER,
+    mtime REAL
+);
+CREATE INDEX IF NOT EXISTS intro_cache_status ON intro_cache(status, checked_at);
+CREATE TRIGGER IF NOT EXISTS items_drop_intro AFTER DELETE ON items BEGIN DELETE FROM intro_cache WHERE item_id=old.id; END;
 """
 
 _local = threading.local()
@@ -421,6 +436,8 @@ ADDED_COLUMNS = [
     ("items", "color_transfer", "TEXT"),                 # 1.7.9: smpte2084 / arib-std-b67 / ...
     ("items", "color_primaries", "TEXT"),                # 2.2
     ("items", "color_space", "TEXT"),                    # 2.2
+    ("users", "auto_skip_intro", "INTEGER NOT NULL DEFAULT 0"),   # 2.3
+    ("users", "auto_skip_credits", "INTEGER NOT NULL DEFAULT 0"), # 2.3
     ("keyframes", "status", "TEXT"),                     # 1.7.9: ok | partial | retry
     ("keyframes", "checked_at", "INTEGER"),
     ("keyframes", "attempts", "INTEGER"),
@@ -469,6 +486,8 @@ def migrate():
             _backup_db(c, 12)             # 2.1: snapshot before server-to-server sharing (idempotent)
         if old_pre and int(old_pre[0]) < 13:
             _backup_db(c, 13)             # 2.2: snapshot before trickplay / colour tags (idempotent)
+        if old_pre and int(old_pre[0]) < 14:
+            _backup_db(c, 14)             # 2.3: snapshot before intro markers / auto-skip prefs (idempotent)
         c.executescript(SCHEMA)
         for table, col, typ in ADDED_COLUMNS:
             have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}
