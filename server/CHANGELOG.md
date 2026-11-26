@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.1.3 -- 2026-11-26
+Builds on 2.1.2 (schema stays 12; no database upgrade).
+
+- **The TV no longer hits "Too many checks; wait a moment" while waiting for a phone approval.** In 2.1.2 the television asked the server every 1.5 seconds whether the code had been approved, but the server only allowed 90 checks per address in 10 minutes — not enough for a 10-minute code (about two minutes of waiting tripped the limit). On a 429 the TV also showed that error and kept checking just as often. 2.1.3 checks about every 3 seconds, slows down further if the server asks it to wait, and does not show that error on the sign-in screen.
+- **The check limit is now per code and real client address**, and is large enough for a full 10-minute code (400 checks per code+address in 10 minutes, with a separate coarser cap per address). The real client address behind a trusted proxy is still used (CF-Connecting-IP, then X-Real-IP, then X-Forwarded-For).
+- **Sign in with a username and password stays available.** Opening the password form stops the approval checks, so a "too many checks" message can no longer appear on (or block) the password screen. Password sign-in is not part of the check limit.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update.
+
+
+## 2.1.2 -- 2026-11-26
+Builds on 2.1.1 (schema stays 12; no database upgrade).
+
+- **The web top bar is hidden on a television.** Search, poster sounds, server status and the account button in the web header stay on desktop and phone only. On a TV, the Plex-style tabs (For You, Recently Added, Libraries) and the clock remain. Search, Sign out (on the profile row) and Settings are in the slide-out menu on the left. The desktop and phone header still uses the same dark color as the sidebar (2.1.1).
+- **The TV tab bar is transparent** over the backdrop, with a soft fade and text shadow so the tabs and clock stay readable.
+- **Moving the remote around the tabs or the slide-out menu changes the view without pressing OK.** After a short pause (~250 ms) on a tab or a menu item, that section or page opens. Sign out (and other destructive or confirm-only actions) still need OK. Back is unchanged.
+- **Remote: Up from the tabs stays put; Left opens the menu.** From the first poster row, Up still reaches the tabs; Down from the tabs still reaches the posters; Right still moves between tabs.
+- **Opening a title on a television focuses Resume or Play again.** In 2.1 the Plex home's tall top padding was still applied when the movie page first focused Play, then dropped away, which scrolled the page down and hid the button (the same symptom as 1.9.2). 2.1.2 applies the movie-page layout first, pins the page at the top, and focuses Resume or Play.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update.
+
+
 ## 2.1.1 -- 2026-11-26
 Builds on 2.1 (schema stays 12; no database upgrade).
 

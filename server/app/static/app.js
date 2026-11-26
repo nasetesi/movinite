@@ -210,6 +210,7 @@ function showAuth(html) {
   if (window.TVPlex && typeof TVPlex.syncAuth === "function") TVPlex.syncAuth();
 }
 function hideAuth() {
+  stopPairPoll();
   $("#auth").classList.add("hidden");
   document.documentElement.classList.remove("tv-auth");
   if (window.TVPlex && typeof TVPlex.syncAuth === "function") TVPlex.syncAuth();
@@ -225,8 +226,8 @@ function focusAuth() {
 }
 
 // 2.0.2: short-code TV sign-in, recent-server list, stay-signed-in note
-const PAIR = { timer: null, token: null, gen: 0, display: null, url: null, expires_at: 0 };
-function stopPairPoll() { PAIR.gen++; clearTimeout(PAIR.timer); PAIR.timer = null; }
+const PAIR = { timer: null, token: null, gen: 0, display: null, url: null, expires_at: 0, delay: 3000 };
+function stopPairPoll() { PAIR.gen++; clearTimeout(PAIR.timer); PAIR.timer = null; PAIR.delay = 3000; }
 function isTvAuth() { return !!(window.TV && TV.on); }
 function pairCodeFromLocation() {
   try {
@@ -291,6 +292,7 @@ function showLogin() {
 }
 function showPasswordLogin(opts) {
   opts = opts || {};
+  stopPairPoll();
   showAuth(`<form class="auth-box" id="loginf"><h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
     <div class="muted">${opts.note || "Sign in to continue"}</div>
     <label>Username</label><input type="text" id="lu" autocomplete="username" autofocus>
@@ -374,11 +376,13 @@ async function startTvPair(force) {
 }
 function tickPairPoll(gen) {
   clearTimeout(PAIR.timer);
+  const wait = Math.max(3000, PAIR.delay || 3000);
   PAIR.timer = setTimeout(async () => {
     if (gen !== PAIR.gen || !PAIR.token) return;
     try {
       const r = await api("/api/pair/poll", { method: "POST", body: { token: PAIR.token }, noAuthRedirect: true });
       if (gen !== PAIR.gen) return;
+      PAIR.delay = 3000;
       if (r.status === "approved") { stopPairPoll(); afterLoginOrPair(); return; }
       if (r.status === "pending") {
         const st = $("#pair-status");
@@ -394,13 +398,16 @@ function tickPairPoll(gen) {
       tickPairPoll(gen);
     } catch (e) {
       if (gen !== PAIR.gen) return;
-      const err = $("#lerr");
-      if (err && e.status === 429) err.textContent = e.message;
+      // 2.1.3: on 429, slow down instead of showing "Too many checks" over the form.
+      // The password button stays usable; this loop must not write to #lerr.
+      if (e.status === 429) PAIR.delay = Math.min(30000, Math.max(6000, (PAIR.delay || 3000) * 2));
+      else PAIR.delay = Math.min(15000, (PAIR.delay || 3000) + 2000);
       tickPairPoll(gen);
     }
-  }, 1500);
+  }, wait);
 }
 function showPairCodeEntry() {
+  stopPairPoll();
   showAuth(`<div class="auth-box" id="pair-entry">
     <h1 class="auth-brand"><img class="auth-logo" src="/static/logo-full.png" alt="Movinite" width="300" height="155"></h1>
     <h2 class="auth-h">Approve a TV</h2>
@@ -5411,11 +5418,17 @@ const TV = {
     if (!el) return;
     try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
     const block = (opts && opts.block) || "nearest";
-    const r = el.getBoundingClientRect();
-    const pad = 80;
-    if (block === "center" || r.top < pad || r.bottom > window.innerHeight - pad || r.left < 20 || r.right > window.innerWidth - 20) {
-      const target = (block === "center" && el.closest && (el.closest(".actions") || el.closest(".detail"))) || el;
-      target.scrollIntoView({ block: block === "center" ? "center" : "nearest", inline: "nearest", behavior: "smooth" });
+    // 2.1.2: opening a title pins the details page at the top so Resume/Play stay on screen
+    if (block === "start") {
+      const v = document.getElementById("view");
+      if (v) v.scrollTop = 0;
+    } else {
+      const r = el.getBoundingClientRect();
+      const pad = 80;
+      if (block === "center" || r.top < pad || r.bottom > window.innerHeight - pad || r.left < 20 || r.right > window.innerWidth - 20) {
+        const target = (block === "center" && el.closest && (el.closest(".actions") || el.closest(".detail"))) || el;
+        target.scrollIntoView({ block: block === "center" ? "center" : "nearest", inline: "nearest", behavior: "smooth" });
+      }
     }
     const strip = el.closest(".strip, .hs, .cast-strip");
     if (strip && typeof strip.scrollLeft === "number") {
@@ -5738,7 +5751,7 @@ const TV = {
     if (this.isDetailView()) {
       const act = this.detailPrimaryAction();
       if (act && items.includes(act)) {
-        this.focus(act, { block: "center" });
+        this.focus(act, { block: "start" });
         return;
       }
     }
