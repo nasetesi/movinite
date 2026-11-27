@@ -1719,3 +1719,15 @@ html.tv-mode .pl-upnext-card{min-width:420px}
 html.tv-mode #pl-upnext-play:focus,html.tv-mode #pl-upnext-cancel:focus,
 html.tv-mode #pl-upnext-play.tv-focused,html.tv-mode #pl-upnext-cancel.tv-focused{
   outline:3px solid #fff;outline-offset:2px}
+
+/* 2.3: Skip Intro / Skip Credits — visible during play, even with the bar hidden */
+.pl-skip-wrap{position:absolute;left:24px;bottom:calc(var(--plbar,96px) + 16px);z-index:6;
+  display:flex;gap:10px;pointer-events:none}
+.pl-skip{pointer-events:auto;appearance:none;border:1px solid rgba(255,255,255,.28);background:rgba(20,20,20,.78);
+  color:#fff;font:600 15px/1.2 system-ui,sans-serif;padding:12px 20px;border-radius:10px;cursor:pointer;
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:0 6px 20px rgba(0,0,0,.35)}
+.pl-skip:hover,.pl-skip:focus{background:rgba(40,40,40,.9);border-color:#fff}
+.pl-skip.hidden{display:none}
+html.tv-mode .pl-skip-wrap{left:48px;bottom:calc(var(--plbar,110px) + 28px)}
+html.tv-mode .pl-skip{font-size:22px;padding:16px 28px;border-radius:12px}
+html.tv-mode .pl-skip:focus,html.tv-mode .pl-skip.tv-focused{outline:3px solid #fff;outline-offset:3px}

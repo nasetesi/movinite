@@ -236,10 +236,11 @@ def hdr_info(item):
 
 
 class Session:
-    def __init__(self, sid, item, profile, audio_idx, bounds=None, surr=0):
+    def __init__(self, sid, item, profile, audio_idx, bounds=None, surr=0, burn=0):
         self.sid = sid
         self.bounds = bounds            # remux: segment start times (keyframes)
         self.surr = 6 if int(surr or 0) >= 6 else 0  # 2.2: 6 = client can play surround AAC
+        self.burn = int(burn or 0)      # 2.3: image-subtitle stream index to burn in (0 = none)
         self.item = item
         self.profile = profile
         self.audio_idx = audio_idx
@@ -272,6 +273,11 @@ class Session:
             self.rot = hwaccel.rotation(item)
             if self.rot and self.hw[0] == "nvenc":
                 self.stages = ["enc", "cpu"]     # no GPU rotate filter for CUDA frames in ffmpeg 6.1
+        if self.burn and self.hw[0] == "vaapi" and not hwaccel.has_filter("overlay_vaapi"):
+            # 2.3: no overlay_vaapi — CPU-overlay the subtitle plane and hwupload (enc), then CPU
+            self.stages = [x for x in self.stages if x != "full"] or ["enc", "cpu"]
+        if self.burn and self.hw[0] == "nvenc":
+            self.stages = [x for x in self.stages if x != "full"] or ["enc", "cpu"]
         if self.hevc:
             self.stages = [x for x in self.stages if x != "cpu"]   # no CPU HEVC: the player steps down instead
         self.stage_i = 0
@@ -459,9 +465,33 @@ class Session:
             cmd += hw[0]
         elif config.HWACCEL and not audio_only:
             cmd += ["-hwaccel", config.HWACCEL]
+        burn = int(getattr(self, "burn", 0) or 0) if not audio_only else 0
+        # overlay_vaapi needs a named VAAPI device to hwupload the subtitle plane
+        if burn and hw and self.hw[0] == "vaapi" and self.stage == "full" and hwaccel.has_filter("overlay_vaapi"):
+            if "-init_hw_device" not in cmd:
+                cmd += ["-init_hw_device", "vaapi=hw:%s" % self.hw[1], "-filter_hw_device", "hw"]
         cmd += ["-ss", "%.3f" % t0, "-i", it["path"]]
         if audio_only:
             cmd += ["-map", "0:a:%d?" % self.audio_idx, "-vn", "-sn", "-dn"]
+        elif burn:
+            # 2.3: burn a PGS / VobSub (or other image) subtitle. Text subs stay soft and still use -sn.
+            src_h = it.get("height") or maxh
+            h = min(maxh, src_h) if src_h else maxh
+            if src_h and src_h < maxh and not box:
+                vk = max(600, int(vk * (src_h / maxh) ** 1.5))
+            ow, oh = hwaccel.output_size(it, h, box, getattr(self, "rot", 0))
+            base_vf = hw[1] if hw else None
+            method = self.hw[0] if (hw and self.stage != "cpu") else "cpu"
+            fc = hwaccel.burn_filter_complex(self.stage if hw else "cpu", method or "cpu",
+                                             ow, oh, burn, base_video_f=base_vf)
+            cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "0:a:%d?" % self.audio_idx, "-dn"]
+            if hw:
+                cmd += hw[2] + ["-force_key_frames", "expr:gte(t,n_forced*%g)" % SEG, "-g", "%d" % int(SEG * 30)]
+            else:
+                cmd += ["-c:v", "libx264", "-preset", config.X264_PRESET, "-profile:v", "high",
+                        "-level:v", "4.1", "-crf", "21", "-maxrate", "%dk" % vk, "-bufsize", "%dk" % (vk * 2),
+                        "-force_key_frames", "expr:gte(t,n_forced*%g)" % SEG, "-sc_threshold", "0",
+                        "-g", "%d" % int(SEG * 30)]
         else:
             cmd += ["-map", "0:v:0", "-map", "0:a:%d?" % self.audio_idx, "-sn", "-dn"]
             src_h = it.get("height") or maxh
@@ -745,9 +775,10 @@ def normalize_player(player_id):
     return s[:64]
 
 
-def session_id(item_id, profile, audio_idx, user_id, player_id="", surr=0):
+def session_id(item_id, profile, audio_idx, user_id, player_id="", surr=0, burn=0):
     surr = 6 if int(surr or 0) >= 6 else 0
-    return hashlib.sha1(("%s|%s|%s|%s|%s|%s" % (item_id, profile, audio_idx, user_id, normalize_player(player_id), surr)).encode()).hexdigest()[:16]
+    burn = int(burn or 0)
+    return hashlib.sha1(("%s|%s|%s|%s|%s|%s|%s" % (item_id, profile, audio_idx, user_id, normalize_player(player_id), surr, burn)).encode()).hexdigest()[:16]
 
 
 def max_transcodes():
@@ -764,10 +795,11 @@ def max_transcodes():
     return config.MAX_TRANSCODES
 
 
-def get_session(item, profile, audio_idx, user_id, player_id="", surr=0):
+def get_session(item, profile, audio_idx, user_id, player_id="", surr=0, burn=0):
     pid = normalize_player(player_id)
     surr = 6 if int(surr or 0) >= 6 else 0
-    sid = session_id(item["id"], profile, audio_idx, user_id, pid, surr)
+    burn = int(burn or 0)
+    sid = session_id(item["id"], profile, audio_idx, user_id, pid, surr, burn)
     bounds = None
     if profile == "remux":
         bounds = remux_bounds(item)
@@ -790,7 +822,7 @@ def get_session(item, profile, audio_idx, user_id, player_id="", surr=0):
                             int(time.time() - oldest.last_access))
                 oldest.destroy("cap")
                 _sessions.pop(oldest.sid, None)
-            s = Session(sid, item, profile, audio_idx, bounds, surr=surr)
+            s = Session(sid, item, profile, audio_idx, bounds, surr=surr, burn=burn)
             s.user_id = user_id
             s.player_id = pid
             apply_sticky(s)

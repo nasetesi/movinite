@@ -258,6 +258,84 @@ def _vaapi_scale(gw, height, hdr=""):
     return "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
 
 
+
+def _even(n):
+    n = int(n or 0)
+    return n - (n % 2)
+
+
+def output_size(item, height, box=None, rot=0):
+    """Even output width/height for a transcode (and for subtitle overlay pad)."""
+    if box:
+        return _even(box[0]), _even(box[1])
+    sw = int(item.get("width") or 0) or 0
+    sh = int(item.get("height") or 0) or 0
+    if rot in (90, 270):
+        sw, sh = sh, sw
+    out_h = _even(min(height, sh) if sh else height)
+    if sw and sh:
+        out_w = _even(max(2, int(round(sw * out_h / float(sh)))))
+    else:
+        out_w = _even(int(out_h * 16 / 9))
+    return out_w, out_h
+
+
+def burn_filter_complex(stage, method, out_w, out_h, sub_index, base_video_f=None):
+    """Build a -filter_complex that burns an image subtitle into the picture.
+
+    Prefer overlay_vaapi (CPU-render the subtitle plane, hwupload, overlay on
+    the GPU). If that filter is missing, overlay on the CPU and hwupload the
+    composited frame. Works with ffmpeg 6.1.x (overlay_vaapi is detected).
+    Returns the filter_complex string ending in [vout].
+    """
+    w, h, si = _even(out_w), _even(out_h), int(sub_index)
+    # Scale/pad the subtitle plane on the CPU; keep alpha for overlay.
+    sub = ("[0:%d]format=yuva420p,scale=%d:%d:force_original_aspect_ratio=decrease,"
+           "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black@0[sub]" % (si, w, h, w, h))
+    use_ova = method == "vaapi" and stage == "full" and has_filter("overlay_vaapi")
+    if use_ova:
+        # Upload only the subtitle plane; video stays on the GPU.
+        sub = ("[0:%d]format=bgra,scale=%d:%d:force_original_aspect_ratio=decrease,"
+               "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
+               "hwupload=extra_hw_frames=64[sub]" % (si, w, h, w, h))
+        vid = base_video_f or ("scale_vaapi=w=%d:h=%d:format=nv12" % (w, h))
+        if not vid.startswith("[0:"):
+            vid = "[0:v:0]" + vid
+        if "[base]" not in vid:
+            vid = vid + "[base]"
+        return "%s;%s;[base][sub]overlay_vaapi=eof_action=pass:repeatlast=0[vout]" % (vid, sub)
+    # CPU overlay of the subtitle, then hwupload when this stage encodes on the GPU.
+    vid = base_video_f
+    if stage in ("full", "enc") and method in ("vaapi", "qsv"):
+        # If a full-GPU chain was passed, download first so overlay can run on CPU.
+        if vid and "vaapi" in vid:
+            if not vid.startswith("[0:"):
+                vid = "[0:v:0]" + vid
+            vid = vid + ",hwdownload,format=nv12[base]" if "[base]" not in vid else vid
+        else:
+            vid = "[0:v:0]scale=%d:%d,format=nv12[base]" % (w, h)
+        ov = "[base][sub]overlay=0:0:eof_action=pass:repeatlast=0,format=nv12,hwupload=extra_hw_frames=64[vout]"
+        if method == "qsv":
+            ov = ("[base][sub]overlay=0:0:eof_action=pass:repeatlast=0,format=nv12,"
+                  "hwupload=extra_hw_frames=64,format=qsv[vout]")
+        return "%s;%s;%s" % (vid, sub, ov)
+    # Pure CPU (libx264) or nvenc-enc (nvenc full uses cuda filters; fall back to CPU overlay).
+    vid = "[0:v:0]scale=%d:%d,format=yuv420p[base]" % (w, h)
+    ov = "[base][sub]overlay=0:0:eof_action=pass:repeatlast=0,format=yuv420p[vout]"
+    if method == "nvenc" and stage == "enc":
+        # nvenc enc path encodes from yuv420p software frames
+        pass
+    return "%s;%s;%s" % (vid, sub, ov)
+
+
+def burn_needs_hw_device(stage, method):
+    """True when the burn chain hwuploads (needs -init_hw_device / -filter_hw_device)."""
+    if method == "vaapi" and stage == "full" and has_filter("overlay_vaapi"):
+        return True
+    if method in ("vaapi", "qsv") and stage in ("full", "enc"):
+        return True
+    return False
+
 def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h264", hdr=""):
     """ffmpeg arguments for one transcode stage.
 

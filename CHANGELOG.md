@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3 -- 2026-11-26
+Builds on 2.2. Schema 14 (a `media-server.db.pre-schema14` backup, mode 600, is written once before the bump).
+
+- **Skip Intro and Skip Credits.** When a season's episodes share an opening, or a file has intro/credits chapters, a Skip Intro button appears (focusable on a television; OK skips). A Skip Credits button appears when the ending starts and opens the 2.2 Up Next card (or jumps to the end if there is no next episode). Detection runs in the background, yields when someone is watching, and uses chapters first, then audio fingerprints across a season (fpcalc if it is installed, otherwise ffmpeg), then black/silence at the end of the file for credits. Settings > Account has Auto-skip intros and Auto-skip credits, saved per user and off by default.
+- **Image subtitles (PGS / VobSub) are burned in when you pick them.** They are listed in the subtitle menu. Choosing one starts a transcode and overlays the pictures on the GPU when `overlay_vaapi` is available (the subtitle plane is rendered on the CPU and uploaded); otherwise the subtitle is overlaid on the CPU and the frame is uploaded for GPU encode. Text subtitles stay soft (WebVTT). Remux and direct play still cannot show image subtitles.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update. Desktop and phone layouts are otherwise unchanged. TV remote navigation from 2.1.4 is unchanged. 2.2 playback behaviour (immediate start when remux is not ready, 5.1 audio, seek-bar thumbnails, Up Next, the 4K TV cap, and HDR tone mapping off by default) is unchanged.
+
+
 ## 2.2 -- 2026-11-26
 Builds on 2.1.4. Schema 13 (a `media-server.db.pre-schema13` backup, mode 600, is written once before the bump).
 

@@ -39,6 +39,7 @@ TRANSCODE_DIR = DATA_DIR / "transcode"
 PREFETCH_DIR = DATA_DIR / "prefetch"   # 1.7.9: opening-clip cache (first ~6s at 1080p)
 TRICKPLAY_DIR = DATA_DIR / "trickplay" # 2.2: seek-bar sprite sheets
 SUBS_DIR = DATA_DIR / "subs"           # 1.7.9: extracted WebVTT cache
+INTRO_DIR = DATA_DIR / "intros"        # 2.3: Skip Intro / Credits fingerprints
 SHARES_DIR = Path(os.environ.get("MS_SHARES_DIR") or "/srv/media-server/shares")
 PORT = _int("MS_PORT", 8099)
 MAX_TRANSCODES = _int("MS_MAX_TRANSCODES", 4)  # 1.7.7: same login may use several devices; this is the server-wide cap
