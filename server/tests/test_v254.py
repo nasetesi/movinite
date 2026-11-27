@@ -1,4 +1,4 @@
-"""2.5.4: phone details top bar stays transparent while you scroll."""
+"""2.5.4: phone details top bar stays transparent; TV home is a fixed hero plus a row slot."""
 import os
 import socket
 import subprocess
@@ -69,6 +69,32 @@ top_desktop = top_desktop[:top_desktop.index("}")]
 check("background:var(--panel)" in top_desktop, "the default (desktop/other-page) top bar is still the solid panel")
 check("--panel:#171a21" in css, "the solid bar used on other phone pages is charcoal #171A21")
 
+tvcss = (ROOT / "app/static/tv-plex.css").read_text()
+tvjs = (ROOT / "app/static/tv-plex.js").read_text()
+print("CSS/JS: TV home is a fixed hero plus a translated row track")
+check("position: fixed" in tvcss.split("html.tv-mode.tv-plex .shell")[1][:250],
+      "the TV shell is a fixed pane that fills the window")
+check("inset: 0" in tvcss.split("html.tv-mode.tv-plex .shell")[1][:250],
+      "the TV shell uses inset: 0 (no 100vh)")
+check("--tv-hero-share: 62%" in tvcss, "the hero occupies a fixed ~62% share of the window")
+check("top: var(--tv-hero-share)" in tvcss, "the rows pane starts under that share")
+check(".tv-rows-track" in tvcss and "layoutRows()" in tvjs and "translateY(" in tvjs,
+      "rows move on a translated track, not by scrolling the page")
+check("html.tv-mode.tv-plex #view" in tvcss and "overflow: hidden" in tvcss.split("html.tv-mode.tv-plex #view")[1].split("}")[0],
+      "the home rows pane does not scroll")
+check("card .why" in tvcss, "TV hides the captions under cards")
+check("scale(1.13)" in tvcss, "the focused poster scales up about 13%")
+check("tv-tabs-hidden" in tvcss and "translateY(-100%)" in tvcss, "top tabs slide up and hide when you leave the first row")
+check("rgba(0,0,0,.82)" in tvcss, "the slide-out dims the page heavily")
+check("setTimeout(run, 300)" not in tvjs and "setTimeout(run, 80)" in tvjs,
+      "hero updates are immediate, with only a short key-repeat debounce")
+css_code = __import__("re").sub(r"/\*.*?\*/", "", tvcss, flags=__import__("re").S)
+check("100vh" not in css_code and "clip-path" not in css_code and "vh" not in css_code,
+      "the TV home layout does not use vh, 100vh or clip-path")
+check("html.tv-mode.tv-plex.tv-plex-off .shell" in tvcss and "position: relative" in tvcss.split("html.tv-mode.tv-plex.tv-plex-off .shell")[1][:300],
+      "details/player pages reset the fixed shell")
+
+
 print("JS: no scroll switch, no theme-color or tint updates")
 check("function setDetailTop(" in js, "setDetailTop is defined")
 check("function clearDetailTop(" in js, "clearDetailTop is defined")
@@ -125,28 +151,43 @@ def seed(data):
         auth.create_user("admin", "TestPass14!", is_admin=True)
     settings.put("server_name", "Harbor")
     now = int(time.time())
-    title, year, color = "Ember Road", 2012, (168, 78, 28)
     import hashlib
-    name = hashlib.sha1((title + str(color)).encode()).hexdigest() + ".jpg"
-    paint(thumbs / name, color, title)
-    clip = media / "ember.mp4"
-    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 200)
+    films = [
+        ("Ember Road", 2012, (168, 78, 28)),
+        ("Harbor Night", 2016, (22, 48, 118)),
+        ("Northstar", 2020, (72, 28, 96)),
+        ("River Glass", 2021, (30, 90, 70)),
+    ]
+    ids = {}
     with db.tx() as c:
         c.execute("DELETE FROM progress")
+        c.execute("DELETE FROM home_pins")
         c.execute("DELETE FROM items")
         c.execute("DELETE FROM libraries")
         c.execute("DELETE FROM metadata")
         c.execute("INSERT INTO libraries(name, kind, path, scan_interval_h, created_at) VALUES(?,?,?,?,?)",
                   ("Movies", "movies", str(media), 0, now))
         lid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-        c.execute("INSERT INTO metadata(kind,tmdb_id,title,year,overview,genres,runtime,poster,backdrop,fetched_at) "
-                  "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                  ("movie", 91001, title, year, LONG_OV, '["Drama"]', 128, name, name, now))
-        c.execute("INSERT INTO items(library_id, path, media_type, kind, title, sort_title, year, duration, added_at, probed, tmdb_id, poster, meta_status) "
-                  "VALUES(?,?, 'video','movie',?,?,?,7200,?,1,?,?,?)",
-                  (lid, str(clip), title, title, year, now, 91001, name, "matched"))
-        iid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-    return iid, lid
+        for i, (title, year, color) in enumerate(films, start=1):
+            name = hashlib.sha1((title + str(color)).encode()).hexdigest() + ".jpg"
+            paint(thumbs / name, color, title)
+            clip = media / ("f%d.mp4" % i)
+            clip.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 200)
+            tid = 91000 + i
+            c.execute("INSERT INTO metadata(kind,tmdb_id,title,year,overview,genres,runtime,poster,backdrop,fetched_at) "
+                      "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                      ("movie", tid, title, year, LONG_OV, '["Drama"]', 128, name, name, now))
+            c.execute("INSERT INTO items(library_id, path, media_type, kind, title, sort_title, year, duration, added_at, probed, tmdb_id, poster, meta_status) "
+                      "VALUES(?,?, 'video','movie',?,?,?,7200,?,1,?,?,?)",
+                      (lid, str(clip), title, title, year, now, tid, name, "matched"))
+            ids[title] = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        uid = c.execute("SELECT id FROM users WHERE username=?", ("admin",)).fetchone()[0]
+        for title, pos in (("Ember Road", 800), ("Harbor Night", 400)):
+            c.execute("INSERT INTO progress(user_id, item_id, position, duration, updated_at) VALUES(?,?,?,?,?)",
+                      (uid, ids[title], pos, 7200, now))
+        c.execute("INSERT OR REPLACE INTO home_pins(row, item_id, mode, created_at) VALUES(?,?,?,?)",
+                  ("recommended", ids["Northstar"], 1, now))
+    return ids["Ember Road"], lid
 
 def start_server(data, port):
     starter = r'''
@@ -296,6 +337,242 @@ if ready:
             # theme-color should not have been changed to a gray/tint
             check(mid["theme"] in (None, "", "#0b0612", "#0F1115", "#0f1115") or (mid["theme"] and mid["theme"].lower() in ("#0b0612", "#0f1115")),
                   "theme-color stays the dark app color (theme=%s)" % mid["theme"])
+
+            # TV home: 1920x1080 and a short Android-WebView-like 960x540 @ DPR 2
+            TV_UA = ("Mozilla/5.0 (Linux; Android 12; BRAVIA 4K VH2) AppleWebKit/537.36 (KHTML, like Gecko) "
+                     "Chrome/120.0.0.0 Mobile Safari/537.36 MediaServerAndroid/2.4.4 AndroidTV")
+            TV_LAYOUT = """() => {
+              const view = document.getElementById('view');
+              const hero = document.getElementById('tv-hero');
+              const meta = document.querySelector('#tv-hero .tv-hero-meta');
+              const tabs = document.getElementById('tv-tabs');
+              const top = document.getElementById('tv-top');
+              const track = view && view.querySelector(':scope > .tv-rows-track');
+              const rows = track ? [...track.querySelectorAll(':scope > .tv-home-row')] : [];
+              const vr = view ? view.getBoundingClientRect() : null;
+              const mr = meta ? meta.getBoundingClientRect() : null;
+              const hr = hero ? hero.getBoundingClientRect() : null;
+              const tr = top ? top.getBoundingClientRect() : null;
+              const cards = [...document.querySelectorAll('#view .card')].map(c => {
+                const r = c.getBoundingClientRect();
+                const art = c.querySelector('.art');
+                const acs = art ? getComputedStyle(art) : null;
+                const why = c.querySelector('.why');
+                const title = c.querySelector('.t, .s, .hov, .why');
+                return {
+                  top:r.top, bottom:r.bottom, left:r.left, right:r.right, h:r.height, w:r.width,
+                  focused: document.activeElement === c,
+                  scale: (getComputedStyle(c).transform || ''),
+                  border: acs && acs.borderTopColor + ' ' + acs.borderTopWidth,
+                  whyOn: !!(why && getComputedStyle(why).display !== 'none' && why.offsetHeight > 0),
+                  captionOn: !!(title && getComputedStyle(title).display !== 'none' && title.offsetHeight > 0),
+                };
+              });
+              const heads = [...document.querySelectorAll('#view .row-head')].map(h => {
+                const r = h.getBoundingClientRect();
+                return {t:(h.textContent||'').replace(/\\s+/g,' ').trim(), top:r.top, bottom:r.bottom, h:r.height};
+              });
+              const inPane = (r) => r && vr && r.bottom > vr.top + 2 && r.top < vr.bottom - 2;
+              const H = window.innerHeight;
+              const visCards = cards.filter(c => inPane(c) && c.h > 40 && c.w > 40);
+              const visHeads = heads.filter(h => inPane(h) && h.h > 8);
+              const peekHeads = heads.filter(h => h.top < H && h.top > (vr ? vr.top + (vr.height * 0.55) : H * 0.75) && h.bottom > (vr ? vr.top + 8 : 0));
+              return {
+                tvPlex: document.documentElement.classList.contains('tv-plex'),
+                tabsHidden: document.documentElement.classList.contains('tv-tabs-hidden'),
+                menuOpen: document.documentElement.classList.contains('tv-menu-open'),
+                innerH: H,
+                innerW: window.innerWidth,
+                viewTop: vr && vr.top,
+                viewBottom: vr && vr.bottom,
+                viewH: vr && vr.height,
+                viewScroll: view && view.scrollTop,
+                heroH: hr && hr.height,
+                metaBottom: mr && mr.bottom,
+                tabBottom: tabs && tabs.getBoundingClientRect().bottom,
+                topBottom: tr && tr.bottom,
+                topTop: tr && tr.top,
+                track: !!track,
+                rowCount: rows.length,
+                rowIndex: (window.TVPlex && window.TVPlex._rowIndex) || (document.documentElement.classList.contains('tv-tabs-hidden') ? 1 : 0),
+                transform: track ? getComputedStyle(track).transform : '',
+                heads: heads,
+                visHeads: visHeads.map(h => h.t),
+                visCards: visCards.length,
+                firstCardTop: visCards.length ? visCards[0].top : null,
+                focused: cards.find(c => c.focused) || null,
+                anyWhy: cards.some(c => c.whyOn),
+                anyCaption: cards.some(c => c.captionOn),
+                dimOn: !!(document.getElementById('tv-dim') && getComputedStyle(document.getElementById('tv-dim')).display !== 'none'),
+              };
+            }"""
+
+            def login_tv(page):
+                page.add_init_script("window.MSAndroid = window.MSAndroid || { isTv: () => true };")
+                page.goto("http://127.0.0.1:%d/" % port, wait_until="domcontentloaded")
+                page.wait_for_selector("#pair-use-pass, #loginf, #lu", timeout=20000)
+                if page.query_selector("#pair-use-pass"):
+                    page.click("#pair-use-pass")
+                page.wait_for_selector("#lu", timeout=10000)
+                page.fill("#lu", "admin")
+                page.fill("#lp", "TestPass14!")
+                b = page.query_selector("#loginf button")
+                if b:
+                    b.click()
+                page.wait_for_function(
+                    "() => !document.getElementById('auth') || document.getElementById('auth').classList.contains('hidden')",
+                    timeout=15000)
+                page.goto("http://127.0.0.1:%d/#/home" % port, wait_until="domcontentloaded")
+                page.wait_for_selector("#tv-hero, #view .card", timeout=20000)
+                page.wait_for_timeout(500)
+                page.evaluate("""() => {
+                  const c = document.querySelector('#view .strip.cw .card, #view .strip .card, #view .card');
+                  if (c && window.TV) TV.focus(c);
+                }""")
+                page.wait_for_timeout(300)
+
+            def check_tv(label, info, expect_top, min_pane):
+                check(info["tvPlex"], "%s: TV plex home is on" % label)
+                check(info["track"], "%s: the home rows are wrapped on a track" % label)
+                check(info["viewH"] is not None and info["viewH"] >= min_pane,
+                      "%s: rows pane has height (h=%s, top=%s, bottom=%s, innerH=%s)" % (
+                          label, info["viewH"], info["viewTop"], info["viewBottom"], info["innerH"]))
+                lo, hi = expect_top
+                check(info["viewTop"] is not None and lo <= info["viewTop"] <= hi,
+                      "%s: rows start under the hero (top=%s, expected %s–%s)" % (label, info["viewTop"], lo, hi))
+                if info.get("heroH") is not None and info.get("innerH"):
+                    share = info["heroH"] / info["innerH"]
+                    check(0.58 <= share <= 0.68,
+                          "%s: hero is about 60–65%% of the screen (share=%.3f, h=%s)" % (label, share, info["heroH"]))
+                check(info["viewBottom"] is not None and info["viewBottom"] >= info["innerH"] - 4,
+                      "%s: rows pane reaches the bottom of the window (bottom=%s innerH=%s)" % (
+                          label, info["viewBottom"], info["innerH"]))
+                check(not info.get("viewScroll"),
+                      "%s: the page itself does not scroll (scrollTop=%s)" % (label, info.get("viewScroll")))
+                if info.get("metaBottom") is not None:
+                    check(info["metaBottom"] <= info["viewTop"] + 24,
+                          "%s: hero details sit above the rows (metaBottom=%s viewTop=%s)" % (
+                              label, info["metaBottom"], info["viewTop"]))
+                check(info["visCards"] >= 1,
+                      "%s: at least one poster is visible in the window (visible=%s heads=%s)" % (
+                          label, info["visCards"], info.get("heads")))
+                check(not info.get("anyCaption") and not info.get("anyWhy"),
+                      "%s: no titles or captions under the cards" % label)
+
+            def head_named(info, part):
+                return next((h for h in (info.get("heads") or []) if part.lower() in (h.get("t") or "").lower()), None)
+
+            def check_first_row(label, info):
+                check(not info["tabsHidden"], "%s first row: top tabs are visible" % label)
+                cw = head_named(info, "Continue watching")
+                if cw:
+                    check(cw["top"] >= info["viewTop"] - 4 and cw["bottom"] <= info["innerH"] + 4,
+                          "%s first row: Continue watching sits in the row slot (top=%s)" % (label, cw["top"]))
+                # The next row should peek from the bottom (heading or cards crossing the bottom edge).
+                later = [h for h in (info.get("heads") or []) if "continue watching" not in (h.get("t") or "").lower()]
+                peek = [h for h in later if h["top"] < info["innerH"] and h["bottom"] > info["viewTop"] and h["top"] > info["viewTop"] + 40]
+                check(len(peek) >= 1 or any(h["top"] < info["innerH"] and h["top"] > info["innerH"] * 0.7 for h in later),
+                      "%s first row: the next row peeks at the bottom (heads=%s)" % (label, info.get("heads")))
+
+            def check_second_row(label, first, second):
+                check(second["tabsHidden"], "%s second row: top tabs are hidden" % label)
+                check(second.get("viewScroll") in (0, None), "%s second row: still no page scroll" % label)
+                # Previous row is completely gone, not clipped in the slot.
+                cw = head_named(second, "Continue watching")
+                if cw:
+                    check(cw["bottom"] <= second["viewTop"] + 2 or cw["bottom"] <= 0,
+                          "%s second row: the previous row is gone (cw bottom=%s viewTop=%s)" % (
+                              label, cw["bottom"], second["viewTop"]))
+                vis = second.get("visHeads") or []
+                check(any("continue watching" not in (t or "").lower() for t in vis),
+                      "%s second row: a later row is in the slot (visHeads=%s)" % (label, vis))
+                # Focused row stays in the same slot as the first row did.
+                ft = (first.get("focused") or {}).get("top")
+                st = (second.get("focused") or {}).get("top")
+                if ft is not None and st is not None:
+                    check(abs(st - ft) <= 56,
+                          "%s second row: the focused row stays in the same slot (firstTop=%s secondTop=%s)" % (
+                              label, ft, st))
+                foc = second.get("focused")
+                if foc:
+                    check("1.1" in (foc.get("scale") or "") or "matrix(1.13" in (foc.get("scale") or "") or "matrix(1.12" in (foc.get("scale") or ""),
+                          "%s second row: focused poster is scaled up (transform=%s)" % (label, foc.get("scale")))
+
+            # Full-size 1080p CSS viewport
+            ctx1080 = br.new_context(viewport={"width": 1920, "height": 1080}, device_scale_factor=1, user_agent=TV_UA)
+            p1080 = ctx1080.new_page()
+            login_tv(p1080)
+            i1080 = p1080.evaluate(TV_LAYOUT)
+            check_tv("1080p", i1080, (640, 730), 300)
+            check_first_row("1080p", i1080)
+            p1080.keyboard.press("ArrowDown")
+            p1080.wait_for_timeout(450)
+            i1080b = p1080.evaluate(TV_LAYOUT)
+            check_tv("1080p row 2", i1080b, (640, 730), 300)
+            check_second_row("1080p", i1080, i1080b)
+            # Up from the second row returns to the first; tabs come back.
+            p1080.keyboard.press("ArrowUp")
+            p1080.wait_for_timeout(450)
+            i1080u = p1080.evaluate(TV_LAYOUT)
+            check(not i1080u["tabsHidden"], "1080p: tabs return after Up to the first row")
+            # Up from the first row focuses the tabs.
+            p1080.keyboard.press("ArrowUp")
+            p1080.wait_for_timeout(250)
+            on_tab = p1080.evaluate("() => !!(document.activeElement && document.activeElement.closest('#tv-tabs'))")
+            check(on_tab, "1080p: Up from the first row focuses the tabs")
+            # Left from the first poster still focuses the rail, then the slide-out.
+            p1080.evaluate("""() => {
+              const c = document.querySelector('#view .strip.cw .card, #view .strip .card, #view .card');
+              if (c && window.TV) TV.focus(c);
+            }""")
+            p1080.wait_for_timeout(200)
+            p1080.keyboard.press("ArrowLeft")
+            p1080.wait_for_timeout(200)
+            on_rail = p1080.evaluate("() => !!(document.activeElement && document.activeElement.closest('#tv-rail'))")
+            check(on_rail, "1080p: Left from the first poster focuses the rail")
+            p1080.keyboard.press("ArrowLeft")
+            p1080.wait_for_timeout(300)
+            i_menu = p1080.evaluate(TV_LAYOUT)
+            check(i_menu["menuOpen"] and i_menu["dimOn"], "1080p: a second Left opens the slide-out and dims the page")
+            p1080.keyboard.press("Escape")
+            p1080.wait_for_timeout(200)
+            # Details still scroll normally
+            p1080.goto("http://127.0.0.1:%d/#/item/%d" % (port, iid), wait_until="domcontentloaded")
+            p1080.wait_for_function(
+                "() => document.documentElement.classList.contains('tv-plex-off') && document.querySelector('#view h1, #view .actions, .detail-bg, #view .hero-text')",
+                timeout=15000)
+            p1080.wait_for_timeout(300)
+            det = p1080.evaluate("""() => {
+              const v = document.getElementById('view');
+              const cs = v && getComputedStyle(v);
+              return {
+                off: document.documentElement.classList.contains('tv-plex-off'),
+                pos: cs && cs.position,
+                overflowY: cs && cs.overflowY,
+              };
+            }""")
+            check(det["off"] and det["pos"] in ("static", "relative") and det["overflowY"] in ("auto", "scroll", "overlay"),
+                  "1080p: details pages leave the fixed home pane and can scroll (off=%s pos=%s overflow=%s)" % (
+                      det["off"], det["pos"], det["overflowY"]))
+            ctx1080.close()
+
+            # Short Android TV WebView: 960x540 CSS px at DPR 2 (physical 1920x1080)
+            ctx540 = br.new_context(viewport={"width": 960, "height": 540}, device_scale_factor=2, user_agent=TV_UA)
+            p540 = ctx540.new_page()
+            login_tv(p540)
+            i540 = p540.evaluate(TV_LAYOUT)
+            check_tv("540 WebView", i540, (300, 370), 160)
+            check_first_row("540 WebView", i540)
+            # The 2.5.3 bug: reserve 560px on a 540px viewport made the pane height ~0
+            check(i540["viewTop"] < i540["innerH"] - 160,
+                  "540 WebView: reserve is not taller than the window (top=%s innerH=%s)" % (
+                      i540["viewTop"], i540["innerH"]))
+            p540.keyboard.press("ArrowDown")
+            p540.wait_for_timeout(450)
+            i540b = p540.evaluate(TV_LAYOUT)
+            check_tv("540 WebView row 2", i540b, (300, 370), 160)
+            check_second_row("540 WebView", i540, i540b)
+            ctx540.close()
 
             br.close()
     except Exception as e:

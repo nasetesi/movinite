@@ -1,11 +1,13 @@
 /* TV-only Plex-inspired home layout. Desktop and phone are unchanged. */
 html.tv-mode.tv-plex {
-  --tv-hero-reserve: 560px;
+  /* Hero takes the top ~62%. The rows pane is the rest (about 38%), so a
+     short TV WebView (960x540 CSS px at DPR 2) still has a visible row slot.
+     No vh, clip-path, or mask. */
+  --tv-hero-share: 62%;
 }
 html.tv-mode.tv-plex,
 html.tv-mode.tv-plex body {
   background: #07070a;
-  height: 100%;
   overflow: hidden;
 }
 
@@ -20,16 +22,20 @@ html.tv-mode.tv-plex .top #sysstat,
 html.tv-mode.tv-plex .top .acct-w,
 html.tv-mode.tv-plex .hnav { display: none !important; }
 
+/* Fill the window without 100vh or height:100% (Android TV WebViews often
+   report a CSS viewport of 960x540 at DPR 2, and %/vh can be wrong). */
 html.tv-mode.tv-plex .shell {
+  position: fixed;
+  inset: 0;
   background: transparent;
-  height: 100%;
   overflow: hidden;
 }
 html.tv-mode.tv-plex .main {
+  position: absolute;
+  inset: 0;
   margin: 0;
   padding: 0;
   background: transparent;
-  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -37,21 +43,32 @@ html.tv-mode.tv-plex .main {
 html.tv-mode.tv-plex .top {
   display: none !important;
 }
-/* 2.5.3: #view is only the rows pane, clipped below the reserved hero.
-   Rows scroll inside this box and never paint over the title, description or tabs. */
+/* 2.5.4: #view is the rows slot under a fixed hero. The page does not scroll.
+   A rows track is translated by a fixed row pitch so the focused row sits in
+   this slot and the next row peeks from the bottom. No clip-path, mask, or vh. */
 html.tv-mode.tv-plex #view {
   position: absolute;
-  top: var(--tv-hero-reserve);
+  top: var(--tv-hero-share);
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 3;
-  padding: 20px 0 48px 108px;
+  padding: 0 0 0 108px;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   background: transparent;
-  scroll-behavior: auto;
+}
+html.tv-mode.tv-plex #view .tv-rows-track {
+  will-change: transform;
+  transition: transform .32s ease;
+}
+html.tv-mode.tv-plex #view .tv-home-row {
+  box-sizing: border-box;
+  overflow: visible;
+  padding: 0 0 0 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
 html.tv-mode.tv-plex .strip,
 html.tv-mode.tv-plex .hs,
@@ -67,18 +84,22 @@ html.tv-mode.tv-plex #tv-hero {
   display: block;
   position: fixed;
   inset: 0 0 auto 0;
-  height: 720px;
+  height: var(--tv-hero-share);
   z-index: 1;
   pointer-events: none;
   overflow: hidden;
 }
 #tv-hero .tv-hero-img,
 #tv-hero .tv-hero-img-b {
+  /* Backdrop sits on the right and stays vibrant (no uniform dark overlay). */
   position: absolute;
-  inset: 0;
-  background: #0a0a10 center top / cover no-repeat;
-  transform: scale(1.04);
-  transition: opacity .45s ease;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 26%;
+  background: #0a0a10 right top / cover no-repeat;
+  transform: scale(1.02);
+  transition: opacity .28s ease;
 }
 #tv-hero .tv-hero-img-b { opacity: 0; }
 #tv-hero.swap .tv-hero-img-b { opacity: 1; }
@@ -86,8 +107,8 @@ html.tv-mode.tv-plex #tv-hero {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(90deg, rgba(7,7,10,.7) 0%, rgba(7,7,10,.38) 30%, rgba(7,7,10,.08) 58%, rgba(7,7,10,0) 80%),
-    linear-gradient(180deg, rgba(7,7,10,.12) 0%, rgba(7,7,10,0) 30%, rgba(7,7,10,.28) 64%, #07070a 92%);
+    linear-gradient(90deg, #07070a 0%, #07070a 28%, rgba(7,7,10,.82) 40%, rgba(7,7,10,.28) 56%, rgba(7,7,10,0) 72%),
+    linear-gradient(180deg, rgba(7,7,10,0) 0%, rgba(7,7,10,0) 52%, rgba(7,7,10,.45) 78%, #07070a 100%);
 }
 #tv-hero .tv-hero-meta {
   position: absolute;
@@ -97,7 +118,9 @@ html.tv-mode.tv-plex #tv-hero {
   color: #fff;
   text-shadow: 0 2px 18px rgba(0,0,0,.45);
   pointer-events: none;
+  transition: opacity .18s ease;
 }
+#tv-hero.tv-hero-text-out .tv-hero-meta { opacity: 0; }
 #tv-hero .tv-hero-logo {
   display: block;
   max-width: 620px;
@@ -125,6 +148,18 @@ html.tv-mode.tv-plex #tv-hero {
   word-break: break-word;
 }
 #tv-hero.no-logo .tv-hero-logo { display: none; }
+@media (max-height: 700px) {
+  html.tv-mode.tv-plex #tv-hero .tv-hero-meta { top: 72px; }
+  html.tv-mode.tv-plex #tv-hero .tv-hero-title { font-size: 40px; }
+  html.tv-mode.tv-plex #tv-hero .tv-hero-logo { max-height: 88px; max-width: 420px; margin-bottom: 10px; }
+  html.tv-mode.tv-plex #tv-hero .tv-hero-facts { font-size: 16px; margin-bottom: 8px; }
+  html.tv-mode.tv-plex #tv-hero .tv-hero-ov { font-size: 16px; -webkit-line-clamp: 3; max-width: 520px; }
+  html.tv-mode.tv-plex #tv-hero .tv-hero-cast { font-size: 14px; max-width: 520px; }
+  html.tv-mode.tv-plex .strip.hs:not(.wide) { grid-auto-columns: var(--tv-card-w, 80px); gap: var(--tv-card-gap, 10px); }
+  html.tv-mode.tv-plex #view .row-head h3 { font-size: 16px; }
+  html.tv-mode.tv-plex #view .row-head { margin: 0 0 6px; }
+}
+
 #tv-hero .tv-hero-facts {
   display: flex;
   flex-wrap: wrap;
@@ -162,7 +197,7 @@ html.tv-mode.tv-plex #tv-hero {
   color: rgba(255,255,255,.84);
   max-width: 720px;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -191,6 +226,12 @@ html.tv-mode.tv-plex #tv-top {
   /* 2.1.2: transparent over the hero; a soft top fade keeps tabs/clock readable */
   background: transparent;
   border-bottom: 0;
+  transition: transform .28s ease, opacity .22s ease;
+}
+html.tv-mode.tv-plex.tv-tabs-hidden #tv-top {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
 }
 html.tv-mode.tv-plex #tv-top::before {
   content: "";
@@ -305,7 +346,7 @@ html.tv-mode.tv-plex #tv-rail {
   position: fixed;
   inset: 0;
   z-index: 20;
-  background: rgba(0,0,0,.45);
+  background: rgba(0,0,0,.82);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -438,11 +479,12 @@ html.tv-mode.tv-plex .tv-lib-tag {
   padding: 2px 8px;
   vertical-align: middle;
 }
-html.tv-mode.tv-plex .hrow { padding: 0 40px 18px 0; }
-html.tv-mode.tv-plex .strip.hs:not(.wide) { grid-auto-columns: 168px; gap: 16px; }
+html.tv-mode.tv-plex .hrow { padding: 30px 40px 8px 0; }
+html.tv-mode.tv-plex .strip.hs:not(.wide) { grid-auto-columns: var(--tv-card-w, 154px); gap: var(--tv-card-gap, 16px); }
 html.tv-mode.tv-plex .card .t,
 html.tv-mode.tv-plex .card .s,
 html.tv-mode.tv-plex .card .hov,
+html.tv-mode.tv-plex .card .why,
 html.tv-mode.tv-plex .card .qplay { display: none !important; }
 html.tv-mode.tv-plex .card {
   background: transparent;
@@ -465,12 +507,12 @@ html.tv-mode.tv-plex .card:focus,
 html.tv-mode.tv-plex .card:focus-visible {
   outline: none;
   z-index: 6;
-  transform: scale(1.06);
+  transform: scale(1.13);
 }
 html.tv-mode.tv-plex .card:focus .art,
 html.tv-mode.tv-plex .card:focus-visible .art {
-  border-color: #fff;
-  box-shadow: 0 0 0 3px #fff, 0 12px 30px rgba(0,0,0,.5);
+  border: 3px solid #fff;
+  box-shadow: 0 10px 22px rgba(0,0,0,.45);
   outline: none;
 }
 
@@ -484,6 +526,13 @@ html.tv-mode.tv-plex.tv-plex-off body,
 html.tv-mode.tv-plex.tv-auth,
 html.tv-mode.tv-plex.tv-auth body {
   overflow: auto;
+}
+html.tv-mode.tv-plex.tv-plex-off .shell,
+html.tv-mode.tv-plex.tv-plex-off .main {
+  position: relative;
+  inset: auto;
+  overflow: visible;
+  height: auto;
 }
 html.tv-mode.tv-plex.tv-plex-off #view {
   position: relative;
@@ -502,9 +551,9 @@ html.tv-mode.tv-plex #player { z-index: 40; }
 html.tv-mode.tv-plex #view .row-note,
 html.tv-mode.tv-plex #view .help.row-note,
 html.tv-mode.tv-plex #view .row-head h3 .muted { display: none !important; }
-html.tv-mode.tv-plex .card { transform-origin: 50% 80%; }
-html.tv-mode.tv-plex #view .row-head { padding-top: 4px; margin-bottom: 28px; }
-html.tv-mode.tv-plex #view > .row-head:first-child { margin-top: 0; }
+html.tv-mode.tv-plex .card { transform-origin: 50% 100%; }
+html.tv-mode.tv-plex #view .row-head { position: relative; z-index: 2; padding-top: 2px; margin: 0 0 8px; flex: 0 0 auto; }
+html.tv-mode.tv-plex #view .tv-home-row .row-head { margin-top: 0; }
 html.tv-mode.tv-plex .card { transform-origin: 50% 100%; }
 
 /* 2.1.1: signed-out TV shows only the sign-in / pair screen */

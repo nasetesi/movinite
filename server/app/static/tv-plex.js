@@ -193,6 +193,14 @@
           self.showHero(card);
         }
       });
+      if (!this._resizeOn) {
+        this._resizeOn = true;
+        window.addEventListener("resize", () => {
+          if (!isHome() || playerOn() || authOpen()) return;
+          self.syncRowPitch();
+          self.applyRowShift();
+        });
+      }
       const after = TV.afterRoute.bind(TV);
       TV.afterRoute = function () {
         // 2.1.2: apply tv-plex-off (and the tighter #view layout) BEFORE focusing
@@ -205,6 +213,11 @@
         const v = document.getElementById("view");
         if (detail && v) v.scrollTop = 0;
         after();
+        if (isHome() && !playerOn() && !authOpen()) {
+          self.layoutRows();
+          self.retagRows();
+          requestAnimationFrame(() => self.layoutRows());
+        }
         if (detail) {
           const pin = () => {
             if (v) v.scrollTop = 0;
@@ -349,6 +362,7 @@
       }
       const run = () => {
         this._heroTimer = 0;
+        this._heroAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
         const c = this._heroCard;
         if (!c) return;
         const id = c.dataset.id || (c.dataset.href || "").split("/").pop();
@@ -361,9 +375,12 @@
         this.paintHero(c, id);
         this.preloadNeighbors(c);
       };
-      // First backdrop can paint immediately; later moves wait ~300 ms so the remote stays snappy.
-      if (!this.heroId) run();
-      else this._heroTimer = setTimeout(run, 300);
+      // Paint immediately so left/right focus feels instant (<0.5 s), but coalesce
+      // rapid key-repeat so the backdrop does not thrash.
+      const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+      const since = now - (this._heroAt || 0);
+      if (!this.heroId || since > 80) run();
+      else this._heroTimer = setTimeout(run, 80);
     },
 
     preloadNeighbors(card) {
@@ -388,6 +405,42 @@
       const hero = document.getElementById("tv-hero");
       if (!hero) return;
       if (String(id || "") && String(this.heroId) === String(id)) return;
+      const writeText = () => {
+        const logo = document.getElementById("tv-hero-logo");
+        const tEl = document.getElementById("tv-hero-title");
+        if (it.logo) {
+          hero.classList.remove("no-logo");
+          logo.src = "/api/logo/" + it.logo;
+          logo.alt = title;
+          logo.hidden = false;
+          tEl.textContent = title;
+        } else {
+          hero.classList.add("no-logo");
+          logo.removeAttribute("src");
+          tEl.textContent = title;
+        }
+        const bits = [];
+        if (it.year) bits.push("<span>" + esc(it.year) + "</span>");
+        const rt = runtimeLabel(it.runtime);
+        if (rt) bits.push("<span class='dot'>·</span><span>" + esc(rt) + "</span>");
+        const genres = (it.genres || []).slice(0, 3);
+        if (genres.length) bits.push("<span class='dot'>·</span><span>" + genres.map(esc).join(", ") + "</span>");
+        if (it.certification) bits.push("<span class='tv-cert'>" + esc(it.certification) + "</span>");
+        if (it.rating) bits.push("<span class='tv-rate'><b>★</b> " + Number(it.rating).toFixed(1) + "</span>");
+        document.getElementById("tv-hero-facts").innerHTML = bits.join("");
+        document.getElementById("tv-hero-ov").textContent = it.overview || "";
+        const cast = (it.cast || []).slice(0, 4);
+        document.getElementById("tv-hero-cast").textContent = cast.length ? "Cast  " + cast.join(", ") : "";
+      };
+      if (this.heroId) {
+        hero.classList.add("tv-hero-text-out");
+        setTimeout(() => {
+          writeText();
+          requestAnimationFrame(() => hero.classList.remove("tv-hero-text-out"));
+        }, 80);
+      } else {
+        writeText();
+      }
       const bg = it.backdrop ? "/api/thumb/" + it.backdrop : (it.poster ? "/api/thumb/" + it.poster : "");
       const a = document.getElementById("tv-hero-a");
       const b = document.getElementById("tv-hero-b");
@@ -413,31 +466,6 @@
         pre.onerror = apply;
         pre.src = bg;
       }
-      const logo = document.getElementById("tv-hero-logo");
-      const tEl = document.getElementById("tv-hero-title");
-      if (it.logo) {
-        hero.classList.remove("no-logo");
-        logo.src = "/api/logo/" + it.logo;
-        logo.alt = title;
-        logo.hidden = false;
-        tEl.textContent = title;
-      } else {
-        hero.classList.add("no-logo");
-        logo.removeAttribute("src");
-        tEl.textContent = title;
-      }
-      const bits = [];
-      if (it.year) bits.push("<span>" + esc(it.year) + "</span>");
-      const rt = runtimeLabel(it.runtime);
-      if (rt) bits.push("<span class='dot'>·</span><span>" + esc(rt) + "</span>");
-      const genres = (it.genres || []).slice(0, 3);
-      if (genres.length) bits.push("<span class='dot'>·</span><span>" + genres.map(esc).join(", ") + "</span>");
-      if (it.certification) bits.push("<span class='tv-cert'>" + esc(it.certification) + "</span>");
-      if (it.rating) bits.push("<span class='tv-rate'><b>★</b> " + Number(it.rating).toFixed(1) + "</span>");
-      document.getElementById("tv-hero-facts").innerHTML = bits.join("");
-      document.getElementById("tv-hero-ov").textContent = it.overview || "";
-      const cast = (it.cast || []).slice(0, 4);
-      document.getElementById("tv-hero-cast").textContent = cast.length ? "Cast  " + cast.join(", ") : "";
     },
 
     rowHeading(from) {
@@ -470,52 +498,112 @@
       return cards[Math.min(Math.max(0, idx), cards.length - 1)] || cards[0];
     },
 
-    revealRow(el) {
-      // 2.5.3: snap the focused home row to the top of the rows pane (just under the hero).
+    layoutRows() {
+      // 2.5.4: wrap each heading+strip as a fixed-pitch row on a translated track.
       if (!isHome() || playerOn() || authOpen()) return;
-      if (document.documentElement.classList.contains("tv-plex-off")) return;
-      const card = el && el.closest && el.closest("#view .card");
-      if (!card) return;
       const view = document.getElementById("view");
       if (!view) return;
-      const strip = card.closest(".strip, .hs");
-      if (!strip) return;
-      // 1.4.4 wraps each strip in .hrow (prev/next buttons). The heading is the sibling before the wrapper.
-      const wrap = (strip.closest && strip.closest(".hrow")) || strip;
-      let row = wrap;
-      const head = this.rowHeading(wrap);
-      if (head) row = head;
-      const firstHead = view.querySelector(":scope > .row-head");
-      if (firstHead && row === firstHead) {
-        if (view.scrollTop !== 0) view.scrollTop = 0;
-        return;
+      let track = view.querySelector(":scope > .tv-rows-track");
+      if (!track) {
+        const kids = [...view.children];
+        if (!kids.length) return;
+        track = document.createElement("div");
+        track.className = "tv-rows-track";
+        const groups = [];
+        let cur = [];
+        kids.forEach((n) => {
+          if (n.classList && n.classList.contains("row-head")) {
+            if (cur.length) groups.push(cur);
+            cur = [n];
+          } else {
+            cur.push(n);
+          }
+        });
+        if (cur.length) groups.push(cur);
+        groups.forEach((g) => {
+          const row = document.createElement("div");
+          row.className = "tv-home-row";
+          g.forEach((n) => row.appendChild(n));
+          track.appendChild(row);
+        });
+        view.appendChild(track);
       }
-      const vr = view.getBoundingClientRect();
-      const rr = row.getBoundingClientRect();
-      const delta = rr.top - vr.top - 8;
-      if (Math.abs(delta) < 12) return;
-      view.scrollTop += delta;
+      this.syncRowPitch();
+      this.applyRowShift();
+    },
+
+    syncRowPitch() {
+      const view = document.getElementById("view");
+      const track = view && view.querySelector(":scope > .tv-rows-track");
+      if (!view || !track) return;
+      const h = view.clientHeight;
+      // One full row fills most of the slot; the top ~15–18% of the next row peeks.
+      const pitch = Math.max(120, Math.round(h * 0.85));
+      this._rowPitch = pitch;
+      // Size posters so the row title plus a 13% focus scale still fit in the pitch.
+      const artH = Math.min(240, Math.max(72, Math.floor((pitch - 64) / 1.13)));
+      const artW = Math.max(48, Math.round(artH / 1.5));
+      const gap = artW >= 130 ? 16 : 10;
+      track.style.setProperty("--tv-card-w", artW + "px");
+      track.style.setProperty("--tv-card-gap", gap + "px");
+      track.querySelectorAll(":scope > .tv-home-row").forEach((r) => { r.style.height = pitch + "px"; });
+    },
+
+    applyRowShift() {
+      const view = document.getElementById("view");
+      const track = view && view.querySelector(":scope > .tv-rows-track");
+      if (!track || !this._rowPitch) return;
+      const idx = Math.max(0, this._rowIndex || 0);
+      this._rowIndex = idx;
+      track.style.transform = "translateY(" + (-idx * this._rowPitch) + "px)";
+      document.documentElement.classList.toggle("tv-tabs-hidden", idx > 0);
+    },
+
+    revealRow(el) {
+      // 2.5.4: move the rows track so the focused row sits in the bottom slot.
+      if (!isHome() || playerOn() || authOpen()) return;
+      if (document.documentElement.classList.contains("tv-plex-off")) return;
+      const view = document.getElementById("view");
+      if (!view) return;
+      if (!view.querySelector(":scope > .tv-rows-track")) this.layoutRows();
+      const track = view.querySelector(":scope > .tv-rows-track");
+      if (!track) return;
+      if (!this._rowPitch) this.syncRowPitch();
+      const card = el && el.closest && el.closest("#view .card");
+      if (card) {
+        const row = card.closest(".tv-home-row");
+        const rows = [...track.querySelectorAll(":scope > .tv-home-row")];
+        const idx = row ? rows.indexOf(row) : 0;
+        if (idx >= 0) this._rowIndex = idx;
+      }
+      this.applyRowShift();
+      if (view.scrollTop) view.scrollTop = 0;
     },
 
     setTab(name, opts) {
       this.tab = name;
       document.querySelectorAll("#tv-tabs button").forEach((b) => b.classList.toggle("on", b.getAttribute("data-tab") === name));
       if (!isHome()) { location.hash = "#/home"; return; }
+      this.layoutRows();
       const keepFocus = !!(opts && opts.keepFocus);
       const heads = [...document.querySelectorAll("#view .row-head")];
       let target = null;
       if (name === "added") {
         target = heads.find((h) => /recently added/i.test(h.textContent));
       } else if (name === "libraries") {
-        // Libraries is a selectable tab: scroll to the first library row. The slide-out
+        // Libraries is a selectable tab: jump to the first library row. The slide-out
         // still opens from a second Left on the rail, not from this tab.
         target = heads.find((h) => !/continue watching|recently added/i.test(h.textContent)) || heads[1] || heads[0];
       } else {
         target = heads[0];
       }
       if (target) {
-        try { target.scrollIntoView({ block: "start", behavior: "auto", inline: "nearest" }); } catch (e) {
-          target.scrollIntoView(true);
+        const homeRow = target.closest && target.closest(".tv-home-row");
+        if (homeRow && homeRow.parentElement) {
+          const rows = [...homeRow.parentElement.querySelectorAll(":scope > .tv-home-row")];
+          const idx = rows.indexOf(homeRow);
+          if (idx >= 0) this._rowIndex = idx;
+          this.applyRowShift();
         }
         if (!keepFocus) {
           let strip = target.nextElementSibling;
