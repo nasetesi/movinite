@@ -4,6 +4,7 @@
 A small layout fix on top of 2.4 (schema stays 14; no database upgrade). No new Android app is needed.
 
 - **The player stats overlay keeps each value in its own column.** On a phone (and any other narrow width) the Encoder line used to print the full PCI name of the video card — for example `Idle · GPU (VAAPI) (Intel Corporation DG2 [Arc A310])` — and run over the Dropped count. The visible name is now a short label such as `Arc A310`, on a second line, with the full name in a tooltip. The 2×2 grid can shrink (`minmax(0, 1fr)` and `min-width: 0`), and cell text wraps or ellipsizes instead of painting over the next column. This is the in-page (WebView) player used by the phone app, desktop browsers, and a 2.0.2 TV app. The native 2.4 player has no stats overlay, so no new APK is included.
+- **The same overlay is more see-through.** The fill is about 26% opaque (it was 38%), with a light blur and a text shadow so CPU, RAM, Encoder and Dropped stay readable on a bright scene, and more of the picture shows through.
 
 The 2.4 native player, 2.3 Skip Intro / image-subtitle burn-in, 2.2 playback behaviour, and 2.1.4 TV remote navigation are unchanged.
 

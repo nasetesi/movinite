@@ -69,6 +69,13 @@ def test_overlay_layout():
           "narrow phone widths tighten the panel gap")
     check("white-space:nowrap" in CSS[CSS.index(".pl-ss-fr{"):CSS.index(".pl-ss-fr{") + 280],
           "the dropped-only pill still stays on one line")
+    import re
+    bg = re.search(r"background:rgba\(16,12,22,\.(\d+)\)", rule)
+    got = bg.group(1) if bg else "?"
+    check(bg and 18 <= int(bg.group(1)) <= 32,
+          "the stats panel fill is more see-through than the old 38 percent, now ." + got)
+    check("text-shadow:" in rule, "labels have a text shadow so they stay readable on a bright scene")
+    check("backdrop-filter:blur(" in rule, "a subtle backdrop blur is still applied")
 
 
 def test_render_uses_short_name():

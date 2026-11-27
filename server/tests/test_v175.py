@@ -103,8 +103,11 @@ def main():
           "stats panel is a 2x2 grid")
     check("left:50%;transform:translateX(-50%)" in css[css.index(".pl-ss{"):css.index(".pl-ss{") + 400],
           "stats panel sits top-center under the title bar")
-    check("background:rgba(16,12,22,.38)" in css and "backdrop-filter:blur(14px)" in css[css.index(".pl-ss{"):css.index(".pl-ss{") + 700],
-          "stats panel uses a glass / translucent background")
+    import re
+    bg = re.search(r"background:rgba\(16,12,22,\.(0?\d+)\)", chunk)
+    check(bg and 18 <= int(bg.group(1)) <= 45, "stats panel uses a glass / translucent background")
+    check("backdrop-filter:blur(" in chunk and "text-shadow:" in chunk,
+          "stats panel keeps a subtle blur and a text shadow")
     check(".player.ov-on .pl-ss{opacity:1}" in css, "stats panel fades with the other controls")
     check(".pl-ss .hw-badge{background:var(--acc-fill);color:var(--on-acc)" in css,
           "GPU badge stays the solid purple pill")
