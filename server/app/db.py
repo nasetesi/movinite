@@ -448,6 +448,8 @@ ADDED_COLUMNS = [
     ("items", "color_transfer", "TEXT"),                 # 1.7.9: smpte2084 / arib-std-b67 / ...
     ("items", "color_primaries", "TEXT"),                # 2.2
     ("items", "color_space", "TEXT"),                    # 2.2
+    ("items", "hdr_type", "TEXT"),                       # 2.6: hdr10/hlg/dv5/dv7/dv8/hdr10-mistagged/sdr; no schema bump
+    ("items", "hdr_primaries", "TEXT"),                  # 2.6: bt2020/smpte431/smpte432 from mastering; no schema bump
     ("users", "auto_skip_intro", "INTEGER NOT NULL DEFAULT 0"),   # 2.3
     ("users", "auto_skip_credits", "INTEGER NOT NULL DEFAULT 0"), # 2.3
     ("keyframes", "status", "TEXT"),                     # 1.7.9: ok | partial | retry

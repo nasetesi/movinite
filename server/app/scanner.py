@@ -441,7 +441,7 @@ def build_item(lib, root: Path, path: Path, size, mtime):
                "artist", "album", "album_artist", "track", "disc", "genre", "duration", "container", "vcodec",
                "acodec", "width", "height", "bitrate", "pix_fmt", "audio_streams", "subtitle_streams",
                "external_subs", "size", "mtime", "thumb", "poster", "probed", "art_poster", "art_tmdb",
-               "rotation", "color_transfer", "color_primaries", "color_space"}
+               "rotation", "color_transfer", "color_primaries", "color_space", "hdr_type", "hdr_primaries"}
     return {k: v for k, v in info.items() if k in allowed}
 
 

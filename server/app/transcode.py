@@ -277,7 +277,7 @@ def native_hdr_ok(item, client):
         return bool(client.get("hdr10") or client.get("dv"))
     if hdr == "HLG":
         return bool(client.get("hlg") or client.get("hdr10"))
-    if "Dolby" in str(hdr) or hdr in ("DV", "DoVi"):
+    if "Dolby" in str(hdr) or hdr in ("DV", "DoVi", "DV5"):
         return bool(client.get("dv"))
     return True
 
@@ -323,44 +323,46 @@ _hdr_cache = {}
 
 
 def _hdr_from_transfer(t):
+    from . import hdr as hdrmod
     t = (t or "").strip().rstrip(",")
-    return "HDR10" if t == "smpte2084" else "HLG" if t == "arib-std-b67" else ""
+    k = hdrmod.HDR_TRANSFERS.get(t, "")
+    return _hdr_label(k)
+
+
+def _hdr_label(kind):
+    """2.2-compatible label for caps and older tests: HDR10 / HLG / DV5 / ''."""
+    from . import hdr as hdrmod
+    if not kind or kind == hdrmod.KIND_SDR:
+        return ""
+    if kind == hdrmod.KIND_HLG:
+        return "HLG"
+    if kind == hdrmod.KIND_DV5:
+        return "DV5"
+    if kind in hdrmod.PQ_KINDS:
+        return "HDR10"
+    return ""
+
+
+def hdr_kind(item, probe=True):
+    """2.6 kind (hdr10/hlg/dv5/dv7/dv8/hdr10-mistagged) or ''."""
+    from . import hdr as hdrmod
+    key = (item.get("path"), item.get("mtime"), item.get("hdr_type"))
+    if key in _hdr_cache and item.get("hdr_type"):
+        return _hdr_cache[key]
+    k = hdrmod.hdr_info(item, probe=probe)
+    if len(_hdr_cache) > 2000:
+        _hdr_cache.clear()
+    _hdr_cache[key] = k
+    return k
 
 
 def hdr_info(item):
-    """'HDR10' / 'HLG' / '' for a video item (10-bit sources only).
+    """'HDR10' / 'HLG' / 'DV5' / '' for a video item (10-bit sources only).
 
-    1.7.9: prefer color_transfer saved at library-scan time so play does not ffprobe the NAS.
+    1.7.9 / 2.6: prefer hdr_type and color_transfer saved at scan/backfill time so
+    play does not ffprobe the NAS.
     """
-    pf = item.get("pix_fmt") or ""
-    if item.get("media_type") != "video" or ("10" not in pf and "12" not in pf):
-        return ""
-    if item.get("color_transfer"):
-        v = _hdr_from_transfer(item.get("color_transfer"))
-        _hdr_cache[(item.get("path"), item.get("mtime"))] = v
-        return v
-    key = (item.get("path"), item.get("mtime"))
-    if key in _hdr_cache:
-        return _hdr_cache[key]
-    v = ""
-    try:
-        o = subprocess.run([config.FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
-                            "stream=color_transfer", "-of", "csv=p=0", item["path"]], capture_output=True, timeout=20)
-        t = o.stdout.decode(errors="replace").strip().splitlines()
-        t = t[0].strip().rstrip(",") if t else ""
-        v = _hdr_from_transfer(t)
-        if t and item.get("id"):
-            try:
-                with db.tx() as c:
-                    c.execute("UPDATE items SET color_transfer=? WHERE id=?", (t, item["id"]))
-            except Exception:
-                pass
-    except (OSError, subprocess.TimeoutExpired):
-        v = ""
-    if len(_hdr_cache) > 2000:
-        _hdr_cache.clear()
-    _hdr_cache[key] = v
-    return v
+    return _hdr_label(hdr_kind(item))
 
 
 class Session:
@@ -402,14 +404,23 @@ class Session:
             self.rot = hwaccel.rotation(item)
             if self.rot and self.hw[0] == "nvenc":
                 self.stages = ["enc", "cpu"]     # no GPU rotate filter for CUDA frames in ffmpeg 6.1
-        if self.burn and self.hw[0] == "vaapi" and not hwaccel.has_filter("overlay_vaapi"):
-            # 2.3: no overlay_vaapi — CPU-overlay the subtitle plane and hwupload (enc), then CPU
-            self.stages = [x for x in self.stages if x != "full"] or ["enc", "cpu"]
+        # 2.6.1: VAAPI burn-in no longer needs overlay_vaapi (GPU decode -> hwdownload -> CPU
+        # overlay -> hwupload), so the "full" stage is kept for every VAAPI server.
         if self.burn and self.hw[0] == "nvenc":
             self.stages = [x for x in self.stages if x != "full"] or ["enc", "cpu"]
         if self.hevc:
             self.stages = [x for x in self.stages if x != "cpu"]   # no CPU HEVC: the player steps down instead
         self.stage_i = 0
+        # 2.6.1: DV 8.1 / 7 and true mistagged HDR need a software tonemap.
+        # A GPU-decode hop then software map was only ~1.0x; CPU decode + 1080
+        # libplacebo + VAAPI encode is ~1.8x. Start at "enc" (keep "full" in
+        # the list so a later sticky/retry can still use it). Heart of the
+        # Beast is now classified as SDR, so it stays on the fast full path.
+        if self.hw[0] == "vaapi" and "enc" in self.stages:
+            from . import hdr as hdrmod
+            kind = hdrmod.hdr_info(item, probe=True)
+            if hdrmod.needs_software_tonemap(kind):
+                self.stage_i = self.stages.index("enc")
         self.fallbacks = []
         self.started_at = 0
         if bounds:
@@ -596,15 +607,16 @@ class Session:
                 h, hk = box[1], vk
             hw = hwaccel.stage_args(self.hw[0], self.hw[1], self.stage, h, hk, self.rot,
                                     width=box[0] if box else None, codec="hevc" if self.hevc else "h264",
-                                    hdr=hdr_info(it))
+                                    hdr=hdr_kind(it), item=it)
             cmd += hw[0]
         elif config.HWACCEL and not audio_only:
             cmd += ["-hwaccel", config.HWACCEL]
         burn = int(getattr(self, "burn", 0) or 0) if not audio_only else 0
-        # overlay_vaapi needs a named VAAPI device to hwupload the subtitle plane
-        if burn and hw and self.hw[0] == "vaapi" and self.stage == "full" and hwaccel.has_filter("overlay_vaapi"):
-            if "-init_hw_device" not in cmd:
-                cmd += ["-init_hw_device", "vaapi=hw:%s" % self.hw[1], "-filter_hw_device", "hw"]
+        # 2.6.1: the burn chain hwuploads after a CPU overlay. Decoder and filters must share
+        # ONE VAAPI device (two devices = solid green picture on the Arc).
+        if burn and hw and self.hw[0] == "vaapi" and self.stage == "full":
+            n_pre = len(hw[0])
+            cmd = cmd[:len(cmd) - n_pre] + hwaccel.vaapi_one_device(hw[0], self.hw[1])
         cmd += ["-ss", "%.3f" % t0, "-i", it["path"]]
         if audio_only:
             cmd += ["-map", "0:a:%d?" % self.audio_idx, "-vn", "-sn", "-dn"]
@@ -615,7 +627,12 @@ class Session:
             if src_h and src_h < maxh and not box:
                 vk = max(600, int(vk * (src_h / maxh) ** 1.5))
             ow, oh = hwaccel.output_size(it, h, box, getattr(self, "rot", 0))
-            base_vf = hw[1] if hw else None
+            if hw:
+                base_vf = hw[1]
+            else:
+                # 2.6.1: CPU burn keeps the HDR tone-map (and the fitted 2K/4K box)
+                base_vf = (hwaccel.software_scale(box[1], box[0], hdr=hdr_kind(it), item=it) if box
+                           else hwaccel.software_scale(h, hdr=hdr_kind(it), item=it))
             method = self.hw[0] if (hw and self.stage != "cpu") else "cpu"
             fc = hwaccel.burn_filter_complex(self.stage if hw else "cpu", method or "cpu",
                                              ow, oh, burn, base_video_f=base_vf)
@@ -634,9 +651,10 @@ class Session:
             # scale bitrate down for small sources
             if src_h and src_h < maxh and not box:      # 1.5.4: 2K/4K already sized for the fitted box
                 vk = max(600, int(vk * (src_h / maxh) ** 1.5))
-            vf = "scale=-2:'min(%d,ih)',format=yuv420p" % h
             if box:
-                vf = "scale=%d:%d,format=yuv420p" % box
+                vf = hwaccel.software_scale(box[1], box[0], hdr=hdr_kind(it), item=it)
+            else:
+                vf = hwaccel.software_scale(h, hdr=hdr_kind(it), item=it)
             if hw:
                 cmd += ["-vf", hw[1]] + hw[2] + ["-force_key_frames", "expr:gte(t,n_forced*%g)" % SEG, "-g", "%d" % int(SEG * 30)]
             else:

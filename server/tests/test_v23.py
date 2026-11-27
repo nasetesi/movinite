@@ -158,7 +158,10 @@ check(any(s.get("codec") == "hdmv_pgs_subtitle" for s in pb["image_subs"]), "ima
 
 hwaccel._filters = {"overlay_vaapi", "scale_vaapi", "tonemap_vaapi"}
 fc = hwaccel.burn_filter_complex("full", "vaapi", 1920, 1080, 3, base_video_f="scale_vaapi=w=1920:h=1080:format=nv12")
-check("overlay_vaapi" in fc and "hwupload" in fc and "[0:3]" in fc, "full VAAPI path uses overlay_vaapi and uploads only the subtitle plane")
+# 2.6.1: overlay_vaapi gave a green / pink picture on the Arc; the full path now downloads,
+# overlays on the CPU and uploads again (see test_green_subs261.py).
+check("overlay_vaapi" not in fc and "hwdownload" in fc and "hwupload" in fc and "[0:3]" in fc,
+      "full VAAPI path downloads, overlays on the CPU, and uploads (no overlay_vaapi)")
 hwaccel._filters = {"scale_vaapi"}  # no overlay_vaapi
 fc2 = hwaccel.burn_filter_complex("enc", "vaapi", 1920, 1080, 3)
 check("overlay=" in fc2 and "hwupload" in fc2 and "overlay_vaapi" not in fc2,
