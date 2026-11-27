@@ -195,10 +195,10 @@
       });
       const after = TV.afterRoute.bind(TV);
       TV.afterRoute = function () {
-        // 2.1.2: apply tv-plex-off (and the tighter #view padding) BEFORE focusing
+        // 2.1.2: apply tv-plex-off (and the tighter #view layout) BEFORE focusing
         // Resume/Play. In 2.1, afterRoute ran first while the home page still had
-        // 560px top padding, scrolled Play into the middle, then collapsing the
-        // padding jumped the page down and hid the button.
+        // a large reserved top area, scrolled Play into the middle, then collapsing
+        // that area jumped the page down and hid the button.
         if (authOpen()) { after(); self.syncAuth(); return; }
         self.syncPage();
         const detail = TV.isDetailView && TV.isDetailView();
@@ -217,6 +217,14 @@
           requestAnimationFrame(pin);
         }
       };
+      if (!TV.focus._tvplexRow) {
+        const focus = TV.focus.bind(TV);
+        TV.focus = function (el, opts) {
+          focus(el, opts);
+          self.revealRow(el);
+        };
+        TV.focus._tvplexRow = true;
+      }
       const onKey = TV.onKey.bind(TV);
       TV.onKey = function (e) {
         const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
@@ -432,6 +440,63 @@
       document.getElementById("tv-hero-cast").textContent = cast.length ? "Cast  " + cast.join(", ") : "";
     },
 
+    rowHeading(from) {
+      // The heading lives before the .hrow wrapper; a row-sub or row-note may sit between them.
+      let el = from && from.previousElementSibling;
+      while (el && !(el.classList && el.classList.contains("row-head"))) {
+        if (el.classList && el.classList.contains("hrow")) break;
+        el = el.previousElementSibling;
+      }
+      return (el && el.classList && el.classList.contains("row-head")) ? el : null;
+    },
+
+    rowStep(card, dir) {
+      // Next/previous home row, same poster index when possible. Geometric nearest can skip a
+      // row when the focused poster is scaled up and overlaps the one below.
+      const strip = card && card.closest && card.closest(".strip, .hs");
+      if (!strip) return null;
+      const wrap = (strip.closest && strip.closest(".hrow")) || strip;
+      const strips = [...document.querySelectorAll("#view .hrow, #view > .strip, #view > .hs")].filter((n) => {
+        if (n.matches && n.matches(".strip, .hs") && n.closest && n.closest(".hrow")) return false;
+        return !!(n.querySelector && n.querySelector(".card"));
+      });
+      const i = strips.indexOf(wrap);
+      if (i < 0) return null;
+      const next = strips[i + dir];
+      if (!next) return null;
+      const cards = [...next.querySelectorAll(".card")];
+      if (!cards.length) return null;
+      const idx = [...strip.querySelectorAll(".card")].indexOf(card);
+      return cards[Math.min(Math.max(0, idx), cards.length - 1)] || cards[0];
+    },
+
+    revealRow(el) {
+      // 2.5.3: snap the focused home row to the top of the rows pane (just under the hero).
+      if (!isHome() || playerOn() || authOpen()) return;
+      if (document.documentElement.classList.contains("tv-plex-off")) return;
+      const card = el && el.closest && el.closest("#view .card");
+      if (!card) return;
+      const view = document.getElementById("view");
+      if (!view) return;
+      const strip = card.closest(".strip, .hs");
+      if (!strip) return;
+      // 1.4.4 wraps each strip in .hrow (prev/next buttons). The heading is the sibling before the wrapper.
+      const wrap = (strip.closest && strip.closest(".hrow")) || strip;
+      let row = wrap;
+      const head = this.rowHeading(wrap);
+      if (head) row = head;
+      const firstHead = view.querySelector(":scope > .row-head");
+      if (firstHead && row === firstHead) {
+        if (view.scrollTop !== 0) view.scrollTop = 0;
+        return;
+      }
+      const vr = view.getBoundingClientRect();
+      const rr = row.getBoundingClientRect();
+      const delta = rr.top - vr.top - 8;
+      if (Math.abs(delta) < 12) return;
+      view.scrollTop += delta;
+    },
+
     setTab(name, opts) {
       this.tab = name;
       document.querySelectorAll("#tv-tabs button").forEach((b) => b.classList.toggle("on", b.getAttribute("data-tab") === name));
@@ -453,8 +518,12 @@
           target.scrollIntoView(true);
         }
         if (!keepFocus) {
-          const row = target.parentElement;
-          const card = (row && row.querySelector(".card")) || document.querySelector("#view .card");
+          let strip = target.nextElementSibling;
+          while (strip && !(strip.classList && (strip.classList.contains("hrow") || strip.classList.contains("strip") || strip.classList.contains("hs")))) {
+            strip = strip.nextElementSibling;
+          }
+          const card = (strip && strip.querySelector && strip.querySelector(".card"))
+            || document.querySelector("#view .card");
           if (card && window.TV) TV.focus(card);
         }
       }
@@ -799,6 +868,16 @@
           this.armPreview(tab);
         }
         return true;
+      }
+      if ((key === "ArrowDown" || key === "ArrowUp") && onCard && isHome() && !playerOn()
+          && !document.documentElement.classList.contains("tv-plex-off")) {
+        const n = this.rowStep(cur, key === "ArrowDown" ? 1 : -1);
+        if (n) {
+          e.preventDefault(); e.stopPropagation();
+          if (window.TV) TV.focus(n);
+          else n.focus();
+          return true;
+        }
       }
       if (key === "ArrowDown" && onTab) {
         e.preventDefault(); e.stopPropagation();

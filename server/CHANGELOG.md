@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.3 -- 2026-11-26
+A TV-home layout fix on top of 2.5.2. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so this is a server/web change only.
+
+- **The top of the TV home stays reserved for the selected movie.** On the Plex-style TV home (For You, Recently Added, and Libraries), the backdrop, title, details, description and cast stay in a fixed area at the top. Only the poster rows below that line scroll. Moving down to a lower row (for example Recommended for you) snaps that row up just under the hero; earlier rows scroll away above the line and are clipped, instead of sliding over the title and colliding with the tabs. Hero updates on focus are still debounced as in 2.1.4. The rail, the tabs, and the Left / rail / slide-out behavior are unchanged. Phone and desktop are unchanged.
+
 ## 2.5.2 -- 2026-11-26
 A visual fix on top of 2.5.1, for phones only. Schema stays at 15. No new Android app is needed.
 

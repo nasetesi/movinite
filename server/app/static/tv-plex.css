@@ -1,6 +1,13 @@
 /* TV-only Plex-inspired home layout. Desktop and phone are unchanged. */
+html.tv-mode.tv-plex {
+  --tv-hero-reserve: 560px;
+}
 html.tv-mode.tv-plex,
-html.tv-mode.tv-plex body { background: #07070a; }
+html.tv-mode.tv-plex body {
+  background: #07070a;
+  height: 100%;
+  overflow: hidden;
+}
 
 html.tv-mode.tv-plex .side,
 html.tv-mode.tv-plex .tabbar,
@@ -15,21 +22,34 @@ html.tv-mode.tv-plex .hnav { display: none !important; }
 
 html.tv-mode.tv-plex .shell {
   background: transparent;
+  height: 100%;
+  overflow: hidden;
 }
 html.tv-mode.tv-plex .main {
   margin: 0;
   padding: 0;
   background: transparent;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 /* 2.1.2: the web header (search, sounds, status, account) is web-only */
 html.tv-mode.tv-plex .top {
   display: none !important;
 }
+/* 2.5.3: #view is only the rows pane, clipped below the reserved hero.
+   Rows scroll inside this box and never paint over the title, description or tabs. */
 html.tv-mode.tv-plex #view {
-  position: relative;
+  position: absolute;
+  top: var(--tv-hero-reserve);
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 3;
-  padding: 560px 0 48px 108px;
-  min-height: 1080px;
+  padding: 20px 0 48px 108px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: transparent;
   scroll-behavior: auto;
 }
@@ -97,7 +117,13 @@ html.tv-mode.tv-plex #tv-hero {
   font-weight: 800;
   letter-spacing: -0.03em;
 }
-#tv-hero.no-logo .tv-hero-title { display: block; }
+#tv-hero.no-logo .tv-hero-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
 #tv-hero.no-logo .tv-hero-logo { display: none; }
 #tv-hero .tv-hero-facts {
   display: flex;
@@ -452,7 +478,23 @@ html.tv-mode.tv-plex .card:focus-visible .art {
 html.tv-mode.tv-plex.tv-plex-off #tv-hero,
 html.tv-mode.tv-plex.tv-plex-off #tv-top,
 html.tv-mode.tv-plex.tv-plex-off #tv-rail { display: none !important; }
-html.tv-mode.tv-plex.tv-plex-off #view { padding: 24px 40px 40px 40px; }
+/* Details, player, and other off-home pages scroll normally again. */
+html.tv-mode.tv-plex.tv-plex-off,
+html.tv-mode.tv-plex.tv-plex-off body,
+html.tv-mode.tv-plex.tv-auth,
+html.tv-mode.tv-plex.tv-auth body {
+  overflow: auto;
+}
+html.tv-mode.tv-plex.tv-plex-off #view {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  padding: 24px 40px 40px 40px;
+  min-height: 0;
+  overflow: auto;
+}
 html.tv-mode.tv-plex.tv-plex-off .side { display: none !important; }
 
 html.tv-mode.tv-plex #player { z-index: 40; }
@@ -462,6 +504,7 @@ html.tv-mode.tv-plex #view .help.row-note,
 html.tv-mode.tv-plex #view .row-head h3 .muted { display: none !important; }
 html.tv-mode.tv-plex .card { transform-origin: 50% 80%; }
 html.tv-mode.tv-plex #view .row-head { padding-top: 4px; margin-bottom: 28px; }
+html.tv-mode.tv-plex #view > .row-head:first-child { margin-top: 0; }
 html.tv-mode.tv-plex .card { transform-origin: 50% 100%; }
 
 /* 2.1.1: signed-out TV shows only the sign-in / pair screen */
