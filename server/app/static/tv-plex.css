@@ -12,8 +12,12 @@ html.tv-mode.tv-plex {
   --tv-title-size: 119px;
 }
 html.tv-mode.tv-plex,
-html.tv-mode.tv-plex body {
-  background: #07070a;
+html.tv-mode.tv-plex body,
+html.tv-mode.tv-scaled,
+html.tv-mode.tv-scaled body {
+  /* 2.5.6: opaque #0F1115 so a TV WebView never flashes a solid blue
+     (or the splash color) before the first backdrop loads. */
+  background: #0F1115 !important;
   overflow: hidden;
 }
 
@@ -33,8 +37,11 @@ html.tv-mode.tv-plex .hnav { display: none !important; }
 html.tv-mode.tv-plex .shell {
   position: fixed;
   inset: 0;
+  /* Transparent so the full-window hero underlay (a body sibling)
+     shows through; z-index keeps the rows above that underlay. */
   background: transparent;
   overflow: hidden;
+  z-index: 2;
 }
 html.tv-mode.tv-plex .main {
   position: absolute;
@@ -95,21 +102,23 @@ html.tv-mode.tv-plex .hrow > .strip {
 html.tv-mode.tv-plex #tv-hero {
   display: block;
   position: fixed;
-  inset: 0 0 auto 0;
-  height: var(--tv-hero-share);
-  z-index: 1;
+  inset: 0;
+  height: auto;
+  z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  background: #0F1115;
 }
 #tv-hero .tv-hero-img,
 #tv-hero .tv-hero-img-b {
-  /* Backdrop sits on the right and stays vibrant (no uniform dark overlay). */
+  /* Backdrop sits on the right and stays vibrant (no uniform dark overlay).
+     Before an image loads, the fill is the same dark #0F1115 as the page. */
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   left: 26%;
-  background: #0a0a10 right top / cover no-repeat;
+  background: #0F1115 right top / cover no-repeat;
   transform: scale(1.02);
   transition: opacity .28s ease;
 }
@@ -118,9 +127,11 @@ html.tv-mode.tv-plex #tv-hero {
 #tv-hero .tv-hero-g {
   position: absolute;
   inset: 0;
+  /* 2.5.6: a stronger left scrim keeps white title text readable on a
+     bright backdrop; the right side stays relatively clear. */
   background:
-    linear-gradient(90deg, #07070a 0%, #07070a 28%, rgba(7,7,10,.82) 40%, rgba(7,7,10,.28) 56%, rgba(7,7,10,0) 72%),
-    linear-gradient(180deg, rgba(7,7,10,0) 0%, rgba(7,7,10,0) 52%, rgba(7,7,10,.45) 78%, #07070a 100%);
+    linear-gradient(90deg, #0F1115 0%, #0F1115 30%, rgba(15,17,21,.94) 42%, rgba(15,17,21,.78) 52%, rgba(15,17,21,.42) 64%, rgba(15,17,21,.12) 76%, rgba(15,17,21,0) 88%),
+    linear-gradient(180deg, rgba(15,17,21,0) 0%, rgba(15,17,21,0) 52%, rgba(15,17,21,.5) 78%, #0F1115 100%);
 }
 #tv-hero .tv-hero-meta {
   position: absolute;
@@ -130,7 +141,7 @@ html.tv-mode.tv-plex #tv-hero {
   max-height: calc(var(--tv-hero-share) - 40px);
   overflow: hidden;
   color: #fff;
-  text-shadow: 0 2px 18px rgba(0,0,0,.45);
+  text-shadow: 0 2px 22px rgba(0,0,0,.75), 0 0 2px rgba(0,0,0,.85);
   pointer-events: none;
   transition: opacity .18s ease;
 }
@@ -311,7 +322,13 @@ html.tv-mode.tv-plex #tv-rail {
   box-sizing: border-box;
   padding: 36px 12px 36px var(--tv-safe-left);
   z-index: 7;
-  background: linear-gradient(90deg, rgba(0,0,0,.45), rgba(0,0,0,0));
+  /* 2.5.6: opaque fill, no right border. A semi-transparent rail over a
+     bright first-load color drew a 1px white seam down the screen. */
+  background: #0F1115;
+  border: 0;
+  border-right: 0;
+  box-shadow: none;
+  outline: none;
 }
 html.tv-mode.tv-plex #tv-rail button {
   appearance: none;
@@ -590,7 +607,7 @@ html.tv-mode.tv-plex.tv-plex-off #view {
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: max(56px, calc(var(--tv-screen-h) * 0.07)) 48px 96px max(48px, var(--tv-safe-left, 48px));
+  padding: max(48px, calc(var(--tv-screen-h) * 0.055)) 48px 28px max(48px, var(--tv-safe-left, 48px));
   box-sizing: border-box;
   min-height: 0;
 }
@@ -605,7 +622,7 @@ html.tv-mode.tv-plex.tv-plex-off .detail-bg-phone {
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  background: #07070a;
+  background: #0F1115;
 }
 html.tv-mode.tv-plex.tv-plex-off .detail-bg .dbg-img,
 html.tv-mode.tv-plex.tv-plex-off .detail-bg-phone .dbg-img {
@@ -625,9 +642,10 @@ html.tv-mode.tv-plex.tv-plex-off .detail-bg-phone::after {
   content: "";
   position: absolute;
   inset: 0;
+  /* 2.5.6: stronger left scrim, same idea as the home hero. */
   background:
-    linear-gradient(90deg, #07070a 0%, #07070a 22%, rgba(7,7,10,.82) 38%, rgba(7,7,10,.28) 56%, rgba(7,7,10,0) 74%),
-    linear-gradient(180deg, rgba(7,7,10,0) 0%, rgba(7,7,10,0) 48%, rgba(7,7,10,.45) 78%, #07070a 100%);
+    linear-gradient(90deg, #0F1115 0%, #0F1115 24%, rgba(15,17,21,.94) 38%, rgba(15,17,21,.72) 50%, rgba(15,17,21,.32) 64%, rgba(15,17,21,0) 80%),
+    linear-gradient(180deg, rgba(15,17,21,0) 0%, rgba(15,17,21,0) 48%, rgba(15,17,21,.5) 78%, #0F1115 100%);
 }
 html.tv-mode.tv-plex.tv-plex-off .hero,
 html.tv-mode.tv-plex.tv-plex-off .hero.soft { display: none !important; }
@@ -641,15 +659,17 @@ html.tv-mode.tv-plex.tv-plex-off .detail {
   display: flex;
   flex-wrap: nowrap;
   align-items: flex-start;
-  gap: 48px;
-  min-height: calc(var(--tv-screen-h, 1080px) * 0.78);
-  padding-bottom: 24px;
+  gap: 36px;
+  /* 2.5.6: no 78% min-height — that left a large empty gap and pushed Cast
+     off the first screen. The poster, info, and cast now share one screen. */
+  min-height: 0;
+  padding-bottom: 8px;
   box-sizing: border-box;
 }
 html.tv-mode.tv-plex.tv-plex-off .detail .poster,
 html.tv-mode.tv-plex.tv-plex-off .detail .poster:not(.landscape):not(.square) {
-  width: calc(var(--tv-screen-h, 1080px) * 0.42 * 2 / 3);
-  max-width: 380px;
+  width: calc(var(--tv-screen-h, 1080px) * 0.38 * 2 / 3);
+  max-width: 320px;
   flex: none;
   align-self: flex-start;
   margin-top: 6px;
@@ -672,13 +692,13 @@ html.tv-mode.tv-plex.tv-plex-off .detail .info {
   padding-bottom: 8px;
 }
 html.tv-mode.tv-plex.tv-plex-off .detail h1 {
-  margin: 0 0 18px;
+  margin: 0 0 14px;
   font-size: var(--tv-title-size);
   line-height: 1.05;
   font-weight: 800;
   letter-spacing: -0.03em;
   color: #fff;
-  text-shadow: 0 2px 18px rgba(0,0,0,.45);
+  text-shadow: 0 2px 22px rgba(0,0,0,.75), 0 0 2px rgba(0,0,0,.85);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -710,13 +730,17 @@ html.tv-mode.tv-plex.tv-plex-off .detail .overview {
   line-height: 1.4;
   color: rgba(255,255,255,.86);
   max-width: 900px;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 html.tv-mode.tv-plex.tv-plex-off .actions {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
-  margin: 22px 0 8px;
+  margin: 16px 0 6px;
   padding: 8px 4px;
 }
 html.tv-mode.tv-plex.tv-plex-off .actions .btn,
@@ -782,8 +806,11 @@ html.tv-mode.tv-plex.tv-plex-off .list .li .w {
   font-size: 18px !important;
 }
 html.tv-mode.tv-plex.tv-plex-off .dsec {
-  margin-top: 36px;
-  padding-top: 8px;
+  margin-top: 16px;
+  padding-top: 4px;
+}
+html.tv-mode.tv-plex.tv-plex-off .dsec:has(.cast-strip) {
+  margin-top: 12px;
 }
 html.tv-mode.tv-plex.tv-plex-off .dsec .row-head h3,
 html.tv-mode.tv-plex.tv-plex-off .dsec h3 {
@@ -792,10 +819,11 @@ html.tv-mode.tv-plex.tv-plex-off .dsec h3 {
   margin: 0 0 14px;
 }
 html.tv-mode.tv-plex.tv-plex-off .cast-strip {
-  grid-auto-columns: 160px;
-  gap: 18px;
-  padding: 12px 4px 16px;
+  grid-auto-columns: calc(var(--tv-screen-h, 1080px) * 0.17 * 2 / 3 + 16px);
+  gap: 16px;
+  padding: 10px 6px 8px;
   margin: 0;
+  overflow: visible;
 }
 html.tv-mode.tv-plex.tv-plex-off .person {
   border: 3px solid transparent;
@@ -803,17 +831,20 @@ html.tv-mode.tv-plex.tv-plex-off .person {
   padding: 4px;
 }
 html.tv-mode.tv-plex.tv-plex-off .person .pph {
-  width: 148px;
-  height: 148px;
+  width: calc(var(--tv-screen-h, 1080px) * 0.17 * 2 / 3);
+  height: calc(var(--tv-screen-h, 1080px) * 0.17);
+  aspect-ratio: 2 / 3;
   border-radius: 12px;
 }
 html.tv-mode.tv-plex.tv-plex-off .person .pn {
   font-size: 18px;
   margin-top: 8px;
   color: #fff;
+  display: block;
 }
 html.tv-mode.tv-plex.tv-plex-off .person .pc {
   font-size: 16px;
+  display: block;
 }
 html.tv-mode.tv-plex.tv-plex-off .strip,
 html.tv-mode.tv-plex.tv-plex-off .hrow > .strip,
@@ -858,5 +889,5 @@ html.tv-mode #auth {
   position: fixed;
   inset: 0;
   z-index: 80;
-  background: #07070a;
+  background: #0F1115;
 }
