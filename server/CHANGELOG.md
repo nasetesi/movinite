@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.3 -- 2026-11-26
+A playback fix on top of 2.4.2 (schema stays 14; no database upgrade). The native Android player also gets a small update (versionCode 11).
+
+- **Native playback works again.** After installing the 2.4 APK, Play handed off to the native player, which asked for a 2K HEVC transcode. The server started ffmpeg successfully, then crashed on every fMP4 (`.m4s`) segment request with `TypeError: hls_segment() takes from 3 to 11 positional arguments but 12 were given`. ExoPlayer showed "Can't play this title: Source error" and sat at 0:00. The `.m4s` route was passing `acopy` into the `.ts` handler, which did not accept that argument (and the `.ts` handler itself referenced `acopy` without declaring it). Both routes now share one helper that takes `acopy`, so HEVC fMP4 and H.264 MPEG-TS segments are served normally.
+- **The native player no longer dead-ends on a source error.** If HEVC fails it retries the same height as H.264, and if that fails it opens the in-page web player. A small debug line shows the real error (for example `ERROR_CODE_IO_BAD_HTTP_STATUS · HTTP 500`) instead of only "Source error".
+
+The 2.4.2 purple dropdown chrome is unchanged.
+
 ## 2.4.2 -- 2026-11-26
 A small visual fix on top of 2.4.1 (schema stays 14; no database upgrade). No new Android app is needed.
 

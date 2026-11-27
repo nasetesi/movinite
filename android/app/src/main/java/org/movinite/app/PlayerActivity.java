@@ -35,6 +35,7 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.HttpDataSource;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
@@ -47,9 +48,11 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -63,6 +66,8 @@ public class PlayerActivity extends Activity {
     static final String EXTRA_START = "start";
     static final String EXTRA_AUDIO = "audio";
     static final String EXTRA_SUB = "sub";
+    static final String EXTRA_ERROR = "error";
+    static final String EXTRA_FALLBACK = "fallback";
 
     private static final ExecutorService IO = Executors.newCachedThreadPool();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -82,6 +87,7 @@ public class PlayerActivity extends Activity {
     private int audioIdx;
     private String subKey = "";
     private String mode = "";
+    private final Set<String> triedModes = new HashSet<>();
     private boolean triedDirect;
     private boolean autoSkipIntro, autoSkipCredits;
     private boolean skippedIntro, shownUpNext, cancelledUpNext;
@@ -92,7 +98,7 @@ public class PlayerActivity extends Activity {
 
     private PlayerView surface;
     private View chrome, wait, skipRow, upNext, menu;
-    private TextView title, modeLab, waitText, tCur, tEnd, upTitle, upCount, menuTitle;
+    private TextView title, modeLab, waitText, debugLine, tCur, tEnd, upTitle, upCount, menuTitle;
     private SeekBar seek;
     private ImageView trickView;
     private Button btnPlay, btnBack10, btnFwd10, btnAudio, btnSubs, btnQuality;
@@ -134,8 +140,14 @@ public class PlayerActivity extends Activity {
                 .putExtra(EXTRA_START, o.optDouble("start", 0))
                 .putExtra(EXTRA_AUDIO, o.optInt("audio", 0))
                 .putExtra(EXTRA_SUB, o.optString("sub", ""));
-            if (!(c instanceof Activity)) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            c.startActivity(i);
+            if (c instanceof MainActivity) {
+                ((MainActivity) c).startActivityForResult(i, MainActivity.REQ_NATIVE_PLAY);
+            } else if (c instanceof Activity) {
+                ((Activity) c).startActivityForResult(i, MainActivity.REQ_NATIVE_PLAY);
+            } else {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                c.startActivity(i);
+            }
             return "{\"ok\":true}";
         } catch (Exception e) {
             return "{\"ok\":false}";
@@ -174,6 +186,7 @@ public class PlayerActivity extends Activity {
         chrome = findViewById(R.id.chrome);
         wait = findViewById(R.id.wait);
         waitText = findViewById(R.id.wait_text);
+        debugLine = findViewById(R.id.debug);
         skipRow = findViewById(R.id.skip_row);
         upNext = findViewById(R.id.upnext);
         menu = findViewById(R.id.menu);
@@ -353,6 +366,7 @@ public class PlayerActivity extends Activity {
     private void startStream(String m, double at) {
         if (player == null || item == null) return;
         mode = m;
+        if (m != null) triedModes.add(m);
         ended = false;
         shownUpNext = false;
         long seekMs = (long) Math.max(0, at * 1000);
@@ -405,22 +419,49 @@ public class PlayerActivity extends Activity {
         return out;
     }
 
-    private void onPlayError(PlaybackException e) {
-        String next = null;
-        if ("direct".equals(mode)) {
-            JSONObject p = pb();
-            if (p != null && p.optBoolean("remux")) next = "remux";
-            else if (p != null) next = firstTranscode(p);
-        } else if ("remux".equals(mode)) {
-            next = firstTranscode(pb() == null ? new JSONObject() : pb());
+    private String describeError(PlaybackException e) {
+        Integer http = null;
+        String cause = null;
+        Throwable c = e == null ? null : e.getCause();
+        while (c != null) {
+            if (c instanceof HttpDataSource.InvalidResponseCodeException)
+                http = ((HttpDataSource.InvalidResponseCodeException) c).responseCode;
+            if (cause == null && c.getMessage() != null) cause = c.getMessage();
+            c = c.getCause();
         }
-        if (next != null && !next.equals(mode)) {
-            Toast.makeText(this, "Switching to " + label(next), Toast.LENGTH_SHORT).show();
-            startAt = player != null ? player.getCurrentPosition() / 1000.0 : startAt;
+        return PlayFallback.errorDetail(e == null ? null : e.getErrorCodeName(),
+            http, e == null ? null : e.getMessage(), cause);
+    }
+
+    private void showDebug(String s) {
+        if (debugLine == null) return;
+        debugLine.setText(s == null ? "" : s);
+        debugLine.setVisibility(s == null || s.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private void onPlayError(PlaybackException e) {
+        String detail = describeError(e);
+        showDebug(detail);
+        if (waitText != null) waitText.setText(detail);
+        if (mode != null) triedModes.add(mode);
+        String next = PlayFallback.nextMode(mode, pb(), caps, triedModes);
+        if (next != null && !PlayFallback.WEB.equals(next)) {
+            Toast.makeText(this, "Switching to " + label(next) + " \u00b7 " + detail, Toast.LENGTH_SHORT).show();
+            startAt = player != null ? Math.max(startAt, player.getCurrentPosition() / 1000.0) : startAt;
             startStream(next, startAt);
             return;
         }
-        Toast.makeText(this, "Can't play this title: " + (e.getMessage() == null ? "error" : e.getMessage()), Toast.LENGTH_LONG).show();
+        // 2.4.3: after HEVC and H.264 fail, hand the title back to the in-page player.
+        Intent data = new Intent()
+            .putExtra(EXTRA_ITEM, itemId)
+            .putExtra(EXTRA_START, player != null ? Math.max(startAt, player.getCurrentPosition() / 1000.0) : startAt)
+            .putExtra(EXTRA_AUDIO, audioIdx)
+            .putExtra(EXTRA_SUB, subKey == null ? "" : subKey)
+            .putExtra(EXTRA_ERROR, detail)
+            .putExtra(EXTRA_FALLBACK, PlayFallback.WEB);
+        setResult(RESULT_OK, data);
+        Toast.makeText(this, "Opening the in-page player \u00b7 " + detail, Toast.LENGTH_LONG).show();
+        finish();
     }
 
     private String label(String m) {

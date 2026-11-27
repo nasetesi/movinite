@@ -4185,6 +4185,13 @@ const SK = {
   }
 };
 
+/** 2.4.3: the native Android player calls this when ExoPlayer cannot play
+ *  (after trying HEVC, then H.264) so playback continues in the in-page player. */
+function playInWebPlayer(id, startAt) {
+  try { toast("Opening the in-page player"); } catch (e) {}
+  return playItem(id, startAt, { forceWeb: true });
+}
+
 async function playItem(id, startAt, opts) {
   opts = opts || {};
   try { probeDecoders(); } catch (e) {}   // 1.7.9: do not block first open on the decoder probe
@@ -4198,7 +4205,7 @@ async function playItem(id, startAt, opts) {
   if (it.media_type === "audio") { playQueue([it], 0); return; }
   if (startAt === undefined) startAt = it.position > 30 ? it.position : 0;
   // 2.4: the Android TV (and phone) app hands Play to the native ExoPlayer. Browse stays in the WebView.
-  if (nativePlaySupported() && it.media_type === "video") {
+  if (!opts.forceWeb && nativePlaySupported() && it.media_type === "video") {
     try {
       const sub = (function(){ try { return localStorage.getItem("pl-subs") || ""; } catch (e) { return ""; } })();
       const raw = window.MSAndroid.playNative(JSON.stringify({
