@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.7 -- 2026-11-26
+A typography and layout fix on top of 2.5.6, for the television and for phones. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only. Desktop is unchanged.
+
+- **The first TV home poster is no longer cut off by the left rail, and the rail is slimmer.** In every home row, the first poster's left edge (and its white focus border) used to sit under the solid rail. Rows now start after the rail with a safe gap, and focusing a poster scrolls the strip so the scaled card and its border stay fully visible. The collapsed rail is narrower (about 3.5–4% of the screen) with slimmer icons. The profile icon stays pinned at the top and can be focused with the remote; the Search, Home and Libraries icons are vertically centered in the remaining space. The slide-out menu is a little narrower too.
+- **TV focus uses a single white style, not a double border.** Action buttons (Resume, Play from start, Mark watched, Download), slide-out items, and rail icons no longer draw a thick white outline plus a purple or white outer ring. Focused buttons fill white with dark text; posters and rail icons use one solid white border. The leftover "N of the top-billed" count above Cast on a movie details page is hidden on TV.
+- **The see-through phone top bar is on every screen, not just movie pages.** Home, Libraries, Search, Downloads, Settings, and lists use the same transparent header as the details pages from 2.5.4 (a soft top fade and icon shadows over the #0F1115 page, never a gray or frosted bar). Content scrolls under the bar. The bottom tab bar is unchanged. The Android app's system status bar is still the app's dark color — matching that area would need a new app build, and is not part of this update.
+
+
 ## 2.5.6 -- 2026-11-26
 A typography and first-load fix for the television, on top of 2.5.5. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so this is a server/web change only. Phone and desktop are unchanged.
 

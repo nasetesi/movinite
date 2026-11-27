@@ -5885,8 +5885,18 @@ const TV = {
     const strip = el.closest(".strip, .hs, .cast-strip");
     if (strip && typeof strip.scrollLeft === "number") {
       const sr = strip.getBoundingClientRect(), er = el.getBoundingClientRect();
-      if (er.left < sr.left + 16) strip.scrollLeft += er.left - sr.left - 16;
-      else if (er.right > sr.right - 16) strip.scrollLeft += er.right - sr.right + 16;
+      let leftPad = 16;
+      const rail = document.getElementById("tv-rail");
+      if (document.documentElement.classList.contains("tv-plex") && rail) {
+        const art = el.querySelector && el.querySelector(".art");
+        const box = art ? art.getBoundingClientRect() : er;
+        const minLeft = rail.getBoundingClientRect().right + 8;
+        if (box.left < minLeft) strip.scrollLeft += box.left - minLeft;
+        else if (box.right > sr.right - 16) strip.scrollLeft += box.right - sr.right + 16;
+      } else {
+        if (er.left < sr.left + leftPad) strip.scrollLeft += er.left - sr.left - leftPad;
+        else if (er.right > sr.right - 16) strip.scrollLeft += er.right - sr.right + 16;
+      }
     }
   },
   playerOn() {

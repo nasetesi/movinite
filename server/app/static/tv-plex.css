@@ -4,8 +4,10 @@ html.tv-mode.tv-plex {
   --tv-screen-h: 1080px;
   --tv-screen-w: 1920px;
   --tv-hero-share: 60%;
-  --tv-safe-left: 64px;
-  --tv-rail-w: 148px;
+  --tv-safe-left: 14px;
+  --tv-rail-w: 68px;
+  --tv-rail-btn: 44px;
+  --tv-row-inset: 24px;
   --tv-focus-pad: 40px;
   --tv-card-w: 168px;
   --tv-card-gap: 18px;
@@ -66,7 +68,7 @@ html.tv-mode.tv-plex #view {
   right: 0;
   bottom: 0;
   z-index: 3;
-  padding: 0 0 0 var(--tv-rail-w);
+  padding: 0 0 0 calc(var(--tv-rail-w) + 12px);
   min-height: 0;
   overflow: hidden;
   background: transparent;
@@ -91,7 +93,7 @@ html.tv-mode.tv-plex .hrow > .strip {
   /* style.css uses padding + a matching negative margin so hover-scale can
      paint outside the strip. That pulled the focused poster up through the
      row label and clipped its top border. Zero the margin and pad for scale. */
-  padding: var(--tv-focus-pad) 0 6px 0;
+  padding: var(--tv-focus-pad) var(--tv-focus-pad) 6px var(--tv-row-inset, 24px);
   margin: 0;
 }
 
@@ -135,7 +137,7 @@ html.tv-mode.tv-plex #tv-hero {
 }
 #tv-hero .tv-hero-meta {
   position: absolute;
-  left: var(--tv-rail-w);
+  left: calc(var(--tv-rail-w) + 12px);
   top: max(44px, calc(var(--tv-screen-h) * 0.08));
   right: 32%;
   max-height: calc(var(--tv-hero-share) - 40px);
@@ -307,20 +309,21 @@ html.tv-mode.tv-plex #tv-top::before {
   text-shadow: 0 1px 8px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.85);
 }
 
-/* Slim closed rail */
+/* Slim closed rail. 2.5.7: narrower (~3.5–4%), profile pinned at the top,
+   remaining icons vertically centered, single white focus border. */
 #tv-rail {
   display: none;
 }
 html.tv-mode.tv-plex #tv-rail {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 0;
   position: fixed;
   left: 0; top: 0; bottom: 0;
   width: var(--tv-rail-w);
   box-sizing: border-box;
-  padding: 36px 12px 36px var(--tv-safe-left);
+  padding: 22px 0;
   z-index: 7;
   /* 2.5.6: opaque fill, no right border. A semi-transparent rail over a
      bright first-load color drew a 1px white seam down the screen. */
@@ -330,47 +333,57 @@ html.tv-mode.tv-plex #tv-rail {
   box-shadow: none;
   outline: none;
 }
+html.tv-mode.tv-plex #tv-rail .tv-rail-nav {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  width: 100%;
+  min-height: 0;
+}
 html.tv-mode.tv-plex #tv-rail button {
   appearance: none;
-  width: var(--tv-rail-btn, 68px);
-  height: var(--tv-rail-btn, 68px);
-  flex: 0 0 var(--tv-rail-btn, 68px);
-  border: 0;
+  width: var(--tv-rail-btn, 44px);
+  height: var(--tv-rail-btn, 44px);
+  flex: 0 0 var(--tv-rail-btn, 44px);
+  border: 3px solid transparent;
   border-radius: 50%;
   background: transparent;
   color: #fff;
   display: grid;
   place-items: center;
   cursor: pointer;
+  box-shadow: none;
+  outline: none;
+  transition: transform .12s ease, background .12s ease, border-color .12s ease;
 }
-html.tv-mode.tv-plex #tv-rail button svg { width: 36px; height: 36px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-html.tv-mode.tv-plex #tv-rail button {
-  border: 2px solid transparent;
-  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
-}
+html.tv-mode.tv-plex #tv-rail button svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 html.tv-mode.tv-plex #tv-rail button:focus,
 html.tv-mode.tv-plex #tv-rail button:focus-visible,
 html.tv-mode.tv-plex #tv-rail button.tv-focused {
   outline: none;
   background: rgba(255,255,255,.22);
   border-color: #fff;
-  box-shadow: 0 0 0 3px #fff, 0 0 0 7px rgba(255,255,255,.3);
+  box-shadow: none;
   transform: scale(1.08);
 }
 html.tv-mode.tv-plex #tv-rail .tv-rail-av {
-  width: var(--tv-rail-btn, 68px);
-  height: var(--tv-rail-btn, 68px);
-  font-size: 24px;
+  width: var(--tv-rail-btn, 44px);
+  height: var(--tv-rail-btn, 44px);
+  flex: 0 0 var(--tv-rail-btn, 44px);
   border-radius: 50%;
   background: #5b4a9a;
   color: #fff;
   font-weight: 700;
-  font-size: 22px;
+  font-size: 15px;
   display: grid;
   place-items: center;
-  margin-bottom: 10px;
+  margin: 0;
+  z-index: 1;
 }
-#tv-rail .tv-rail-spacer { flex: 1; }
+#tv-rail .tv-rail-spacer { display: none; }
 
 /* Dim + slide-out menu panel */
 #tv-dim {
@@ -389,10 +402,10 @@ html.tv-mode.tv-plex.tv-menu-open #tv-rail { visibility: hidden; }
   display: none;
   position: fixed;
   z-index: 21;
-  left: var(--tv-safe-left, 28px);
+  left: var(--tv-safe-left, 14px);
   top: 48px;
   bottom: 48px;
-  width: 230px;
+  width: 200px;
   background: rgba(22, 22, 26, .96);
   border-radius: 22px;
   box-shadow: 0 16px 60px rgba(0,0,0,.55);
@@ -447,9 +460,13 @@ html.tv-mode.tv-plex.tv-menu-open #tv-menu { display: flex; }
 #tv-menu a.tv-mi:focus,
 #tv-menu a.tv-mi:focus-visible {
   outline: none;
-  background: rgba(255,255,255,.1);
-  box-shadow: inset 0 0 0 2px rgba(255,255,255,.35);
+  background: #fff;
+  color: #111;
+  box-shadow: none;
+  border: 0;
 }
+#tv-menu button:focus .tv-mi-txt span,
+#tv-menu a.tv-mi:focus .tv-mi-txt span { color: rgba(0,0,0,.5); }
 #tv-menu button.on,
 #tv-menu a.tv-mi.on {
   background: #fff;
@@ -459,7 +476,8 @@ html.tv-mode.tv-plex.tv-menu-open #tv-menu { display: flex; }
 #tv-menu a.tv-mi.on .tv-mi-txt span { color: rgba(0,0,0,.5); }
 #tv-menu button.on:focus,
 #tv-menu a.tv-mi.on:focus {
-  box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(255,255,255,.25);
+  box-shadow: none;
+  outline: none;
 }
 #tv-menu .tv-profile .tv-rail-av {
   width: 32px; height: 32px; border-radius: 50%;
@@ -477,6 +495,13 @@ html.tv-mode.tv-plex.tv-menu-open #tv-menu { display: flex; }
   border-radius: 10px;
   padding-left: 12px;
   font-size: 15px;
+}
+
+/* 2.5.7: hide the leftover "N of the top-billed" (and similar muted
+   counts) that floated above Cast on the TV details page. */
+html.tv-mode.tv-plex.tv-plex-off .dsec .row-head .muted,
+html.tv-mode.tv-plex.tv-plex-off .detail .row-head .muted {
+  display: none !important;
 }
 
 /* Rows under the hero */
@@ -607,7 +632,7 @@ html.tv-mode.tv-plex.tv-plex-off #view {
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: max(48px, calc(var(--tv-screen-h) * 0.055)) 48px 28px max(48px, var(--tv-safe-left, 48px));
+  padding: max(48px, calc(var(--tv-screen-h) * 0.055)) 48px 28px calc(var(--tv-rail-w) + 24px);
   box-sizing: border-box;
   min-height: 0;
 }
@@ -758,17 +783,29 @@ html.tv-mode.tv-plex.tv-plex-off .actions .btn.ghost {
 html.tv-mode.tv-plex.tv-plex-off .actions .btn:focus,
 html.tv-mode.tv-plex.tv-plex-off .actions .btn:focus-visible,
 html.tv-mode.tv-plex.tv-plex-off .tabs button:focus,
-html.tv-mode.tv-plex.tv-plex-off .tabs button:focus-visible,
+html.tv-mode.tv-plex.tv-plex-off .tabs button:focus-visible {
+  outline: none !important;
+  border: 3px solid #fff;
+  box-shadow: none;
+  background: #fff;
+  color: #111;
+  transform: none;
+  z-index: 3;
+}
 html.tv-mode.tv-plex.tv-plex-off .li:focus,
 html.tv-mode.tv-plex.tv-plex-off .li:focus-visible,
 html.tv-mode.tv-plex.tv-plex-off .person:focus,
-html.tv-mode.tv-plex.tv-plex-off .person:focus-visible,
+html.tv-mode.tv-plex.tv-plex-off .person:focus-visible {
+  outline: none !important;
+  border: 3px solid #fff;
+  box-shadow: none;
+  transform: scale(1.04);
+  z-index: 3;
+}
 html.tv-mode.tv-plex.tv-plex-off .card:focus,
 html.tv-mode.tv-plex.tv-plex-off .card:focus-visible {
-  outline: none;
-  border: 3px solid #fff;
-  box-shadow: 0 0 0 3px #fff, 0 0 0 7px rgba(255,255,255,.3);
-  transform: scale(1.04);
+  outline: none !important;
+  box-shadow: none;
   z-index: 3;
 }
 html.tv-mode.tv-plex.tv-plex-off .tabs {
@@ -890,4 +927,39 @@ html.tv-mode #auth {
   inset: 0;
   z-index: 80;
   background: #0F1115;
+}
+
+
+/* 2.5.7: one clean TV focus style — a solid white border, no purple
+   outline and no double box-shadow ring. style.css uses an ID-level
+   white outline plus an 8px purple ring on #play/#resume; !important
+   is required to override that. */
+html.tv-mode.tv-plex *:focus,
+html.tv-mode.tv-plex *:focus-visible {
+  outline: none !important;
+}
+html.tv-mode.tv-plex .btn:focus,
+html.tv-mode.tv-plex .btn:focus-visible,
+html.tv-mode.tv-plex .actions .btn:focus,
+html.tv-mode.tv-plex .actions .btn:focus-visible,
+html.tv-mode.tv-plex .main-actions .btn:focus,
+html.tv-mode.tv-plex .main-actions .btn:focus-visible,
+html.tv-mode.tv-plex .tabs button:focus,
+html.tv-mode.tv-plex .tabs button:focus-visible,
+html.tv-mode.tv-plex #resume:focus,
+html.tv-mode.tv-plex #resume:focus-visible,
+html.tv-mode.tv-plex #play:focus,
+html.tv-mode.tv-plex #play:focus-visible,
+html.tv-mode.tv-plex #playnext:focus,
+html.tv-mode.tv-plex #playnext:focus-visible,
+html.tv-mode.tv-plex #playall:focus,
+html.tv-mode.tv-plex #playall:focus-visible,
+html.tv-mode.tv-plex #watched:focus,
+html.tv-mode.tv-plex #watched:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+  border: 3px solid #fff !important;
+  background: #fff !important;
+  color: #111 !important;
 }

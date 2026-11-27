@@ -111,11 +111,12 @@
       const who = (window.ME && (ME.username || ME.name)) || "Admin";
       document.body.appendChild(el(`
         <div id="tv-rail" aria-label="Menu">
-          <button type="button" class="tv-rail-av" id="tv-rail-av" data-rail="menu" aria-label="Account">${esc(initials(who))}</button>
-          <button type="button" data-rail="search" aria-label="Search">${ico.search}</button>
-          <button type="button" data-rail="home" aria-label="Home">${ico.home}</button>
-          <button type="button" data-rail="menu" aria-label="Libraries">${ico.grid}</button>
-          <div class="tv-rail-spacer"></div>
+          <button type="button" class="tv-rail-av" id="tv-rail-av" data-rail="menu" tabindex="0" aria-label="Account">${esc(initials(who))}</button>
+          <div class="tv-rail-nav">
+            <button type="button" data-rail="search" tabindex="0" aria-label="Search">${ico.search}</button>
+            <button type="button" data-rail="home" tabindex="0" aria-label="Home">${ico.home}</button>
+            <button type="button" data-rail="menu" tabindex="0" aria-label="Libraries">${ico.grid}</button>
+          </div>
         </div>`));
       document.body.appendChild(el(`<div id="tv-dim" aria-hidden="true"></div>`));
       document.body.appendChild(el(`<div id="tv-menu" role="menu" aria-label="Menu"></div>`));
@@ -240,6 +241,8 @@
         TV.focus = function (el, opts) {
           focus(el, opts);
           self.revealRow(el);
+          self.revealCardPastRail(el);
+          requestAnimationFrame(() => self.revealCardPastRail(el));
         };
         TV.focus._tvplexRow = true;
       }
@@ -564,11 +567,14 @@
       // ~11% of the 1080 layout (~119px), a step up from the 86px 2.5.5 first pass.
       const title = Math.max(110, Math.round(h * 0.11));
       root.style.setProperty("--tv-title-size", title + "px");
-      const safe = Math.max(32, Math.round(w * 0.04));
-      const btn = h <= 700 ? 60 : 68;
+      // 2.5.7: collapsed rail is ~3.5–4% of the 1920 layout, with slimmer
+      // icons. Safe inset is a small overscan pad, not 4% of the width.
+      const safe = Math.max(12, Math.round(w * 0.008));
+      const btn = h <= 700 ? 40 : 44;
+      const railW = safe + btn + 8;
       root.style.setProperty("--tv-safe-left", safe + "px");
       root.style.setProperty("--tv-rail-btn", btn + "px");
-      root.style.setProperty("--tv-rail-w", (safe + btn + 16) + "px");
+      root.style.setProperty("--tv-rail-w", railW + "px");
     },
 
     syncRowPitch() {
@@ -589,6 +595,10 @@
       const heroPct = Math.max(50, Math.min(62, ((h - pane) / h) * 100));
       document.documentElement.style.setProperty("--tv-hero-share", heroPct.toFixed(2) + "%");
       document.documentElement.style.setProperty("--tv-focus-pad", scalePad + "px");
+      // Leave room after the rail for the 13% focus scale and a 3px border
+      // so the first poster's left edge (and its white outline) stay visible.
+      const rowInset = Math.ceil(posterW * 0.13 / 2) + 10;
+      document.documentElement.style.setProperty("--tv-row-inset", rowInset + "px");
       const gap = posterW >= 130 ? 18 : 12;
       track.style.setProperty("--tv-card-w", posterW + "px");
       track.style.setProperty("--tv-card-gap", gap + "px");
@@ -606,6 +616,25 @@
       this._rowIndex = idx;
       track.style.transform = "translateY(" + (-idx * this._rowPitch) + "px)";
       if (this.tabsEnabled) document.documentElement.classList.toggle("tv-tabs-hidden", idx > 0);
+    },
+
+    revealCardPastRail(el) {
+      // 2.5.7: the opaque rail sits over the left of #view. Scroll the
+      // strip so a focused card (including its scale and white border)
+      // is fully to the right of the rail, never tucked under it.
+      if (!el || !el.getBoundingClientRect) return;
+      const strip = el.closest && el.closest(".strip, .hs, .cast-strip");
+      if (!strip || typeof strip.scrollLeft !== "number") return;
+      const rail = document.getElementById("tv-rail");
+      const gap = 8;
+      const minLeft = (rail ? rail.getBoundingClientRect().right : 0) + gap;
+      const er = el.getBoundingClientRect();
+      const art = el.querySelector && el.querySelector(".art");
+      const box = art ? art.getBoundingClientRect() : er;
+      if (box.left < minLeft) strip.scrollLeft += box.left - minLeft;
+      const sr = strip.getBoundingClientRect();
+      const maxRight = sr.right - gap;
+      if (box.right > maxRight) strip.scrollLeft += box.right - maxRight;
     },
 
     revealRow(el) {
