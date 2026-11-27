@@ -120,11 +120,11 @@ def seed(data):
     settings.put("server_name", "Harbor")
     now = int(time.time())
     libs = [
-        ("Sunset Movies", "movies", (168, 78, 28)),
-        ("Sunset TV", "tv", (40, 70, 110)),
-        ("Webosn Movies", "movies", (22, 48, 118)),
-        ("Webosn TV", "tv", (72, 28, 96)),
-        ("Webosn Other and Music", "music", (30, 90, 70)),
+        ("Harbor Movies", "movies", (168, 78, 28)),
+        ("Harbor Television", "tv", (40, 70, 110)),
+        ("Northshore Movies", "movies", (22, 48, 118)),
+        ("Northshore Television", "tv", (72, 28, 96)),
+        ("Northshore Feature Films", "music", (30, 90, 70)),
     ]
     films = [
         ("Harbor Night", 2016, (22, 48, 118)),
@@ -143,7 +143,7 @@ def seed(data):
             c.execute("INSERT INTO libraries(name, kind, path, scan_interval_h, created_at) VALUES(?,?,?,?,?)",
                       (name, kind, str(media), 0, now))
             lib_ids[name] = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-        movies_id = lib_ids["Sunset Movies"]
+        movies_id = lib_ids["Harbor Movies"]
         for i, (title, year, color) in enumerate(films, start=1):
             name = hashlib.sha1((title + str(color)).encode()).hexdigest() + ".jpg"
             paint_jpeg(thumbs / name, color, title)
@@ -157,7 +157,7 @@ def seed(data):
                       "VALUES(?,?, 'video','movie',?,?,?,7200,?,1,?,?,?)",
                       (movies_id, str(clip), title, title, year, now, tid, name, "matched"))
             ids[title] = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-        tv_id = lib_ids["Sunset TV"]
+        tv_id = lib_ids["Harbor Television"]
         show = "Harbor Days"
         sname = hashlib.sha1((show + "show").encode()).hexdigest() + ".jpg"
         paint_jpeg(thumbs / sname, (40, 70, 110), show)
@@ -415,7 +415,7 @@ if ready:
                           for n in info["names"]),
                       "%s: library names are not cut off (%s)" % (label, info["names"]))
                 texts = [n["text"] for n in info["names"]]
-                check("Sunset Movies" in texts and "Webosn Other and Music" in texts,
+                check("Harbor Movies" in texts and "Northshore Feature Films" in texts,
                       "%s: long library names are present in full (%s)" % (label, texts))
 
                 # Walk Down from Home through Search, My List, libraries, Settings
