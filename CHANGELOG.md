@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.6 -- 2026-11-26
+A typography and first-load fix for the television, on top of 2.5.5. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so this is a server/web change only. Phone and desktop are unchanged.
+
+- **The TV home no longer shows a white vertical line or a solid blue flash on first load.** Before the first backdrop arrived, the page sat on a bright solid color and the slim left rail had a visible 1px seam down the screen. The page, the rail, and the hero now use an opaque #0F1115 fill (the same dark color as the rest of the app) until the artwork loads, and the rail no longer draws a right-edge border.
+- **White title text stays readable on a bright backdrop.** The left-to-right fade behind the hero text (and on the movie and show details pages) is stronger on the left, and stays relatively clear on the right.
+- **Cast photos fit on the first screen of a movie details page.** The empty gap under the poster and synopsis is gone, the poster is about 35–40% of the screen tall, the synopsis is limited to four lines, and the cast row (photos about 16–18% of the screen tall, with names) sits fully on screen at 1920×1080 and on a short 960×540 TV WebView, with no scrolling required. Focus rings stay visible and unclipped. On a show page, season tabs and episodes can still scroll below.
+
 ## 2.5.5 -- 2026-11-26
 A typography and spacing fix for the television, on top of 2.5.4. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so this is a server/web change only. Phone and desktop are unchanged.
 
