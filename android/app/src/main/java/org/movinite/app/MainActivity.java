@@ -59,6 +59,7 @@ public class MainActivity extends Activity {
     static final String ACTION_RELOAD = "org.movinite.app.RELOAD";
     static final String ACTION_DOWNLOADS = "org.movinite.app.DOWNLOADS";
     private static final int REQ_STORAGE = 7;
+    static final int REQ_NATIVE_PLAY = 243;
 
     private WebView web;
     private View loading, error, fullscreenBox;
@@ -389,6 +390,17 @@ public class MainActivity extends Activity {
                 return "{\"ok\":false}";
             }
         }
+    }
+
+    @Override
+    protected void onActivityResult(int req, int result, Intent data) {
+        super.onActivityResult(req, result, data);
+        if (req != REQ_NATIVE_PLAY || data == null) return;
+        if (!PlayFallback.WEB.equals(data.getStringExtra(PlayerActivity.EXTRA_FALLBACK))) return;
+        long id = data.getLongExtra(PlayerActivity.EXTRA_ITEM, 0);
+        double start = data.getDoubleExtra(PlayerActivity.EXTRA_START, 0);
+        if (id == 0 || web == null) return;
+        web.evaluateJavascript("playInWebPlayer(" + id + "," + start + ")", null);
     }
 
     // ---------------------------------------------------------------- 1.4: rotate = full screen

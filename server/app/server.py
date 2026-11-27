@@ -2648,19 +2648,16 @@ def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player:
     return Response(p.read_bytes(), media_type="video/mp4", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
-@app.get("/api/items/{item_id}/hls/{profile}/seg{n}.m4s")
-def hls_segment_m4s(item_id: int, profile: str, n: int, audio: int = 0, player: str = "",
-                    disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
-                    acopy: int = 0, u=Depends(auth.require_user)):
-    it = _get_item(item_id)
-    if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
-        raise HTTPException(404)
-    return hls_segment(item_id, profile, n, audio, u, player, disp, dec, nocap, surr, burn, acopy)
+def _hls_segment_response(item_id, profile, n, audio, u, player="", disp=0, dec=0, nocap=0, surr=0, burn=0, acopy=0):
+    """Shared body for MPEG-TS (.ts) and fMP4 (.m4s) segment routes.
 
-
-@app.get("/api/items/{item_id}/hls/{profile}/seg{n}.ts")
-def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(auth.require_user),
-                player: str = "", disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0):
+    2.4.3: the .m4s wrapper used to call hls_segment() with an extra positional
+    `acopy` that the .ts handler did not accept, so every HEVC/fMP4 segment
+    request (the native Android player) crashed with TypeError and ExoPlayer
+    reported "Source error". `acopy` was also used inside hls_segment without
+    being a parameter (NameError on H.264 .ts). Both routes now go through
+    this helper, which takes acopy.
+    """
     s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr, burn, acopy)
     if n < 0 or n >= s.nseg:
         raise HTTPException(404)
@@ -2672,6 +2669,23 @@ def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(au
     except FileNotFoundError:
         raise HTTPException(503, "Segment expired, retry")
     return Response(data, media_type="video/iso.segment" if s.hevc else "video/mp2t", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
+
+@app.get("/api/items/{item_id}/hls/{profile}/seg{n}.m4s")
+def hls_segment_m4s(item_id: int, profile: str, n: int, audio: int = 0, player: str = "",
+                    disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
+                    acopy: int = 0, u=Depends(auth.require_user)):
+    it = _get_item(item_id)
+    if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
+        raise HTTPException(404)
+    return _hls_segment_response(item_id, profile, n, audio, u, player, disp, dec, nocap, surr, burn, acopy)
+
+
+@app.get("/api/items/{item_id}/hls/{profile}/seg{n}.ts")
+def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, player: str = "",
+                disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
+                acopy: int = 0, u=Depends(auth.require_user)):
+    return _hls_segment_response(item_id, profile, n, audio, u, player, disp, dec, nocap, surr, burn, acopy)
 
 
 @app.post("/api/items/{item_id}/stop")

@@ -33,6 +33,16 @@
             android:text="Starting…"
             android:textColor="#E8E9EC"
             android:textSize="16sp"/>
+        <TextView
+            android:id="@+id/debug"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="#99E8E9EC"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:visibility="gone"/>
     </LinearLayout>
 
     <!-- Chrome: title, trickplay, seek, transport, skip, up next -->

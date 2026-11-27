@@ -14,7 +14,8 @@ def check(cond, msg):
 
 def test_version():
     from app.version import __version__
-    check(__version__ == "2.4.2", "version is 2.4.2")
+    parts = tuple(int(x) for x in __version__.split(".")[:3])
+    check(parts >= (2, 4, 2), "version is 2.4.2 or later, got " + __version__)
 
 
 def test_shared_tokens():
