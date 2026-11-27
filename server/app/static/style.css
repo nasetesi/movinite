@@ -1740,3 +1740,7 @@ html.tv-mode #pl-upnext-play.tv-focused,html.tv-mode #pl-upnext-cancel.tv-focuse
 html.tv-mode .pl-skip-wrap{left:48px;bottom:calc(var(--plbar,110px) + 28px)}
 html.tv-mode .pl-skip{font-size:22px;padding:16px 28px;border-radius:12px}
 html.tv-mode .pl-skip:focus,html.tv-mode .pl-skip.tv-focused{outline:3px solid #fff;outline-offset:3px}
+
+/* 2.5: a shared title whose server is offline stays on Continue watching, marked unavailable */
+.card.unavailable .art{opacity:.78}
+.card .art .badge.off{background:rgba(20,12,28,.82);color:#fff;font-weight:700;letter-spacing:.02em}

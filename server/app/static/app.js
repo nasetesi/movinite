@@ -1016,17 +1016,19 @@ function cardItem(i, opts) {
   if (i.kind === "episode") { t = opts.showName === false ? i.title : (i.show || i.title); s = epCode(i) + (opts.showName === false ? "" : " · " + esc(i.title)); }
   if (i.media_type === "audio") { s = i.artist || ""; }
   const cls = land ? "landscape" : (i.media_type === "audio" ? "square" : "");
-  if (opts.resume && i.duration && i.position) { const left = Math.max(1, Math.round((i.duration - i.position) / 60)); s = `<span class="d-only">${(i.kind === "episode" ? epCode(i) + " · " : "") + left} min left</span><span class="m-only">${i.kind === "episode" ? epCode(i) : (i.year || left + " min left")}</span>`; }
+  const srcName = i.peer_name || i.source_name || "";
+  if (opts.resume && i.duration && i.position) { const left = Math.max(1, Math.round((i.duration - i.position) / 60)); const leftTxt = (i.kind === "episode" ? epCode(i) + " · " : "") + left + " min left"; s = `<span class="d-only">${leftTxt}${srcName ? " · " + esc(srcName) : ""}</span><span class="m-only">${i.kind === "episode" ? epCode(i) : (i.year || left + " min left")}</span>`; }
+  else if (srcName && i.is_remote) { s = (s ? s + " · " : "") + esc(srcName); }
   // 1.4.3: a poster always opens the details page; the small round button plays (resumes where you stopped)
   const resumeAt = i.position > 30 && !i.watched ? i.position : 0;
   const quick = i.media_type === "audio" ? `<div class="playov" data-play="${i.id}">&#9654;</div>`
     : `<button class="qplay" type="button" data-play="${i.id}" title="${resumeAt ? "Resume from " + fmtDur(resumeAt) : "Play"}" aria-label="${resumeAt ? "Resume" : "Play"} ${esc(t)}">&#9654;</button>`;
   // 1.4.7: info that fades in over the poster on hover / keyboard focus
   const hov = i.media_type === "audio" ? "" : `<div class="hov" aria-hidden="true"><b>${esc(t)}</b><span>${[i.year, i.rating ? "&#9733; " + (+i.rating).toFixed(1) : "", i.duration ? fmtLen(i.duration) : ""].filter(Boolean).join(" · ")}</span></div>`;
-  return `<div class="card ${cls}${opts.resume ? " resume" : ""}" tabindex="0" data-href="#/item/${i.id}"${opts.resume ? ` title="${esc(t)} -- resume from ${fmtDur(i.position || 0)}"` : ""} data-id="${i.id}">
+  return `<div class="card ${cls}${opts.resume ? " resume" : ""}${i.unavailable ? " unavailable" : ""}" tabindex="0" data-href="#/item/${i.id}"${opts.resume ? ` title="${esc(t)} -- resume from ${fmtDur(i.position || 0)}${i.unavailable ? " (server offline)" : ""}"` : ""} data-id="${i.id}">
     <div class="art"${img ? ` data-bg="${thumbUrl(img)}"${(!land && i.id && i.kind !== "episode" && i.media_type !== "audio") ? ` data-bg-hi="/api/items/${i.id}/poster-large"` : ""}` : ""}>
       ${img ? "" : `<div class="ph">${i.media_type === "audio" ? "&#9835;" : "&#127902;"}</div>`}
-      ${i.watched ? `<span class="badge">&#10003;</span>` : ""}
+      ${i.unavailable ? `<span class="badge off" title="${esc(srcName || "Shared server")} is not reachable">Offline</span>` : (i.watched ? `<span class="badge">&#10003;</span>` : "")}
       ${i.needs_review ? `<span class="badge rv" title="Match needs review">?</span>` : ""}
       ${resBadge(i)}
       ${hov}
@@ -1964,7 +1966,7 @@ function bindMoreMenu() {
 
 async function viewItem(id) {
   const it = await api("/api/items/" + id);
-  const pb = it.playback;
+  const pb = it.playback || {};
   const land = it.kind === "episode" || it.kind === "video";
   const img = land ? (it.thumb || it.poster) : (it.poster || it.thumb);
   let title = it.title, sub = [];
@@ -1978,18 +1980,20 @@ async function viewItem(id) {
   const vers = it.versions || [];
   const fmtMbps = (b) => b ? (b / 1e6).toFixed(b >= 1e7 ? 0 : 1) + " Mbps" : "";
   const verHtml = vers.length > 1 ? `<div class="vers"><label for="ver-sel">Version</label><select id="ver-sel">${vers.map((v, n) => `<option value="${v.id}"${v.id === it.id ? " selected" : ""}>${[v.res + (n === 0 ? " (best)" : ""), (v.vcodec || "").toUpperCase(), fmtMbps(v.bitrate), v.size ? fmtSize(v.size) : ""].filter(Boolean).join(" · ")}</option>`).join("")}</select><span class="help">${vers.length} files of this ${it.kind === "episode" ? "episode" : "film"} -- highest resolution first</span></div>` : "";
-  const offHtml = it.offline ? `<div class="vers off"><span class="ldot off"></span> ${it.fallback ? `This library's share is offline -- Play uses the copy in <b>${esc(it.fallback_library || "another library")}</b>.` : "This library's share is offline, and no other library has this title."}</div>` : "";
+  const offHtml = it.unavailable || (it.is_remote && it.online === false) ? `<div class="vers off"><span class="ldot off"></span> ${esc(it.peer_name || it.source_name || "That shared server")} is not reachable right now. This title stays in Continue watching and will play again when the server is back.</div>` :
+    it.offline ? `<div class="vers off"><span class="ldot off"></span> ${it.fallback ? `This library's share is offline -- Play uses the copy in <b>${esc(it.fallback_library || "another library")}</b>.` : "This library's share is offline, and no other library has this title."}</div>` : "";
   const playChip = pb.direct ? `<span class="chip ok">Direct play</span>` : pb.direct_maybe ? `<span class="chip warn">Direct play if your browser supports it, else ${pb.remux ? "remux" : "transcode"}</span>`
     : pb.remux ? `<span class="chip ok" title="The video is copied as-is; only the container${it.acodec && !["aac", "mp3"].includes(it.acodec) ? " and audio" : ""} are converted">Remux (no video re-encode)</span>` : `<span class="chip warn">Will transcode</span>`;
   const canMatch = ME.is_admin && (it.kind === "movie" || it.kind === "episode");
-  const auds = pb.audio_streams.map(a => `${a.codec}${a.channels ? " " + a.channels + "ch" : ""}${a.lang ? " (" + a.lang + ")" : ""}`).join(", ");
+  const auds = (pb.audio_streams || []).map(a => `${a.codec}${a.channels ? " " + a.channels + "ch" : ""}${a.lang ? " (" + a.lang + ")" : ""}`).join(", ");
   const isMovie = it.kind === "movie";
   if (isMovie && it.certification) sub.splice(it.year ? 1 : 0, 0, `<span class="chip cert" title="Age rating">${esc(it.certification)}</span>`);
   if (!it.duration && it.runtime) sub.splice(sub.length - (it.width ? 1 : 0), 0, fmtLen(it.runtime * 60));
   const chipsIt = Object.assign({}, it, { certification: isMovie ? null : it.certification });
   const plink = (p) => `<a href="#/person/${p.id}/${it.library_id}">${esc(p.name)}</a>`;
-  const credLine = isMovie && (it.directors.length || it.writers.length) ? `<div class="credits-line">${it.directors.length ? `<span><span class="muted">Directed by</span> ${it.directors.map(plink).join(", ")}</span>` : ""}${it.writers.length ? `<span><span class="muted">Written by</span> ${it.writers.map(plink).join(", ")}</span>` : ""}</div>` : "";
-  const castHtml = !isMovie ? "" : it.cast.length ? `<div class="cast-strip">${it.cast.map(p => `<a class="person" href="#/person/${p.id}/${it.library_id}" title="${esc(p.name)}${p.character ? " as " + esc(p.character) : ""}">
+  const directors = it.directors || [], writers = it.writers || [], cast = it.cast || [], tags = it.tags || [];
+  const credLine = isMovie && (directors.length || writers.length) ? `<div class="credits-line">${directors.length ? `<span><span class="muted">Directed by</span> ${directors.map(plink).join(", ")}</span>` : ""}${writers.length ? `<span><span class="muted">Written by</span> ${writers.map(plink).join(", ")}</span>` : ""}</div>` : "";
+  const castHtml = !isMovie ? "" : cast.length ? `<div class="cast-strip">${cast.map(p => `<a class="person" href="#/person/${p.id}/${it.library_id}" title="${esc(p.name)}${p.character ? " as " + esc(p.character) : ""}">
       <div class="pph"><span class="ini">${esc(p.name.split(/\s+/).slice(0, 2).map(w => w[0] || "").join(""))}</span>${p.has_photo ? `<img loading="lazy" alt="" src="/api/people/${p.id}/photo" onerror="this.remove()">` : ""}</div>
       <div class="pn">${esc(p.name)}</div>${p.character ? `<div class="pc">${esc(p.character)}</div>` : ""}</a>`).join("")}</div>`
     : `<div class="empty small">${it.credits_pending ? "Cast is being fetched from TMDB in the background -- check back in a few minutes." : it.tmdb ? "No cast information on TMDB." : "Cast comes from TMDB once this movie is matched."}</div>`;
@@ -2025,7 +2029,7 @@ async function viewItem(id) {
       ${resLabel ? `<span>Resolution</span><b>${resLabel}</b>` : ""}
       ${it.vcodec ? `<span>Video</span><b>${esc(it.vcodec)} ${it.width || ""}x${it.height || ""} ${esc(it.pix_fmt || "")}</b>` : ""}
       ${auds ? `<span>Audio</span><b>${esc(auds)}</b>` : ""}
-      ${pb.subtitles.length ? `<span>Subtitles</span><b>${esc(pb.subtitles.map(s => s.label).join(", "))}</b>` : ""}
+      ${(pb.subtitles || []).length ? `<span>Subtitles</span><b>${esc(pb.subtitles.map(s => s.label).join(", "))}</b>` : ""}
       ${it.bitrate ? `<span>Bitrate</span><b>${Math.round(it.bitrate / 1000)} kbps</b>` : ""}
       <span>Library</span><b>${esc(it.library ? it.library.name : "")}</b>
       ${it.file_title && it.file_title !== it.title ? `<span>Name from file</span><b>${esc(it.file_title)}</b>` : ""}
@@ -2048,9 +2052,9 @@ async function viewItem(id) {
     ${credLine}
     ${it.overview ? `<p class="overview">${esc(it.overview)}</p>` : (it.show_overview ? `<p class="overview muted">${esc(it.show_overview)}</p>` : "")}
     ${it.collection ? `<div class="coll-link">Part of <a href="#/library/${it.library_id}/collection/${it.collection.id}">${esc(it.collection.name || "a collection")} &rsaquo;</a></div>` : ""}
-    ${isMovie && it.tags.length ? `<div class="tagrow">${it.tags.map(t => `<span class="chip tag"><a href="#/library/${it.library_id}" data-tagid="${t.id}">#${esc(t.name)}</a>${ME.is_admin ? `<button class="x" data-untag="${t.id}" title="Remove tag" aria-label="Remove tag ${esc(t.name)}">&times;</button>` : ""}</span>`).join("")}</div>` : ""}
+    ${isMovie && tags.length ? `<div class="tagrow">${tags.map(t => `<span class="chip tag"><a href="#/library/${it.library_id}" data-tagid="${t.id}">#${esc(t.name)}</a>${ME.is_admin ? `<button class="x" data-untag="${t.id}" title="Remove tag" aria-label="Remove tag ${esc(t.name)}">&times;</button>` : ""}</span>`).join("")}</div>` : ""}
     </div></div>
-    ${isMovie ? `<section class="dsec"><div class="row-head"><h3>Cast</h3>${it.cast.length ? `<span class="muted">${it.cast.length} of the top-billed</span>` : ""}</div>${castHtml}</section>
+    ${isMovie ? `<section class="dsec"><div class="row-head"><h3>Cast</h3>${cast.length ? `<span class="muted">${cast.length} of the top-billed</span>` : ""}</div>${castHtml}</section>
     <section class="dsec"><div class="row-head"><h3>Similar movies</h3></div>${simHtml}</section>` : ""}
     ${it.tmdb ? TMDB_NOTE : ""}`;
   // 1.7: the page's file is played as-is when the user picked it (not the best version); the best one may step
@@ -4197,6 +4201,10 @@ async function playItem(id, startAt, opts) {
   try { probeDecoders(); } catch (e) {}   // 1.7.9: do not block first open on the decoder probe
   const capQ = itemCapQuery();
   let it = (opts.item && opts.item.id === id && opts.item.playback) ? opts.item : await api("/api/items/" + id + capQ);
+  if (it.unavailable || (it.is_remote && it.online === false)) {
+    toast((it.peer_name || it.source_name || "That shared server") + " is not reachable right now", true);
+    return;
+  }
   if (it.offline && it.fallback) { toast(`Share offline -- playing the copy in ${it.fallback_library || "another library"}`); it = await api("/api/items/" + it.fallback + capQ); id = it.id; }
   else if (it.media_type === "video") {
     const pv = pickVersion(it, opts);

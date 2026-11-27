@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from . import config
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA = """
 -- 1.4: categories
@@ -341,6 +341,18 @@ CREATE TABLE IF NOT EXISTS remote_items (
 CREATE INDEX IF NOT EXISTS remote_items_lib ON remote_items(remote_library_id, sort_title);
 CREATE INDEX IF NOT EXISTS remote_items_title ON remote_items(title);
 
+-- 2.5: watch progress for titles from a shared (remote) server (schema 15)
+CREATE TABLE IF NOT EXISTS remote_progress (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    remote_item_id INTEGER NOT NULL REFERENCES remote_items(id) ON DELETE CASCADE,
+    position REAL NOT NULL DEFAULT 0,
+    duration REAL,
+    watched INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, remote_item_id)
+);
+CREATE INDEX IF NOT EXISTS remote_progress_user ON remote_progress(user_id, watched, updated_at);
+
 -- 2.2: seek-bar trickplay sprites (schema 13)
 CREATE TABLE IF NOT EXISTS trickplay_cache (
     item_id INTEGER PRIMARY KEY,
@@ -488,6 +500,8 @@ def migrate():
             _backup_db(c, 13)             # 2.2: snapshot before trickplay / colour tags (idempotent)
         if old_pre and int(old_pre[0]) < 14:
             _backup_db(c, 14)             # 2.3: snapshot before intro markers / auto-skip prefs (idempotent)
+        if old_pre and int(old_pre[0]) < 15:
+            _backup_db(c, 15)             # 2.5: snapshot before shared-title watch progress (idempotent)
         c.executescript(SCHEMA)
         for table, col, typ in ADDED_COLUMNS:
             have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}
