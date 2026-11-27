@@ -1,9 +1,15 @@
 /* TV-only Plex-inspired home layout. Desktop and phone are unchanged. */
 html.tv-mode.tv-plex {
-  /* Hero takes the top ~62%. The rows pane is the rest (about 38%), so a
-     short TV WebView (960x540 CSS px at DPR 2) still has a visible row slot.
-     No vh, clip-path, or mask. */
-  --tv-hero-share: 62%;
+  /* Defaults; JS overwrites these from the real window size. No vh. */
+  --tv-screen-h: 1080px;
+  --tv-screen-w: 1920px;
+  --tv-hero-share: 60%;
+  --tv-safe-left: 64px;
+  --tv-rail-w: 148px;
+  --tv-focus-pad: 40px;
+  --tv-card-w: 168px;
+  --tv-card-gap: 18px;
+  --tv-title-size: 86px;
 }
 html.tv-mode.tv-plex,
 html.tv-mode.tv-plex body {
@@ -43,7 +49,7 @@ html.tv-mode.tv-plex .main {
 html.tv-mode.tv-plex .top {
   display: none !important;
 }
-/* 2.5.4: #view is the rows slot under a fixed hero. The page does not scroll.
+/* 2.5.5: #view is the rows slot under a fixed hero. The page does not scroll.
    A rows track is translated by a fixed row pitch so the focused row sits in
    this slot and the next row peeks from the bottom. No clip-path, mask, or vh. */
 html.tv-mode.tv-plex #view {
@@ -53,7 +59,7 @@ html.tv-mode.tv-plex #view {
   right: 0;
   bottom: 0;
   z-index: 3;
-  padding: 0 0 0 108px;
+  padding: 0 0 0 var(--tv-rail-w);
   min-height: 0;
   overflow: hidden;
   background: transparent;
@@ -72,8 +78,14 @@ html.tv-mode.tv-plex #view .tv-home-row {
 }
 html.tv-mode.tv-plex .strip,
 html.tv-mode.tv-plex .hs,
-html.tv-mode.tv-plex .cast-strip {
+html.tv-mode.tv-plex .cast-strip,
+html.tv-mode.tv-plex .hrow > .strip {
   scroll-behavior: auto;
+  /* style.css uses padding + a matching negative margin so hover-scale can
+     paint outside the strip. That pulled the focused poster up through the
+     row label and clipped its top border. Zero the margin and pad for scale. */
+  padding: var(--tv-focus-pad) 0 6px 0;
+  margin: 0;
 }
 
 /* Hero backdrop */
@@ -112,9 +124,9 @@ html.tv-mode.tv-plex #tv-hero {
 }
 #tv-hero .tv-hero-meta {
   position: absolute;
-  left: 108px;
-  top: 108px;
-  right: 36%;
+  left: var(--tv-rail-w);
+  top: max(44px, calc(var(--tv-screen-h) * 0.09));
+  right: 32%;
   color: #fff;
   text-shadow: 0 2px 18px rgba(0,0,0,.45);
   pointer-events: none;
@@ -123,8 +135,8 @@ html.tv-mode.tv-plex #tv-hero {
 #tv-hero.tv-hero-text-out .tv-hero-meta { opacity: 0; }
 #tv-hero .tv-hero-logo {
   display: block;
-  max-width: 620px;
-  max-height: 150px;
+  max-width: 46%;
+  max-height: calc(var(--tv-title-size) * 1.15);
   width: auto;
   height: auto;
   margin: 0 0 16px;
@@ -134,8 +146,8 @@ html.tv-mode.tv-plex #tv-hero {
 }
 #tv-hero .tv-hero-title {
   display: none;
-  margin: 0 0 14px;
-  font-size: 72px;
+  margin: 0 0 16px;
+  font-size: var(--tv-title-size);
   line-height: .95;
   font-weight: 800;
   letter-spacing: -0.03em;
@@ -149,15 +161,8 @@ html.tv-mode.tv-plex #tv-hero {
 }
 #tv-hero.no-logo .tv-hero-logo { display: none; }
 @media (max-height: 700px) {
-  html.tv-mode.tv-plex #tv-hero .tv-hero-meta { top: 72px; }
-  html.tv-mode.tv-plex #tv-hero .tv-hero-title { font-size: 40px; }
-  html.tv-mode.tv-plex #tv-hero .tv-hero-logo { max-height: 88px; max-width: 420px; margin-bottom: 10px; }
-  html.tv-mode.tv-plex #tv-hero .tv-hero-facts { font-size: 16px; margin-bottom: 8px; }
-  html.tv-mode.tv-plex #tv-hero .tv-hero-ov { font-size: 16px; -webkit-line-clamp: 3; max-width: 520px; }
-  html.tv-mode.tv-plex #tv-hero .tv-hero-cast { font-size: 14px; max-width: 520px; }
-  html.tv-mode.tv-plex .strip.hs:not(.wide) { grid-auto-columns: var(--tv-card-w, 80px); gap: var(--tv-card-gap, 10px); }
-  html.tv-mode.tv-plex #view .row-head h3 { font-size: 16px; }
-  html.tv-mode.tv-plex #view .row-head { margin: 0 0 6px; }
+  /* Keep a big title on short TV WebViews (960x540 CSS). Only tighten the description. */
+  html.tv-mode.tv-plex #tv-hero .tv-hero-ov { -webkit-line-clamp: 3; }
 }
 
 #tv-hero .tv-hero-facts {
@@ -165,7 +170,7 @@ html.tv-mode.tv-plex #tv-hero {
   flex-wrap: wrap;
   gap: 8px 14px;
   align-items: center;
-  font-size: 20px;
+  font-size: max(22px, calc(var(--tv-title-size) * 0.32));
   font-weight: 600;
   color: rgba(255,255,255,.88);
   margin: 0 0 14px;
@@ -179,20 +184,20 @@ html.tv-mode.tv-plex #tv-hero {
   border: 1px solid rgba(255,255,255,.2);
   border-radius: 6px;
   padding: 2px 8px 2px 6px;
-  font-size: 16px;
+  font-size: 0.85em;
   font-weight: 700;
 }
-#tv-hero .tv-rate b { color: #ffd45a; font-size: 15px; }
+#tv-hero .tv-rate b { color: #ffd45a; font-size: 0.9em; }
 #tv-hero .tv-cert {
   border: 1px solid rgba(255,255,255,.45);
   border-radius: 4px;
   padding: 1px 7px;
-  font-size: 14px;
+  font-size: 0.8em;
   letter-spacing: .04em;
 }
 #tv-hero .tv-hero-ov {
   margin: 0 0 14px;
-  font-size: 20px;
+  font-size: max(20px, calc(var(--tv-title-size) * 0.30));
   line-height: 1.35;
   color: rgba(255,255,255,.84);
   max-width: 720px;
@@ -202,7 +207,7 @@ html.tv-mode.tv-plex #tv-hero {
   overflow: hidden;
 }
 #tv-hero .tv-hero-cast {
-  font-size: 18px;
+  font-size: max(16px, calc(var(--tv-title-size) * 0.24));
   color: rgba(255,255,255,.72);
   white-space: nowrap;
   overflow: hidden;
@@ -232,6 +237,11 @@ html.tv-mode.tv-plex.tv-tabs-hidden #tv-top {
   transform: translateY(-100%);
   opacity: 0;
   pointer-events: none;
+}
+/* 2.5.5: the For You / Recently Added / Libraries tabs are hidden for now.
+   The markup and the hide/show rules stay so they can be turned back on. */
+html.tv-mode.tv-plex.tv-tabs-off #tv-top {
+  display: none !important;
 }
 html.tv-mode.tv-plex #tv-top::before {
   content: "";
@@ -291,19 +301,21 @@ html.tv-mode.tv-plex #tv-top::before {
 html.tv-mode.tv-plex #tv-rail {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
   position: fixed;
   left: 0; top: 0; bottom: 0;
-  width: 88px;
-  padding: 28px 0;
+  width: var(--tv-rail-w);
+  box-sizing: border-box;
+  padding: 36px 12px 36px var(--tv-safe-left);
   z-index: 7;
   background: linear-gradient(90deg, rgba(0,0,0,.45), rgba(0,0,0,0));
 }
-#tv-rail button {
+html.tv-mode.tv-plex #tv-rail button {
   appearance: none;
-  width: 52px;
-  height: 52px;
+  width: var(--tv-rail-btn, 68px);
+  height: var(--tv-rail-btn, 68px);
+  flex: 0 0 var(--tv-rail-btn, 68px);
   border: 0;
   border-radius: 50%;
   background: transparent;
@@ -312,28 +324,29 @@ html.tv-mode.tv-plex #tv-rail {
   place-items: center;
   cursor: pointer;
 }
-#tv-rail button svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-#tv-rail button {
+html.tv-mode.tv-plex #tv-rail button svg { width: 36px; height: 36px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+html.tv-mode.tv-plex #tv-rail button {
   border: 2px solid transparent;
   transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
 }
-#tv-rail button:focus,
-#tv-rail button:focus-visible,
-#tv-rail button.tv-focused {
+html.tv-mode.tv-plex #tv-rail button:focus,
+html.tv-mode.tv-plex #tv-rail button:focus-visible,
+html.tv-mode.tv-plex #tv-rail button.tv-focused {
   outline: none;
   background: rgba(255,255,255,.22);
   border-color: #fff;
   box-shadow: 0 0 0 3px #fff, 0 0 0 7px rgba(255,255,255,.3);
   transform: scale(1.08);
 }
-#tv-rail .tv-rail-av {
-  width: 44px;
-  height: 44px;
+html.tv-mode.tv-plex #tv-rail .tv-rail-av {
+  width: var(--tv-rail-btn, 68px);
+  height: var(--tv-rail-btn, 68px);
+  font-size: 24px;
   border-radius: 50%;
   background: #5b4a9a;
   color: #fff;
   font-weight: 700;
-  font-size: 18px;
+  font-size: 22px;
   display: grid;
   place-items: center;
   margin-bottom: 10px;
@@ -357,7 +370,7 @@ html.tv-mode.tv-plex.tv-menu-open #tv-rail { visibility: hidden; }
   display: none;
   position: fixed;
   z-index: 21;
-  left: 28px;
+  left: var(--tv-safe-left, 28px);
   top: 48px;
   bottom: 48px;
   width: 230px;
@@ -452,12 +465,14 @@ html.tv-mode.tv-plex #view .row-head {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  margin: 8px 0 10px;
-  padding: 0 40px 0 0;
+  margin: 0;
+  padding: 2px 40px 4px 0;
   color: #fff;
+  flex: 0 0 auto;
 }
 html.tv-mode.tv-plex #view .row-head h3 {
-  font-size: 22px;
+  font-size: max(20px, calc(var(--tv-screen-h) * 0.028));
+  line-height: 1.15;
   font-weight: 750;
   margin: 0;
   display: flex;
@@ -479,8 +494,8 @@ html.tv-mode.tv-plex .tv-lib-tag {
   padding: 2px 8px;
   vertical-align: middle;
 }
-html.tv-mode.tv-plex .hrow { padding: 30px 40px 8px 0; }
-html.tv-mode.tv-plex .strip.hs:not(.wide) { grid-auto-columns: var(--tv-card-w, 154px); gap: var(--tv-card-gap, 16px); }
+html.tv-mode.tv-plex .hrow { padding: 0 40px 0 0; }
+html.tv-mode.tv-plex .strip.hs:not(.wide) { grid-auto-columns: var(--tv-card-w, 168px); gap: var(--tv-card-gap, 18px); }
 html.tv-mode.tv-plex .card .t,
 html.tv-mode.tv-plex .card .s,
 html.tv-mode.tv-plex .card .hov,
@@ -552,7 +567,7 @@ html.tv-mode.tv-plex #view .row-note,
 html.tv-mode.tv-plex #view .help.row-note,
 html.tv-mode.tv-plex #view .row-head h3 .muted { display: none !important; }
 html.tv-mode.tv-plex .card { transform-origin: 50% 100%; }
-html.tv-mode.tv-plex #view .row-head { position: relative; z-index: 2; padding-top: 2px; margin: 0 0 8px; flex: 0 0 auto; }
+html.tv-mode.tv-plex #view .row-head { position: relative; z-index: 2; padding: 2px 40px 4px 0; margin: 0; flex: 0 0 auto; }
 html.tv-mode.tv-plex #view .tv-home-row .row-head { margin-top: 0; }
 html.tv-mode.tv-plex .card { transform-origin: 50% 100%; }
 

@@ -49,6 +49,7 @@
   const TVPlex = {
     items: {},
     tab: "foryou",
+    tabsEnabled: false,
     menuOpen: false,
     acctOpen: false,
     returnEl: null,
@@ -65,6 +66,10 @@
       if (this._inited) return;
       this._inited = true;
       document.documentElement.classList.add("tv-plex");
+      // 2.5.5: hide For You / Recently Added / Libraries for now (set true to bring them back).
+      if (this.tabsEnabled === false) document.documentElement.classList.add("tv-tabs-off");
+      else document.documentElement.classList.remove("tv-tabs-off");
+      this.syncViewportVars();
       this.inject();
       this.hook();
       this.tickClock();
@@ -258,7 +263,9 @@
         if (self._candCache && (now - self._candAt) < 80) return self._candCache;
         let list;
         if (isHome() && !playerOn()) {
-          const extra = [...document.querySelectorAll("#tv-tabs button, #tv-rail button")];
+          const extra = this.tabsEnabled
+            ? [...document.querySelectorAll("#tv-tabs button, #tv-rail button")]
+            : [...document.querySelectorAll("#tv-rail button")];
           const vh = window.innerHeight || 1080, vw = window.innerWidth || 1920;
           const cards = [];
           document.querySelectorAll("#view .card").forEach((el) => {
@@ -375,12 +382,12 @@
         this.paintHero(c, id);
         this.preloadNeighbors(c);
       };
-      // Paint immediately so left/right focus feels instant (<0.5 s), but coalesce
-      // rapid key-repeat so the backdrop does not thrash.
+      // Start the backdrop immediately on focus. Coalesce only tight key-repeat
+      // (trailing) so a fast hold still lands on the last title.
       const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       const since = now - (this._heroAt || 0);
-      if (!this.heroId || since > 80) run();
-      else this._heroTimer = setTimeout(run, 80);
+      if (!this._heroAt || since >= 32) run();
+      else this._heroTimer = setTimeout(run, 32);
     },
 
     preloadNeighbors(card) {
@@ -388,7 +395,7 @@
       if (!st) return;
       const cards = [...st.querySelectorAll(".card")];
       const i = cards.indexOf(card);
-      [cards[i - 1], cards[i + 1]].forEach((c) => {
+      [cards[i - 2], cards[i - 1], cards[i + 1], cards[i + 2]].forEach((c) => {
         if (!c) return;
         const id = c.dataset.id || (c.dataset.href || "").split("/").pop();
         const it = this.items[String(id)] || {};
@@ -532,20 +539,62 @@
       this.applyRowShift();
     },
 
+    layoutSize() {
+      // 1.9.2 still lays the TV UI out at 1920×1080 and scales it to the WebView.
+      // Size typography and posters against that layout, not the 960×540 CSS viewport,
+      // so a real TV matches the 1080 previews (and is not half as big).
+      const root = document.documentElement;
+      if (root.classList.contains("tv-scaled")) {
+        const w = parseFloat(root.style.getPropertyValue("--tv-layout-w")) || 1920;
+        const h = parseFloat(root.style.getPropertyValue("--tv-layout-h")) || 1080;
+        return { w: w, h: h };
+      }
+      return {
+        w: root.clientWidth || window.innerWidth || 1920,
+        h: root.clientHeight || window.innerHeight || 1080,
+      };
+    },
+
+    syncViewportVars() {
+      const root = document.documentElement;
+      const size = this.layoutSize();
+      const w = size.w, h = size.h;
+      root.style.setProperty("--tv-screen-w", w + "px");
+      root.style.setProperty("--tv-screen-h", h + "px");
+      // ~8% of the 1080 layout (about 2× the 40px title that looked small on the TV).
+      const title = Math.max(80, Math.round(h * 0.08));
+      root.style.setProperty("--tv-title-size", title + "px");
+      const safe = Math.max(32, Math.round(w * 0.04));
+      const btn = h <= 700 ? 60 : 68;
+      root.style.setProperty("--tv-safe-left", safe + "px");
+      root.style.setProperty("--tv-rail-btn", btn + "px");
+      root.style.setProperty("--tv-rail-w", (safe + btn + 16) + "px");
+    },
+
     syncRowPitch() {
+      this.syncViewportVars();
       const view = document.getElementById("view");
       const track = view && view.querySelector(":scope > .tv-rows-track");
       if (!view || !track) return;
-      const h = view.clientHeight;
-      // One full row fills most of the slot; the top ~15–18% of the next row peeks.
-      const pitch = Math.max(120, Math.round(h * 0.85));
-      this._rowPitch = pitch;
-      // Size posters so the row title plus a 13% focus scale still fit in the pitch.
-      const artH = Math.min(240, Math.max(72, Math.floor((pitch - 64) / 1.13)));
-      const artW = Math.max(48, Math.round(artH / 1.5));
-      const gap = artW >= 130 ? 16 : 10;
-      track.style.setProperty("--tv-card-w", artW + "px");
+      const h = this.layoutSize().h;
+      // Posters are ~24% of the window. Leave room in the row for the label,
+      // the 13% focus scale, and a ~15% peek of the next row.
+      const posterH = Math.max(84, Math.round(h * 0.24));
+      const posterW = Math.max(56, Math.round(posterH * 2 / 3));
+      const scalePad = Math.ceil(posterH * 0.13) + 20;
+      const headH = Math.max(48, Math.round(h * 0.045));
+      const pitch = headH + scalePad + posterH + 10;
+      const peek = Math.round(pitch * 0.15);
+      const pane = pitch + peek;
+      const heroPct = Math.max(50, Math.min(62, ((h - pane) / h) * 100));
+      document.documentElement.style.setProperty("--tv-hero-share", heroPct.toFixed(2) + "%");
+      document.documentElement.style.setProperty("--tv-focus-pad", scalePad + "px");
+      const gap = posterW >= 130 ? 18 : 12;
+      track.style.setProperty("--tv-card-w", posterW + "px");
       track.style.setProperty("--tv-card-gap", gap + "px");
+      document.documentElement.style.setProperty("--tv-card-w", posterW + "px");
+      document.documentElement.style.setProperty("--tv-card-gap", gap + "px");
+      this._rowPitch = pitch;
       track.querySelectorAll(":scope > .tv-home-row").forEach((r) => { r.style.height = pitch + "px"; });
     },
 
@@ -556,7 +605,7 @@
       const idx = Math.max(0, this._rowIndex || 0);
       this._rowIndex = idx;
       track.style.transform = "translateY(" + (-idx * this._rowPitch) + "px)";
-      document.documentElement.classList.toggle("tv-tabs-hidden", idx > 0);
+      if (this.tabsEnabled) document.documentElement.classList.toggle("tv-tabs-hidden", idx > 0);
     },
 
     revealRow(el) {
@@ -948,6 +997,10 @@
         return true;
       }
       if (key === "ArrowUp" && onCard && this.isTopContentRow(cur)) {
+        if (!this.tabsEnabled || document.documentElement.classList.contains("tv-tabs-off")) {
+          e.preventDefault(); e.stopPropagation();
+          return true;
+        }
         e.preventDefault(); e.stopPropagation();
         const tab = document.querySelector("#tv-tabs button.on") || document.querySelector("#tv-tabs button");
         if (tab) {
