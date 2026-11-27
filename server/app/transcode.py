@@ -221,7 +221,7 @@ def hdr_info(item):
         t = o.stdout.decode(errors="replace").strip().splitlines()
         t = t[0].strip().rstrip(",") if t else ""
         v = _hdr_from_transfer(t)
-        if t and item.get("id") and v:
+        if t and item.get("id"):
             try:
                 with db.tx() as c:
                     c.execute("UPDATE items SET color_transfer=? WHERE id=?", (t, item["id"]))
@@ -236,9 +236,10 @@ def hdr_info(item):
 
 
 class Session:
-    def __init__(self, sid, item, profile, audio_idx, bounds=None):
+    def __init__(self, sid, item, profile, audio_idx, bounds=None, surr=0):
         self.sid = sid
         self.bounds = bounds            # remux: segment start times (keyframes)
+        self.surr = 6 if int(surr or 0) >= 6 else 0  # 2.2: 6 = client can play surround AAC
         self.item = item
         self.profile = profile
         self.audio_idx = audio_idx
@@ -282,13 +283,39 @@ class Session:
             self.nseg = max(1, math.ceil((item.get("duration") or SEG) / SEG))
 
     # --- ffmpeg -----------------------------------------------------------
-    def _audio_copy_or_aac(self, cmd):
+    def _audio_track(self):
         auds = json.loads(self.item.get("audio_streams") or "[]")
-        a = auds[self.audio_idx] if self.audio_idx < len(auds) else (auds[0] if auds else {})
-        if a.get("codec") in ("aac", "mp3") and (a.get("channels") or 2) <= 2:
-            cmd += ["-c:a", "copy"]
-        else:
-            cmd += ["-c:a", "aac", "-ac", "2", "-b:a", "192k", "-ar", "48000"]
+        if self.audio_idx < len(auds):
+            return auds[self.audio_idx] or {}
+        return (auds[0] if auds else {}) or {}
+
+    def _audio_out_channels(self):
+        """2.2: keep 5.1/7.1 when the client asked for surround; otherwise stereo. Stereo sources stay stereo."""
+        src = int((self._audio_track().get("channels") or 2) or 2)
+        if src <= 2:
+            return 2
+        if int(getattr(self, "surr", 0) or 0) >= 6:
+            return 8 if src >= 7 else 6
+        return 2
+
+    def _aac_audio_args(self, kbps=None):
+        ch = self._audio_out_channels()
+        if kbps is None:
+            kbps = 640 if ch >= 7 else (384 if ch >= 6 else 192)
+        return ["-c:a", "aac", "-ac", str(ch), "-b:a", "%dk" % kbps, "-ar", "48000"]
+
+    def _audio_copy_or_aac(self, cmd):
+        a = self._audio_track()
+        src = int((a.get("channels") or 2) or 2)
+        want = self._audio_out_channels()
+        if a.get("codec") in ("aac", "mp3"):
+            if src <= 2:
+                cmd += ["-c:a", "copy"]
+                return cmd
+            if want >= 6 and src >= 6:
+                cmd += ["-c:a", "copy"]
+                return cmd
+        cmd += self._aac_audio_args()
         return cmd
 
     def _remux_cmd(self, start):
@@ -452,8 +479,8 @@ class Session:
                         "-level:v", "4.1", "-crf", "21", "-maxrate", "%dk" % vk, "-bufsize", "%dk" % (vk * 2),
                         "-force_key_frames", "expr:gte(t,n_forced*%g)" % SEG, "-sc_threshold", "0",
                         "-g", "%d" % int(SEG * 30)]
-        cmd += ["-c:a", "aac", "-ac", "2", "-b:a", "%dk" % ak, "-ar", "48000",
-                "-max_muxing_queue_size", "2048",
+        cmd += self._aac_audio_args(ak if self._audio_out_channels() <= 2 else None)
+        cmd += ["-max_muxing_queue_size", "2048",
                 "-f", "hls", "-hls_time", "%g" % SEG, "-hls_list_size", "0"]
         if self.hevc:
             # frag_discont: tfdt carries the real time (with -output_ts_offset); without it every run starts at 0
@@ -718,8 +745,9 @@ def normalize_player(player_id):
     return s[:64]
 
 
-def session_id(item_id, profile, audio_idx, user_id, player_id=""):
-    return hashlib.sha1(("%s|%s|%s|%s|%s" % (item_id, profile, audio_idx, user_id, normalize_player(player_id))).encode()).hexdigest()[:16]
+def session_id(item_id, profile, audio_idx, user_id, player_id="", surr=0):
+    surr = 6 if int(surr or 0) >= 6 else 0
+    return hashlib.sha1(("%s|%s|%s|%s|%s|%s" % (item_id, profile, audio_idx, user_id, normalize_player(player_id), surr)).encode()).hexdigest()[:16]
 
 
 def max_transcodes():
@@ -736,9 +764,10 @@ def max_transcodes():
     return config.MAX_TRANSCODES
 
 
-def get_session(item, profile, audio_idx, user_id, player_id=""):
+def get_session(item, profile, audio_idx, user_id, player_id="", surr=0):
     pid = normalize_player(player_id)
-    sid = session_id(item["id"], profile, audio_idx, user_id, pid)
+    surr = 6 if int(surr or 0) >= 6 else 0
+    sid = session_id(item["id"], profile, audio_idx, user_id, pid, surr)
     bounds = None
     if profile == "remux":
         bounds = remux_bounds(item)
@@ -761,7 +790,7 @@ def get_session(item, profile, audio_idx, user_id, player_id=""):
                             int(time.time() - oldest.last_access))
                 oldest.destroy("cap")
                 _sessions.pop(oldest.sid, None)
-            s = Session(sid, item, profile, audio_idx, bounds)
+            s = Session(sid, item, profile, audio_idx, bounds, surr=surr)
             s.user_id = user_id
             s.player_id = pid
             apply_sticky(s)
@@ -891,6 +920,11 @@ def remux_codec(item):
 def remux_eligible(item):
     """H.264 8-bit or HEVC (any bit depth) in a container we can seek precisely -> copy video instead of re-encoding."""
     return bool(remux_codec(item))
+
+
+def remux_ready(item):
+    """True only when a keyframe plan is already cached — the play path must not probe."""
+    return bool(remux_eligible(item) and remux_bounds(item, probe=False))
 
 
 def probe_bounds(path, duration, start_time=0.0):

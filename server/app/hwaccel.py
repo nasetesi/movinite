@@ -218,6 +218,16 @@ def _vaapi_turn(rot):
 _filters = None  # cached set of ffmpeg filter names; tests may assign this
 
 
+
+def hdr_tonemap_enabled():
+    """2.2: HDR10/HLG -> SDR on the GPU is off by default until a visual check on a real HDR title."""
+    try:
+        from . import settings
+        return settings.get("hdr_tonemap", "0") == "1"
+    except Exception:
+        return False
+
+
 def ffmpeg_filters():
     """Filter names this ffmpeg build actually has (cached)."""
     global _filters
@@ -242,7 +252,8 @@ def has_filter(name):
 
 def _vaapi_scale(gw, height, hdr=""):
     """Keep frames on the GPU: scale_vaapi, plus tonemap_vaapi for HDR when the filter exists."""
-    if hdr in ("HDR10", "HLG") and has_filter("tonemap_vaapi"):
+    # 2.2: only real HDR (never 10-bit SDR / bt709), and only when the admin has turned the setting on.
+    if hdr in ("HDR10", "HLG") and has_filter("tonemap_vaapi") and hdr_tonemap_enabled():
         return "scale_vaapi=w=%s:h=%d:format=p010,tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709" % (gw, height)
     return "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
 

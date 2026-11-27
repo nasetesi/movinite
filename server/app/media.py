@@ -244,6 +244,8 @@ def summarize_probe(p):
         if not res["duration"]:
             res["duration"] = _f(v.get("duration"))
         res["color_transfer"] = (v.get("color_transfer") or "").strip() or None
+        res["color_primaries"] = (v.get("color_primaries") or "").strip() or None
+        res["color_space"] = (v.get("color_space") or "").strip() or None
         rot = 0
         for sd in v.get("side_data_list") or []:
             if sd.get("rotation") not in (None, ""):

@@ -1,4 +1,5 @@
-"""1.7.9: low-priority start caches — subtitles, remux cut points, and a short 1080p opening clip.
+"""1.7.9 / 2.2: low-priority start caches — subtitles, remux cut points, opening clips,
+colour tags, and trickplay sprites.
 
 All heavy work runs on a single background thread, only while nobody is streaming, and is
 throttled so the NAS is not kept busy. Play requests never wait for this thread: they use
@@ -198,11 +199,27 @@ def _tick():
     if _do_one_remux():
         time.sleep(NAS_PAUSE_S)
         return
+    if _do_one_color():
+        time.sleep(NAS_PAUSE_S)
+        return
     if cache_gb() <= 0:
+        try:
+            from . import trickplay
+            if trickplay._do_one():
+                time.sleep(NAS_PAUSE_S)
+        except Exception:
+            log.exception("trickplay tick")
         return
     if _do_one_prefetch():
         evict_lru()
         time.sleep(NAS_PAUSE_S)
+        return
+    try:
+        from . import trickplay
+        if trickplay._do_one():
+            time.sleep(NAS_PAUSE_S)
+    except Exception:
+        log.exception("trickplay tick")
 
 
 def _drain_urgent_subs():
@@ -372,17 +389,75 @@ def _do_one_subtitle():
     return False
 
 
+
+# ---------------------------------------------------------------------------
+# 2.2: backfill colour tags (throttled, never during a stream)
+# ---------------------------------------------------------------------------
+def _do_one_color():
+    rows = db.rows(
+        "SELECT id, path, pix_fmt, color_transfer, color_primaries, color_space "
+        "FROM items WHERE media_type='video' AND probed=1 "
+        "AND (color_transfer IS NULL OR color_primaries IS NULL) "
+        "ORDER BY CASE WHEN pix_fmt LIKE '%10%' OR pix_fmt LIKE '%12%' THEN 0 ELSE 1 END, "
+        "added_at DESC LIMIT 20")
+    for row in rows:
+        if not row.get("path") or not os.path.exists(row["path"]):
+            continue
+        if busy():
+            return False
+        try:
+            code, stdout, _err = run_cmd(
+                [config.FFPROBE, "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=color_transfer,color_primaries,color_space",
+                 "-of", "csv=p=0", row["path"]],
+                timeout=20, kind="color")
+        except Exception:
+            continue
+        if code != 0:
+            # store empty strings so we do not retry this file every tick
+            transfer = row.get("color_transfer") or ""
+            primaries = row.get("color_primaries") or ""
+            space = row.get("color_space") or ""
+        else:
+            line = (stdout or b"").decode(errors="replace").strip().splitlines()
+            parts = (line[0].split(",") + ["", "", ""])[:3] if line else ["", "", ""]
+            def _clean(s):
+                s = (s or "").strip()
+                return s or None
+            transfer = _clean(parts[0]) or row.get("color_transfer")
+            primaries = _clean(parts[1]) or row.get("color_primaries")
+            space = _clean(parts[2]) or row.get("color_space")
+            # ffprobe prints "unknown" — keep it so we will not probe again
+            if not row.get("color_transfer") and not transfer:
+                transfer = "unknown"
+            if not row.get("color_primaries") and not primaries:
+                primaries = "unknown"
+        try:
+            with db.tx() as c:
+                c.execute("UPDATE items SET color_transfer=?, color_primaries=?, color_space=? WHERE id=?",
+                          (transfer, primaries, space, row["id"]))
+        except Exception:
+            log.exception("color backfill %s", row["id"])
+            return False
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Remux cut points (chunked, NAS-friendly)
 # ---------------------------------------------------------------------------
 def _do_one_remux():
     # videos that are remux-eligible and have no usable, current plan
+    # 2.2: prefer titles with no plan at all (most HEVC 4K plays were missing a plan), then retries.
     rows = db.rows(
         "SELECT i.id, i.path, i.mtime, i.duration, i.container, i.vcodec, i.pix_fmt, i.media_type, "
         "k.data, k.status, k.mtime AS k_mtime, k.checked_at, k.attempts "
         "FROM items i LEFT JOIN keyframes k ON k.item_id=i.id "
         "WHERE i.media_type='video' AND i.probed=1 AND i.duration > 1 "
-        "ORDER BY i.added_at DESC LIMIT 60")
+        "AND (k.item_id IS NULL OR k.mtime IS NULL OR k.mtime != i.mtime "
+        "     OR k.data IS NULL OR k.data='null' OR k.status='retry') "
+        "ORDER BY CASE WHEN k.item_id IS NULL THEN 0 WHEN k.status='retry' THEN 1 ELSE 2 END, "
+        "i.added_at DESC LIMIT 80")
     now = time.time()
     for row in rows:
         if not transcode.remux_eligible(row):

@@ -3128,7 +3128,9 @@ async function viewSettings(tab) {
       <button class="btn danger" type="button" id="acct-page-logout" tabindex="0">Sign out</button></div>`;
     html += `<div class="panel" style="max-width:560px"><h3 style="margin-top:0">This device</h3>
       <label class="aw-row" for="qcap-on"><span class="sw"><input type="checkbox" id="qcap-on" ${capOn ? "checked" : ""}><i></i></span><span class="aw-txt"><b>Cap quality to this screen</b><span class="aw-hint">${capHint}</span></span></label>
-      <div class="help">Saved for your account in this browser.</div></div>`;
+      <label for="d4k">This display</label>
+      <select id="d4k">${[["auto","Auto (recommended)"],["on","This is a 4K display"],["off","This is 1080p or smaller"]].map(([k,l]) => `<option value="${k}" ${display4kPref()===k?"selected":""}>${l}</option>`).join("")}</select>
+      <div class="help">A 4K television's web view often reports 1920×1080. Auto treats a TV as 4K so 4K remux and transcode stay available. Saved in this browser.</div></div>`;
     html += `<div class="panel" style="max-width:560px"><h3 style="margin-top:0">Change password</h3><div class="form">
       <label>Current password</label><input type="password" id="cp"><label>New password</label><input type="password" id="np" autocomplete="new-password">
       <label>Repeat</label><input type="password" id="np2" autocomplete="new-password"></div><div class="err" id="cperr"></div>
@@ -3138,6 +3140,7 @@ async function viewSettings(tab) {
     $("#acct-page-logout").onclick = () => $("#logout").click();
     accountExtras(v).then(() => accountDownloads(v)).catch(() => {});
     $("#qcap-on").onchange = () => { setQualityCap($("#qcap-on").checked); toast($("#qcap-on").checked ? "Quality will be capped to this screen" : "Screen cap off on this device"); };
+    if ($("#d4k")) $("#d4k").onchange = () => { setDisplay4k($("#d4k").value); toast($("#d4k").value === "on" ? "This display is treated as 4K" : $("#d4k").value === "off" ? "This display is treated as 1080p or smaller" : "Display size is automatic"); };
     $("#cpsave").onclick = async () => {
       if ($("#np").value !== $("#np2").value) { $("#cperr").textContent = "Passwords do not match"; return; }
       try { await api("/api/me/password", { method: "POST", body: { current_password: $("#cp").value, new_password: $("#np").value } }); toast("Password changed"); $("#cperr").textContent = ""; ["#cp", "#np", "#np2"].forEach(s => $(s).value = ""); }
@@ -3262,7 +3265,21 @@ async function viewTranscoding(v, head) {
         </div>
         <div class="help">${cfg.prefetch_cache_clips || 0} clip${(cfg.prefetch_cache_clips||0)===1?"":"s"} using ${((cfg.prefetch_cache_bytes||0)/1048576).toFixed(1)} MB. 0 GB turns this off. Default is 2 GB.</div>
         <div class="err" id="pf-err"></div>
-        <div class="hw-acts"><button class="btn" id="pf-save">Save cache size</button></div></div>`;
+        <div class="hw-acts"><button class="btn" id="pf-save">Save cache size</button></div></div>
+      <div class="panel"><h3 style="margin-top:0">HDR to SDR tone mapping</h3>
+        <p class="help" style="margin-top:0">When a title is <b>HDR10 or HLG</b> and has to be transcoded, convert it to SDR on the GPU (<code>tonemap_vaapi</code>). This is off by default until it has been checked on a real HDR film on this server (a library sample during planning was 10-bit SDR, which must not be tone-mapped). 10-bit SDR (bt709) is never tone-mapped.</p>
+        <label class="chk"><input type="checkbox" id="hdr-tm" ${cfg.hdr_tonemap ? "checked" : ""}> Enable GPU tone mapping for HDR10 / HLG</label>
+        <div class="err" id="hdr-tm-err"></div>
+        <div class="hw-acts"><button class="btn" id="hdr-tm-save">Save</button></div></div>
+      <div class="panel"><h3 style="margin-top:0">Seek-bar thumbnails</h3>
+        <p class="help" style="margin-top:0">When the server is idle, it builds a strip of preview pictures for the seek bar (about one every 10 seconds) on the GPU. Oldest titles are removed first when the cache is full. 0 GB turns this off.</p>
+        <div class="form hw-form">
+          <label for="tp-gb">Cache size (GB)</label>
+          <input id="tp-gb" type="number" min="0" max="100" step="0.5" value="${cfg.trickplay_cache_gb != null ? cfg.trickplay_cache_gb : 3}">
+        </div>
+        <div class="help">${cfg.trickplay_cache_titles || 0} title${(cfg.trickplay_cache_titles||0)===1?"":"s"} using ${((cfg.trickplay_cache_bytes||0)/1048576).toFixed(1)} MB. Default is 3 GB.</div>
+        <div class="err" id="tp-err"></div>
+        <div class="hw-acts"><button class="btn" id="tp-save">Save cache size</button></div></div>`;
     $("#hw-save").onclick = async () => {
       $("#hw-err").textContent = "";
       try { st = await api("/api/hw", { method: "PUT", body: { mode: $("#hw-mode").value, device: $("#hw-dev").value, max_transcodes: $("#hw-max").value } }); toast("Hardware transcoding: " + HW_LABEL[st.mode]); render(); }
@@ -3272,6 +3289,16 @@ async function viewTranscoding(v, head) {
       $("#pf-err").textContent = "";
       try { cfg = await api("/api/settings", { method: "PUT", body: { prefetch_cache_gb: $("#pf-gb").value } }); toast("Opening-clip cache: " + cfg.prefetch_cache_gb + " GB"); render(); }
       catch (e) { $("#pf-err").textContent = e.message; }
+    };
+    if ($("#hdr-tm-save")) $("#hdr-tm-save").onclick = async () => {
+      $("#hdr-tm-err").textContent = "";
+      try { cfg = await api("/api/settings", { method: "PUT", body: { hdr_tonemap: $("#hdr-tm").checked } }); toast($("#hdr-tm").checked ? "HDR tone mapping on" : "HDR tone mapping off"); render(); }
+      catch (e) { $("#hdr-tm-err").textContent = e.message; }
+    };
+    if ($("#tp-save")) $("#tp-save").onclick = async () => {
+      $("#tp-err").textContent = "";
+      try { cfg = await api("/api/settings", { method: "PUT", body: { trickplay_cache_gb: $("#tp-gb").value } }); toast("Seek-bar cache: " + cfg.trickplay_cache_gb + " GB"); render(); }
+      catch (e) { $("#tp-err").textContent = e.message; }
     };
     $("#hw-scan").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "Scanning..."; try { st = await api("/api/hw/scan", { method: "POST" }); toast("Scan finished"); } catch (er) { toast(er.message, true); } render(); };
     $$("[data-hwtest]").forEach(b => b.onclick = async () => {
@@ -3684,7 +3711,8 @@ function clientCaps() {
     hvc1_l120: 'video/mp4; codecs="hvc1.1.6.L120.90"',
     mkv: "video/x-matroska",
     ac3: 'audio/mp4; codecs="ac-3"',
-    eac3: 'audio/mp4; codecs="ec-3"'
+    eac3: 'audio/mp4; codecs="ec-3"',
+    aac: 'audio/mp4; codecs="mp4a.40.2"'
   };
   const el = {}, mse = {};
   Object.keys(tests).forEach(k => {
@@ -3693,7 +3721,9 @@ function clientCaps() {
   });
   const hevc_mse = !!(mse.hvc1_l153 || mse.hvc1_main10 || mse.hev1_main10 || mse.hvc1_l120);
   const hevc_el = el.hvc1_l153 || el.hvc1_main10 || el.hev1_main10 || el.hvc1_l120 || "";
-  return (clientCaps._c = { hevc_mse, hevc_el, el, mse, ua: navigator.userAgent || "", hlsjs: !!(window.Hls && Hls.isSupported()) });
+  // 2.2: 5.1 AAC uses the same codec string as stereo AAC; offer surround when AAC plays.
+  const surr = !!(mse.aac || el.aac);
+  return (clientCaps._c = { hevc_mse, hevc_el, el, mse, surr, ua: navigator.userAgent || "", hlsjs: !!(window.Hls && Hls.isSupported()) });
 }
 function capsQuery() {
   const c = clientCaps();
@@ -3704,19 +3734,42 @@ function capsQuery() {
     "mkv=" + (c.el.mkv ? "1" : "0"),
     "ac3=" + (c.el.ac3 ? "1" : "0"),
     "eac3=" + (c.el.eac3 ? "1" : "0"),
+    "surr=" + (c.surr ? "6" : "0"),
     "hlsjs=" + (c.hlsjs ? "1" : "0")].join("&");
 }
 // 1.7.8: cap quality to this screen (and a MediaCapabilities decode limit when available)
 const Q_LONG = { "360p": 640, "480p": 854, "720p": 1280, "1080p": 1920, "1440p": 2560, "2160p": 3840 };
 function qualityCapOn() { try { return localStorage.getItem("qualityCap") !== "off"; } catch (e) { return true; } }
 function setQualityCap(on) { try { localStorage.setItem("qualityCap", on ? "auto" : "off"); } catch (e) {} }
+function isTvMode() { return !!(document.documentElement && document.documentElement.classList.contains("tv-mode")); }
+function display4kPref() { try { return localStorage.getItem("display4k") || "auto"; } catch (e) { return "auto"; } }
+function setDisplay4k(v) { try { localStorage.setItem("display4k", v); } catch (e) {} }
 function displayLongPx() {
   const dpr = window.devicePixelRatio || 1;
   const css = Math.max(screen.width || 0, screen.height || 0);
   if (!css) return 0;
-  // Some WebViews already report physical panel pixels (1920x1200) and a dpr > 1; do not double them.
+  const pref = display4kPref();
+  const phys = Math.round(css * Math.max(dpr, 1));
+  const dec = (probeDecoders._d && Math.max(+probeDecoders._d.maxHevc || 0, +probeDecoders._d.maxH264 || 0)) || 0;
+  if (pref === "on") return Math.max(css, phys, 3840);
+  if (pref === "off") {
+    // Desktop/phone 1.7.8 rule: a WebView that already reports physical 1920 must not be doubled.
+    if (css >= 1920) return css;
+    return phys || css;
+  }
+  // auto
+  if (isTvMode()) {
+    // A 4K television's WebView often reports 1920x1080 with dpr 1 or 2.
+    if (dec >= 2160) return Math.max(css, phys, 3840);
+    if (phys >= 2560) return phys;
+    if (css >= 2560) return css;
+    if (dpr > 1 && css >= 1280) return Math.max(phys, 3840);
+    // 1080p CSS on TV: do not cap at 1080p; the user can set "This display is 1080p".
+    if (css >= 1920) return 3840;
+    return Math.max(phys, css);
+  }
   if (css >= 1920) return css;
-  return Math.round(css * dpr) || css;
+  return phys || css;
 }
 function capBaseFromPx(px) {
   if (!px) return null;
@@ -3786,6 +3839,7 @@ function capQuery() {
   const dec = qualityCapOn() ? decMaxPx() : 0;
   if (dec) parts.push("dec=" + dec);
   if (!qualityCapOn()) parts.push("nocap=1");
+  if (clientCaps().surr) parts.push("surr=6");
   return parts.join("&");
 }
 function itemCapQuery() {
@@ -3850,6 +3904,92 @@ function pickVersion(it, opts) {
   }
   return null;
 }
+
+// 2.2: seek-bar sprite sheets (loaded in the background; timestamps still work if they are not ready)
+const TP = { id: 0, data: null };
+function loadTrickplay(id) {
+  TP.id = id; TP.data = null;
+  const th = $("#pl-tip-th"); if (th) th.classList.add("hidden");
+  api("/api/items/" + id + "/trickplay").then(j => {
+    if (!P || P.it.id !== id || !j || !j.count || !(j.sheets || []).length) return;
+    TP.data = j;
+  }).catch(() => {});
+}
+function showTrickplayTip(at) {
+  const th = $("#pl-tip-th"); if (!th) return;
+  const d = TP.data;
+  if (!d || !d.count || !(d.sheets || []).length) { th.classList.add("hidden"); return; }
+  const iv = d.interval || 10;
+  const i = Math.min(d.count - 1, Math.max(0, Math.floor((at || 0) / iv)));
+  const cols = d.columns || 10, rows = d.rows || 10, w = d.width || 160, h = d.height || 90;
+  const per = cols * rows;
+  const sheet = Math.min(d.sheets.length - 1, Math.floor(i / per));
+  const idx = i % per;
+  const c = idx % cols, r = Math.floor(idx / cols);
+  th.style.width = w + "px"; th.style.height = h + "px";
+  th.style.backgroundImage = "url(" + d.sheets[sheet] + ")";
+  th.style.backgroundSize = (cols * w) + "px " + (rows * h) + "px";
+  th.style.backgroundPosition = (-c * w) + "px " + (-r * h) + "px";
+  th.classList.remove("hidden");
+}
+
+// 2.2: Up Next countdown (episodes / titles with it.next). Cancel leaves the current title at the end.
+const UP = {
+  shown: false, cancelled: false, left: 15, tid: 0,
+  reset() {
+    this.shown = false; this.cancelled = false; this.left = 15;
+    if (this.tid) { clearInterval(this.tid); this.tid = 0; }
+    const box = $("#pl-upnext"); if (box) box.classList.add("hidden");
+  },
+  hide() {
+    if (this.tid) { clearInterval(this.tid); this.tid = 0; }
+    const box = $("#pl-upnext"); if (box) box.classList.add("hidden");
+    this.shown = false;
+  },
+  tick() {
+    if (!P || !P.it || !P.it.next || this.cancelled || this.shown) return;
+    const d = (isFinite(video.duration) && video.duration > 0) ? video.duration : (P.it.duration || 0);
+    const t = video.currentTime || 0;
+    if (d > 30 && d - t <= 15 && d - t >= 0) this.show(Math.max(1, Math.ceil(d - t)));
+  },
+  show(secs) {
+    if (!P || !P.it || !P.it.next || this.cancelled) return;
+    const n = P.it.next;
+    const box = $("#pl-upnext"); if (!box) { this.go(); return; }
+    this.shown = true; this.left = secs || 15;
+    const title = n.kind === "episode" ? ((n.show ? n.show + " · " : "") + (n.episode_code || "") + " " + (n.title || "")).trim() : (n.title || "Next");
+    $("#pl-upnext-title").textContent = title;
+    const art = $("#pl-upnext-art");
+    const poster = n.thumb || n.poster || n.backdrop;
+    art.style.backgroundImage = poster ? ("url(" + (poster.indexOf("/") === 0 ? poster : thumbUrl(poster)) + ")") : "";
+    box.classList.remove("hidden");
+    const tick = () => {
+      if (!P || this.cancelled) { this.hide(); return; }
+      $("#pl-upnext-sub").textContent = "Starts in " + this.left + "s";
+      if (this.left <= 0) { this.go(); return; }
+      this.left -= 1;
+    };
+    tick();
+    if (this.tid) clearInterval(this.tid);
+    this.tid = setInterval(tick, 1000);
+    const play = $("#pl-upnext-play"), cancel = $("#pl-upnext-cancel");
+    if (play) play.onclick = () => this.go();
+    if (cancel) cancel.onclick = () => this.cancel();
+    try { if (isTvMode() && play) play.focus(); } catch (e) {}
+  },
+  go() {
+    if (!P || !P.it || !P.it.next) return;
+    const n = P.it.next.id;
+    this.hide();
+    saveProgress(true);
+    teardownVideo(true);
+    playItem(n, 0);
+  },
+  cancel() {
+    this.cancelled = true;
+    this.hide();
+  }
+};
 
 async function playItem(id, startAt, opts) {
   opts = opts || {};
@@ -3923,9 +4063,20 @@ async function playItem(id, startAt, opts) {
   startStream(mode, P.start);
   BAR.sync(); BAR.draw(P.start); ROT.open();
   OV.show();     // 1.4.11: show the big buttons for a moment so they're discoverable
+  loadTrickplay(it.id);
+  UP.reset();
 }
 
-function setStatus(t) { $("#pl-status").textContent = t || ""; }
+function setStatus(t) {
+  const el = $("#pl-status"); if (el) el.textContent = t || "";
+  const s = $("#pl-wait-s"); if (s) s.textContent = t || "";
+}
+function showWait(title) {
+  const box = $("#pl-wait"); if (!box) return;
+  const h = $("#pl-wait-t"); if (h) h.textContent = title || "Starting…";
+  box.classList.remove("hidden");
+}
+function hideWait() { const box = $("#pl-wait"); if (box) box.classList.add("hidden"); }
 function modeLabel(m) {
   const cap = P && P.cappedTo ? ` · Auto-capped to ${qualName(P.cappedTo)}` : "";
   return (m === "direct" ? "Direct play" : m === "remux" ? "Remux (original video)" : `Transcoding ${qualName(m)}`)
@@ -3939,7 +4090,12 @@ function hevcOK() {
   return (hevcOK.v = !!(c.hevc_mse || c.hevc_el));
 }
 function hiresMode(p) { return hevcOK() ? p + ".hevc" : p; }
-function hdrNote() { return " · " + P.it.playback.hdr + " without tone-mapping (colors may look flat)"; }
+function hdrNote() {
+  const hdr = P && P.it && P.it.playback && P.it.playback.hdr;
+  if (!hdr) return "";
+  if (P.it.playback.hdr_tonemap) return " · " + hdr + " with GPU tone-mapping";
+  return " · " + hdr + " without tone-mapping (colors may look flat)";
+}
 
 function startStream(mode, at) {
   if (!P) return;
@@ -3950,6 +4106,7 @@ function startStream(mode, at) {
   const subKey = $("#pl-subs").value;
   if (mode === "direct") {
     P.triedDirect = true;
+    showWait("Starting direct play");
     setStatus("Direct play");
     video.src = `/api/items/${it.id}/file`;
     video.addEventListener("loadedmetadata", function onMeta() {
@@ -3958,11 +4115,12 @@ function startStream(mode, at) {
       if (at) video.currentTime = at;
     });
   } else {
+    showWait(mode === "remux" ? "Starting remux" : ("Starting transcode · " + qualName(mode)));
     setStatus(modeLabel(mode));
     const seg = (it.playback && it.playback.seg) || 2;
     const url = `/api/items/${it.id}/hls/${mode}/index.m3u8?audio=${P.audio}&${capQuery()}&start=${Math.floor((at || 0) / seg)}`;
     if (window.Hls && Hls.isSupported()) {
-      hls = new Hls({ startPosition: at || 0, maxBufferLength: 30, maxMaxBufferLength: 120, fragLoadingTimeOut: 90000, fragLoadingMaxRetry: 4, manifestLoadingTimeOut: 30000, xhrSetup: (xhr) => { xhr.withCredentials = true; } });
+      hls = new Hls({ startPosition: at || 0, maxBufferLength: 30, maxMaxBufferLength: 120, startFragPrefetch: true, fragLoadingTimeOut: 90000, fragLoadingMaxRetry: 4, manifestLoadingTimeOut: 30000, xhrSetup: (xhr) => { xhr.withCredentials = true; } });
       hls.on(Hls.Events.ERROR, (ev, data) => {
         if (data.fatal) {
           if (P && P.mode === "remux") { fallback("remux failed: " + data.details); return; }
@@ -4011,6 +4169,14 @@ video.addEventListener("error", () => {
   else if (P && P.mode === "remux" && !hls) fallback("remux failed");
   else if (P) setStatus("Playback error");
 });
+["playing", "canplay", "loadeddata"].forEach(ev => video.addEventListener(ev, () => { hideWait(); }));
+video.addEventListener("waiting", () => {
+  if (!P || video.seeking) return;
+  if (video.currentTime > 0.2) showWait("Buffering…");
+  else showWait($("#pl-wait-t") && $("#pl-wait-t").textContent ? $("#pl-wait-t").textContent : "Starting…");
+  setStatus("Waiting for the first picture…");
+});
+video.addEventListener("playing", () => { if (P) setStatus(modeLabel(P.mode)); });
 
 // 1.7.5: fetch+cache WebVTT and paint a custom overlay. <track src> is slow to appear after
 // an HLS attachMedia / quality change (the element is often dropped) and first-time ffmpeg
@@ -4120,19 +4286,21 @@ function saveProgress(ended) {
 }
 video.addEventListener("timeupdate", () => { if (P && Date.now() - P.lastSave > 10000) { P.lastSave = Date.now(); saveProgress(); } });
 video.addEventListener("pause", () => saveProgress());
-video.addEventListener("ended", () => { saveProgress(true); if (P && P.it.next) playItem(P.it.next.id, 0); });
+video.addEventListener("ended", () => { saveProgress(true); if (P && P.it.next && !UP.cancelled) UP.go(); });
+video.addEventListener("timeupdate", () => { if (P) UP.tick(); });
 video.addEventListener("waiting", () => { if (P && P.mode !== "direct") setStatus(`${modeLabel(P.mode)} · buffering...`); });
 video.addEventListener("playing", () => { if (P) { P.played = true; setStatus(modeLabel(P.mode)); } setTimeout(() => setStatus(""), 4000); });
 
 function teardownVideo(stopServer) {
   if (hls) { hls.destroy(); hls = null; }
   video.removeAttribute("src"); $$("track", video).forEach(t => t.remove()); video.load();
+  hideWait();
   if (stopServer && P) api(`/api/items/${P.it.id}/stop?player=${encodeURIComponent(playerId())}`, { method: "POST" }).catch(() => {});
 }
 function closePlayer() {
   if (!P) return;
   PIP.leave(); saveProgress(); teardownVideo(true); P = null; PIP.tell();
-  OV.reset();
+  OV.reset(); UP.reset();
   SUB.key = ""; SUB.cues = []; SUB.waiting = false; paintCues();
   $("#player").classList.add("hidden"); ROT.close();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -4393,8 +4561,11 @@ const BAR = (() => {
     try { seek.setPointerCapture(e.pointerId); } catch (x) {} draw(frac(e) * dur()); });
   seek.addEventListener("pointermove", (e) => {
     if (!P || !dur()) return;
-    const f = frac(e); tip.textContent = fmt(f * dur()); tip.style.left = (f * 100) + "%"; tip.classList.remove("hidden");
-    if (drag) draw(f * dur());
+    const f = frac(e); const at = f * dur();
+    const tt = $("#pl-tip-t"); if (tt) tt.textContent = fmt(at); else tip.textContent = fmt(at);
+    tip.style.left = (f * 100) + "%"; tip.classList.remove("hidden");
+    showTrickplayTip(at);
+    if (drag) draw(at);
   });
   const end = (e) => { if (!drag) return; drag = false; seek.classList.remove("drag"); tip.classList.add("hidden");
     const t = frac(e) * dur(); video.currentTime = Math.min(t, Math.max(0, dur() - 0.5)); if (P) P.lastSave = 0; draw(); OV.show(); };

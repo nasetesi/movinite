@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.2 -- 2026-11-26
+Builds on 2.1.4. Schema 13 (a `media-server.db.pre-schema13` backup, mode 600, is written once before the bump).
+
+- **Play starts on the first try when remux is not ready.** Remux (copy the original video into HLS) is only offered when a keyframe plan is already cached. If the plan is missing, the player starts a transcode immediately instead of trying remux, getting an error, and falling back. An idle, low-priority job fills missing plans (and yields the moment someone presses play).
+- **Surround sound is kept.** When the client can play AAC, remux copies 5.1 (or 7.1) AAC and transcodes other surround formats (EAC3, AC3, DTS) to AAC 5.1. Transcodes also keep 5.1 AAC. Stereo is used only when the client cannot play surround, or when the source is already stereo.
+- **HDR to SDR tone mapping is available on the GPU, off by default.** Settings > Transcoding has a toggle. When it is on, HDR10 and HLG titles that have to be transcoded use `tonemap_vaapi`. 10-bit SDR (bt709) is never tone-mapped. It is off until it has been checked on a real HDR film (a library sample during planning was 10-bit SDR). Colour tags (`color_transfer`, `color_primaries`, `color_space`) are backfilled in the background.
+- **Seek-bar thumbnails.** While the server is idle it builds a sprite strip (about one picture every 10 seconds) on the GPU. Hovering or dragging the seek bar shows the picture. Cache size is in Settings > Transcoding (default 3 GB; 0 turns it off). Work stops when someone starts playback.
+- **Up Next.** At the end of an episode (or any title with a next item) a card counts down from about 15 seconds with Play now and Cancel. Cancel leaves you on the current title.
+- **4K televisions are not capped at 1080p** just because the web view reports 1920×1080. Auto on a TV treats that as a 4K display so 4K remux and transcode stay available. Settings > Account has Auto / This is a 4K display / This is 1080p or smaller.
+- **An honest start overlay** names the mode (direct play, remux, or transcode) and shows when it is waiting for the first picture. hls.js prefetches the first segment.
+
+The installed 2.0.2 Android TV app works as-is; this is a server update. Desktop and phone layouts are otherwise unchanged. TV remote navigation from 2.1.4 is unchanged (first Left focuses the slim rail, second Left opens the slide-out, the top tabs are selectable).
+
+
 ## 2.1.4 -- 2026-11-26
 Builds on 2.1.3 (schema stays 12; no database upgrade).
 

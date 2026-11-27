@@ -14,7 +14,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import artwork, auth, browse, folderart, liborder, playlists, preload, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode
+from . import artwork, auth, browse, folderart, liborder, playlists, preload, sharehealth, titles, config, db, homerows, hwaccel, scanner, settings, shares, sysstat, tmdb, transcode, trickplay
 from . import gmail, mailer, guard, invites, keys, netutil, offline, useractivity, pair, discover, fed
 from .version import __version__
 
@@ -2097,8 +2097,12 @@ def playback_info(it, cap=None):
             subtitle_tracks.append({"key": "s%d" % s["index"],
                                     "label": s.get("title") or s.get("lang") or "Track %d" % s["index"],
                                     "lang": s.get("lang")})
-    remux = it["media_type"] == "video" and transcode.remux_eligible(it)
-    remux_codec = transcode.remux_codec(it) if remux else ""
+    eligible = it["media_type"] == "video" and transcode.remux_eligible(it)
+    # 2.2: only advertise remux when a keyframe plan is already cached, so play does not
+    # try remux, 409, then transcode.
+    remux = eligible and transcode.remux_ready(it)
+    remux_pending = eligible and not remux
+    remux_codec = transcode.remux_codec(it) if eligible else ""
     # 1.7.8: hide qualities (and remux/direct of a larger file) above this device's cap
     src_fits = True
     if cap:
@@ -2109,11 +2113,13 @@ def playback_info(it, cap=None):
             hires_off = dict(hires_off, profiles=kept) if kept else None
         src_fits = transcode.source_fits_cap(it, cap)
         if not src_fits:
-            remux, remux_codec, direct, maybe = False, "", False, False
-    return {"direct": direct, "direct_maybe": maybe, "remux": remux, "remux_codec": remux_codec,
+            remux, remux_pending, remux_codec, direct, maybe = False, False, "", False, False
+    return {"direct": direct, "direct_maybe": maybe, "remux": remux, "remux_pending": remux_pending,
+            "remux_codec": remux_codec,
             "mime": MIME.get(ext, "application/octet-stream"),
             "seg": transcode.SEG,
             "profiles": profiles, "hires": hires, "hires_off": hires_off, "hdr": hdr,
+            "hdr_tonemap": hwaccel.hdr_tonemap_enabled(),
             "hires_kbps": {p: {"h264": transcode.video_kbps(it, p), "hevc": transcode.video_kbps(it, p, True)} for p in hires},   # 1.5.4: real maxrate
             "audio_streams": auds, "subtitles": subtitle_tracks,
             "image_subs": [s for s in subs if not s.get("text")],
@@ -2486,12 +2492,14 @@ def _profile_ok(profile):
         raise HTTPException(409, "2K and 4K need hardware transcoding")
 
 
-def _player_query(audio, player, start=None):
+def _player_query(audio, player, start=None, surr=0):
     q = "?audio=%d" % audio
     if player:
         q += "&player=%s" % transcode.normalize_player(player)
     if start is not None:
         q += "&start=%d" % start
+    if int(surr or 0) >= 6:
+        q += "&surr=6"
     return q
 
 
@@ -2499,7 +2507,7 @@ def _player_query(audio, player, start=None):
 def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, start: int = 0,
                  player: str = "", caps: str = "", hevc: str = "", hevc_mse: str = "",
                  hevc_el: str = "", mkv: str = "", ac3: str = "", eac3: str = "", hlsjs: str = "",
-                 disp: int = 0, dec: int = 0, nocap: int = 0,
+                 disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0,
                  u=Depends(auth.require_user)):
     if item_id < 0:
         info = fed.start_remote_play(u, item_id, profile, request)
@@ -2530,19 +2538,19 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
         if not bounds:
             raise HTTPException(409, "This file cannot be remuxed; use a transcode quality")
     need_init = transcode.split_profile(profile)[1] == "hevc" or (profile == "remux" and transcode.remux_codec(it) == "hevc")
-    init = ("init.mp4" + _player_query(audio, player, max(0, start))) if need_init else None
+    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr)) if need_init else None
     # 1.7.9: start ffmpeg as soon as the playlist is requested, so the first segment overlaps the player's next RTT
     if profile != "audio":
         try:
-            s = transcode.get_session(it, profile, max(0, audio), u["id"], player)
+            s = transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr)
             transcode.kickoff(s, max(0, start))
         except ValueError:
             pass
-    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player), bounds, init), media_type="application/vnd.apple.mpegurl",
+    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr), bounds, init), media_type="application/vnd.apple.mpegurl",
                              headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
-def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0):
+def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0, surr=0):
     it = _get_item(item_id)
     dpx, kpx, no_cap = transcode.parse_cap_args(disp, dec, nocap)
     new, device_cap, changed = transcode.clamp_profile(profile, it, dpx, kpx, no_cap)
@@ -2551,20 +2559,20 @@ def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0):
     profile = new
     _profile_ok(profile)
     try:
-        return transcode.get_session(it, profile, max(0, audio), u["id"], player)
+        return transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr)
     except ValueError as e:
         raise HTTPException(409, "This file cannot be remuxed" if profile == "remux" else str(e))
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/init.mp4")
 def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player: str = "",
-             disp: int = 0, dec: int = 0, nocap: int = 0,
+             disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0,
              u=Depends(auth.require_user)):
     """1.5.3: init segment of an HEVC (fMP4) stream (transcode or HEVC remux)."""
     it = _get_item(item_id)
     if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap)
+    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr)
     p = s.get_init(max(0, start))
     if not p:
         raise HTTPException(500, "Transcode failed" + (": " + s.failed if s.failed else ""))
@@ -2573,18 +2581,18 @@ def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player:
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.m4s")
 def hls_segment_m4s(item_id: int, profile: str, n: int, audio: int = 0, player: str = "",
-                    disp: int = 0, dec: int = 0, nocap: int = 0,
+                    disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0,
                     u=Depends(auth.require_user)):
     it = _get_item(item_id)
     if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    return hls_segment(item_id, profile, n, audio, u, player, disp, dec, nocap)
+    return hls_segment(item_id, profile, n, audio, u, player, disp, dec, nocap, surr)
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.ts")
 def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(auth.require_user),
-                player: str = "", disp: int = 0, dec: int = 0, nocap: int = 0):
-    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap)
+                player: str = "", disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0):
+    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr)
     if n < 0 or n >= s.nseg:
         raise HTTPException(404)
     p = s.get_segment(n)
@@ -2645,16 +2653,43 @@ def _mask(key):
     return key[:4] + "..." + key[-4:] if len(key) > 12 else "set"
 
 
+
+@app.get("/api/items/{item_id}/trickplay")
+def trickplay_info(item_id: int, u=Depends(auth.require_user)):
+    """2.2: sprite-sheet metadata for the seek bar. Empty/pending until the idle job finishes."""
+    it = _get_item(item_id)
+    info = trickplay.public_info(it)
+    if not info:
+        return {"status": "pending", "interval": trickplay.INTERVAL, "count": 0, "sheets": [],
+                "width": trickplay.THUMB_W, "height": 90, "columns": trickplay.COLS, "rows": trickplay.ROWS}
+    return info
+
+
+@app.get("/api/items/{item_id}/trickplay/sheet{n}.jpg")
+def trickplay_sheet(item_id: int, n: int, u=Depends(auth.require_user)):
+    it = _get_item(item_id)
+    path = trickplay.sheet_path(item_id, n)
+    if not path:
+        raise HTTPException(404, "No trickplay sheet")
+    trickplay.public_info(it, touch=True)
+    return FileResponse(path, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.get("/api/settings")
 def get_settings(u=Depends(auth.require_admin)):
     db_key = settings.get("tmdb_key") or ""
     prefetch = preload.cache_stats()
+    tp = trickplay.cache_stats()
     return {"tmdb_key_set": bool(settings.tmdb_key()), "tmdb_key_masked": _mask(settings.tmdb_key()),
             "tmdb_key_source": "settings" if db_key else ("env" if config.TMDB_KEY else None),
             "tmdb_language": settings.tmdb_language(), "tmdb_enabled": settings.get("tmdb_enabled", "1") != "0",
             "status_all_users": settings.get("status_all_users", "0") == "1",
             "prefetch_cache_gb": prefetch["gb"], "prefetch_cache_clips": prefetch["clips"],
-            "prefetch_cache_bytes": prefetch["bytes"]}
+            "prefetch_cache_bytes": prefetch["bytes"],
+            "hdr_tonemap": settings.get("hdr_tonemap", "0") == "1",
+            "trickplay_cache_gb": tp["gb"], "trickplay_cache_titles": tp["titles"],
+            "trickplay_cache_bytes": tp["bytes"]}
 
 
 @app.put("/api/settings")
@@ -2682,6 +2717,13 @@ def put_settings(body: dict = Body(...), u=Depends(auth.require_admin)):
     if "prefetch_cache_gb" in body:
         try:
             preload.set_cache_gb(body.get("prefetch_cache_gb"))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(400, str(e))
+    if "hdr_tonemap" in body:
+        settings.put("hdr_tonemap", "1" if body.get("hdr_tonemap") else "0")
+    if "trickplay_cache_gb" in body:
+        try:
+            trickplay.set_cache_gb(body.get("trickplay_cache_gb"))
         except (TypeError, ValueError) as e:
             raise HTTPException(400, str(e))
     keys_changed = sorted(body.keys())

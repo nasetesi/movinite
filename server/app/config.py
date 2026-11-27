@@ -37,6 +37,7 @@ DB_PATH = DATA_DIR / "media-server.db"
 THUMB_DIR = DATA_DIR / "thumbs"
 TRANSCODE_DIR = DATA_DIR / "transcode"
 PREFETCH_DIR = DATA_DIR / "prefetch"   # 1.7.9: opening-clip cache (first ~6s at 1080p)
+TRICKPLAY_DIR = DATA_DIR / "trickplay" # 2.2: seek-bar sprite sheets
 SUBS_DIR = DATA_DIR / "subs"           # 1.7.9: extracted WebVTT cache
 SHARES_DIR = Path(os.environ.get("MS_SHARES_DIR") or "/srv/media-server/shares")
 PORT = _int("MS_PORT", 8099)
@@ -55,7 +56,7 @@ TMDB_WORKERS = int(os.environ.get("MS_TMDB_WORKERS") or 4)
 FFMPEG = os.environ.get("MS_FFMPEG") or "ffmpeg"
 FFPROBE = os.environ.get("MS_FFPROBE") or "ffprobe"
 
-for d in (DATA_DIR, THUMB_DIR, TRANSCODE_DIR, PREFETCH_DIR, SUBS_DIR):
+for d in (DATA_DIR, THUMB_DIR, TRANSCODE_DIR, PREFETCH_DIR, SUBS_DIR, TRICKPLAY_DIR):
     try:
         d.mkdir(parents=True, exist_ok=True)
     except OSError:

@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from . import config
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 -- 1.4: categories
@@ -340,6 +340,26 @@ CREATE TABLE IF NOT EXISTS remote_items (
 );
 CREATE INDEX IF NOT EXISTS remote_items_lib ON remote_items(remote_library_id, sort_title);
 CREATE INDEX IF NOT EXISTS remote_items_title ON remote_items(title);
+
+-- 2.2: seek-bar trickplay sprites (schema 13)
+CREATE TABLE IF NOT EXISTS trickplay_cache (
+    item_id INTEGER PRIMARY KEY,
+    mtime REAL,
+    interval_s REAL,
+    width INTEGER,
+    height INTEGER,
+    columns INTEGER,
+    rows INTEGER,
+    count INTEGER,
+    sheets INTEGER,
+    dir TEXT,
+    size INTEGER,
+    status TEXT,
+    last_access INTEGER,
+    checked_at INTEGER,
+    attempts INTEGER
+);
+CREATE INDEX IF NOT EXISTS trickplay_cache_lru ON trickplay_cache(last_access);
 """
 
 _local = threading.local()
@@ -399,6 +419,8 @@ ADDED_COLUMNS = [
     ("items", "art_tmdb", "INTEGER"),                   # 1.7.3: TMDB id named by the folder .nfo
     ("items", "rotation", "INTEGER"),                    # 1.7.9: display rotation degrees (0 if none)
     ("items", "color_transfer", "TEXT"),                 # 1.7.9: smpte2084 / arib-std-b67 / ...
+    ("items", "color_primaries", "TEXT"),                # 2.2
+    ("items", "color_space", "TEXT"),                    # 2.2
     ("keyframes", "status", "TEXT"),                     # 1.7.9: ok | partial | retry
     ("keyframes", "checked_at", "INTEGER"),
     ("keyframes", "attempts", "INTEGER"),
@@ -445,6 +467,8 @@ def migrate():
             _backup_db(c, 11)             # 2.0: snapshot before devices / offline downloads (idempotent)
         if old_pre and int(old_pre[0]) < 12:
             _backup_db(c, 12)             # 2.1: snapshot before server-to-server sharing (idempotent)
+        if old_pre and int(old_pre[0]) < 13:
+            _backup_db(c, 13)             # 2.2: snapshot before trickplay / colour tags (idempotent)
         c.executescript(SCHEMA)
         for table, col, typ in ADDED_COLUMNS:
             have = {r[1] for r in c.execute("PRAGMA table_info(%s)" % table)}
