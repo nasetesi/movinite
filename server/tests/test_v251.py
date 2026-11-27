@@ -23,7 +23,8 @@ def _chunk(css, start, length=320):
 def test_version_and_schema():
     from app.version import __version__
     from app.db import SCHEMA_VERSION
-    check(__version__ == "2.5.1", "version is 2.5.1, got " + __version__)
+    parts = tuple(int(x) for x in __version__.split(".")[:3])
+    check(parts >= (2, 5, 1), "version is 2.5.1 or later, got " + __version__)
     check(SCHEMA_VERSION == 15, "schema stays at 15, got %s" % SCHEMA_VERSION)
 
 

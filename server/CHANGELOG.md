@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.2 -- 2026-11-26
+A visual fix on top of 2.5.1, for phones only. Schema stays at 15. No new Android app is needed.
+
+- **The phone top bar matches the movie backdrop.** On a movie, episode, or show details page, the header (logo, search, server status, avatar) is transparent so the page's blurred backdrop continues up behind it, with a soft dark fade so the icons stay readable. As you scroll, the bar becomes frosted glass tinted to the artwork's color (taken from the backdrop in the browser; a dark glass is used if that isn't available). Other phone pages keep the current solid bar. Desktop and TV are unchanged. The bottom tab bar is unchanged. The Android app's system status bar is still the app's dark color — matching that area would need a new app build, and is not part of this update.
+
 ## 2.5.1 -- 2026-11-26
 A visual fix on top of 2.5: the profile menu and the server status dropdown (and the other page dropdowns that already shared that chrome) use a glossy charcoal-to-graphite style instead of the 2.4.2 purple glass. Schema stays at 15. No new Android app is needed.
 

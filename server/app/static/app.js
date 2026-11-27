@@ -759,7 +759,7 @@ async function boot() {
   } catch (e) { showLogin(); return; }
   stopPairPoll();
   rememberServer(location.origin, "Movinite" + (ME.version ? " · v" + ME.version : ""));
-  hideAuth(); $("#shell").classList.remove("hidden");
+  hideAuth(); $("#shell").classList.remove("hidden"); bindDetailTopScroll();
   $("#whoami").textContent = ME.username; $("#ver").textContent = "v" + ME.version;
   syncTopH();
   MOB.setup();
@@ -971,12 +971,72 @@ new MutationObserver(() => { if (!enhanceRows._raf) enhanceRows._raf = requestAn
   .observe(document.getElementById("view"), { childList: true, subtree: true });
 window.addEventListener("resize", () => $$(".hrow").forEach(hrowUpdate));
 
+/* 2.5.2: phone details header — transparent over the backdrop, then frosted as you scroll. */
+const DETAIL_TOP_Y = 48;
+const DETAIL_THEME_FALLBACK = "#0b0612";
+function clearDetailTop() {
+  const h = document.documentElement;
+  h.classList.remove("detail-top", "detail-top-scrolled");
+  h.style.removeProperty("--detail-tint");
+  h.style.removeProperty("--detail-tint-rgb");
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", DETAIL_THEME_FALLBACK);
+}
+function syncDetailTopScroll() {
+  const v = document.getElementById("view");
+  const on = document.documentElement.classList.contains("detail-top");
+  if (!v || !on) return;
+  document.documentElement.classList.toggle("detail-top-scrolled", v.scrollTop > DETAIL_TOP_Y);
+}
+function extractDetailTint(url) {
+  if (!url) return;
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const c = document.createElement("canvas");
+      c.width = 24; c.height = 24;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0, 24, 24);
+      const data = ctx.getImageData(0, 0, 24, 24).data;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] < 128) continue;
+        r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+      }
+      if (!n) return;
+      r /= n; g /= n; b /= n;
+      const k = 0.36;
+      const rr = Math.round(r * k), gg = Math.round(g * k), bb = Math.round(b * k);
+      document.documentElement.style.setProperty("--detail-tint", "rgba(" + rr + "," + gg + "," + bb + ",.82)");
+      document.documentElement.style.setProperty("--detail-tint-rgb", rr + "," + gg + "," + bb);
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", "rgb(" + rr + "," + gg + "," + bb + ")");
+    } catch (e) { /* tainted canvas or missing pixels: keep the dark fallback */ }
+  };
+  img.src = url;
+}
+function setDetailTop(imgUrl) {
+  if (!imgUrl) { clearDetailTop(); return; }
+  document.documentElement.classList.add("detail-top");
+  bindDetailTopScroll();
+  syncDetailTopScroll();
+  extractDetailTint(imgUrl);
+}
+function bindDetailTopScroll() {
+  const v = document.getElementById("view");
+  if (!v || bindDetailTopScroll._on) return;
+  bindDetailTopScroll._on = true;
+  v.addEventListener("scroll", syncDetailTopScroll, { passive: true });
+}
+
 async function route() {
   if (!ME) return;
   const h = location.hash.replace(/^#\/?/, "");
   const parts = h.split("/").map(decodeURIComponent);
   const v = $("#view");
   v.dataset.view = parts[0] || "home";   // 1.4.9: lets CSS style the settings pages for phones
+  clearDetailTop();
   clearInterval(route._poll); route._live = null; route._token = (route._token || 0) + 1;
   try {
     switch (parts[0]) {
@@ -1677,7 +1737,8 @@ async function viewShow(libId, show) {
   const season = d.seasons.find(s => s.season === cur) || d.seasons[0];
   const total = d.seasons.reduce((a, s) => a + s.episodes.length, 0);
   const tm = d.tmdb || {};
-  let html = `<div class="hero"${heroStyle(tm.backdrop)}></div><div class="detail"><div class="poster" style="${d.poster ? `background-image:url('${thumbUrl(d.poster)}')` : ""}"></div><div class="info">
+  const showBg = tm.backdrop || d.poster;
+  let html = `${showBg ? `<div class="detail-bg detail-bg-phone" aria-hidden="true"><div class="dbg-img" style="background-image:url('${thumbUrl(showBg)}')"></div></div>` : ""}<div class="hero"${heroStyle(tm.backdrop)}></div><div class="detail"><div class="poster" style="${d.poster ? `background-image:url('${thumbUrl(d.poster)}')` : ""}"></div><div class="info">
     <h1>${esc(tm.title || d.show)}</h1><div class="meta">${d.year ? `<span>${d.year}</span>` : ""}<span>${d.seasons.length} season${d.seasons.length > 1 ? "s" : ""}</span><span>${total} episodes</span></div>
     ${metaChips(tm)}${tm.overview ? `<p class="overview">${esc(tm.overview)}</p>` : ""}
     <div class="actions"><button class="btn" id="playnext">&#9654; ${d.next.position ? "Resume" : "Play"} ${epCode(d.next)}</button>
@@ -1703,6 +1764,7 @@ async function viewShow(libId, show) {
     try { const libs = await api("/api/libraries"); const l = libs.find(x => x.id === +libId); if (l) artworkDialog(l, { show }); }
     catch (e) { toast(e.message, true); }
   };
+  setDetailTop(showBg ? thumbUrl(showBg) : null);
 }
 
 async function viewAlbum(libId, artist, album) {
@@ -2099,6 +2161,7 @@ async function viewItem(id) {
     });
   };
   if ($("#addtag2")) $("#addtag2").onclick = tagDlg;
+  setDetailTop(bgImg ? thumbUrl(bgImg) : null);
 }
 
 // 1.4.3: an actor / director and the movies in your library they are in
