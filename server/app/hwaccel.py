@@ -333,61 +333,88 @@ def output_size(item, height, box=None, rot=0):
     return out_w, out_h
 
 
-def burn_filter_complex(stage, method, out_w, out_h, sub_index, base_video_f=None):
-    """Build a -filter_complex that burns an image subtitle into the picture.
+def _strip_hwupload(vf):
+    """Drop a trailing ',hwupload...' so a CPU (enc-stage) chain can be overlaid before upload."""
+    vf = vf or ""
+    i = vf.rfind(",hwupload")
+    if i >= 0 and "," not in vf[i + 1:]:
+        vf = vf[:i]
+    return vf
 
-    Prefer overlay_vaapi (CPU-render the subtitle plane, hwupload, overlay on
-    the GPU). If that filter is missing, overlay on the CPU and hwupload the
-    composited frame. Works with ffmpeg 6.1.x (overlay_vaapi is detected).
-    Returns the filter_complex string ending in [vout].
+
+def burn_filter_complex(stage, method, out_w, out_h, sub_index, base_video_f=None):
+    """Build a -filter_complex that burns an image subtitle (PGS / VobSub / DVB) into the picture.
+
+    2.6.1: never overlay_vaapi. On the Arc A310 (iHD 24.1, ffmpeg 6.1.1) it gave a solid
+    green picture when the subtitle plane was uploaded to a second VAAPI device (the decoder
+    used -hwaccel_device <path>, the upload used -init_hw_device), and even on one shared
+    device it drew a pink box behind every line (per-pixel alpha is not honoured).
+    Instead the video is decoded / scaled / tone-mapped as usual (on the GPU for "full"),
+    downloaded as NV12, the subtitle is overlaid on the CPU, and the frame is uploaded
+    again for the hardware encoder. The HDR tone-map runs before the overlay, so the
+    subtitle is never tone-mapped. Returns the filter_complex string ending in [vout].
     """
     w, h, si = _even(out_w), _even(out_h), int(sub_index)
     # Scale/pad the subtitle plane on the CPU; keep alpha for overlay.
     sub = ("[0:%d]format=yuva420p,scale=%d:%d:force_original_aspect_ratio=decrease,"
            "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black@0[sub]" % (si, w, h, w, h))
-    use_ova = method == "vaapi" and stage == "full" and has_filter("overlay_vaapi")
-    if use_ova:
-        # Upload only the subtitle plane; video stays on the GPU.
-        sub = ("[0:%d]format=bgra,scale=%d:%d:force_original_aspect_ratio=decrease,"
-               "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
-               "hwupload=extra_hw_frames=64[sub]" % (si, w, h, w, h))
-        vid = base_video_f or ("scale_vaapi=w=%d:h=%d:format=nv12" % (w, h))
-        if not vid.startswith("[0:"):
-            vid = "[0:v:0]" + vid
-        if "[base]" not in vid:
-            vid = vid + "[base]"
-        return "%s;%s;[base][sub]overlay_vaapi=eof_action=pass:repeatlast=0[vout]" % (vid, sub)
-    # CPU overlay of the subtitle, then hwupload when this stage encodes on the GPU.
-    vid = base_video_f
+    vid = base_video_f or ""
     if stage in ("full", "enc") and method in ("vaapi", "qsv"):
-        # If a full-GPU chain was passed, download first so overlay can run on CPU.
-        if vid and "vaapi" in vid:
-            if not vid.startswith("[0:"):
-                vid = "[0:v:0]" + vid
-            vid = vid + ",hwdownload,format=nv12[base]" if "[base]" not in vid else vid
+        if stage == "full" and method == "vaapi":
+            # GPU frames: decode + scale (+ tonemap) on the GPU, then download for the overlay.
+            vid = (vid or ("scale_vaapi=w=%d:h=%d:format=nv12" % (w, h))) + ",hwdownload,format=nv12"
+        elif stage == "full" and vid and "vaapi" in vid:
+            vid = vid + ",hwdownload,format=nv12"
+        elif stage == "enc" and vid:
+            # CPU decode chain (software scale / tone-map) without its final upload.
+            vid = _strip_hwupload(vid)
+            if not vid.endswith("format=nv12"):
+                vid += ",format=nv12"
         else:
-            vid = "[0:v:0]scale=%d:%d,format=nv12[base]" % (w, h)
+            vid = "scale=%d:%d,format=nv12" % (w, h)
+        vid = "[0:v:0]" + vid + "[base]"
         ov = "[base][sub]overlay=0:0:eof_action=pass:repeatlast=0,format=nv12,hwupload=extra_hw_frames=64[vout]"
         if method == "qsv":
             ov = ("[base][sub]overlay=0:0:eof_action=pass:repeatlast=0,format=nv12,"
                   "hwupload=extra_hw_frames=64,format=qsv[vout]")
         return "%s;%s;%s" % (vid, sub, ov)
-    # Pure CPU (libx264) or nvenc-enc (nvenc full uses cuda filters; fall back to CPU overlay).
-    vid = "[0:v:0]scale=%d:%d,format=yuv420p[base]" % (w, h)
+    # Pure CPU (libx264) or nvenc-enc: software chain (keeps the HDR tone-map when given).
+    if vid and "vaapi" not in vid and "cuda" not in vid and "qsv" not in vid:
+        vid = "[0:v:0]" + _strip_hwupload(vid) + ",format=yuv420p[base]"
+    else:
+        vid = "[0:v:0]scale=%d:%d,format=yuv420p[base]" % (w, h)
     ov = "[base][sub]overlay=0:0:eof_action=pass:repeatlast=0,format=yuv420p[vout]"
-    if method == "nvenc" and stage == "enc":
-        # nvenc enc path encodes from yuv420p software frames
-        pass
     return "%s;%s;%s" % (vid, sub, ov)
 
 
 def burn_needs_hw_device(stage, method):
     """True when the burn chain hwuploads (needs -init_hw_device / -filter_hw_device)."""
-    if method == "vaapi" and stage == "full" and has_filter("overlay_vaapi"):
-        return True
-    if method in ("vaapi", "qsv") and stage in ("full", "enc"):
-        return True
-    return False
+    return method in ("vaapi", "qsv") and stage in ("full", "enc")
+
+
+def vaapi_one_device(pre, device):
+    """2.6.1: make decoder and filters share ONE VAAPI device.
+
+    `-hwaccel_device /dev/dri/renderD128` plus a separate `-init_hw_device vaapi=hw:...`
+    opens the GPU twice; surfaces uploaded on one display and used on the other read
+    back as zeros (solid green after NV12 -> RGB). Initialise the named device first and
+    point both the decoder and the filter graph at it.
+    """
+    pre = list(pre or [])
+    out = []
+    i = 0
+    while i < len(pre):
+        a = pre[i]
+        if a in ("-init_hw_device", "-filter_hw_device"):
+            i += 2
+            continue
+        if a == "-hwaccel_device":
+            out += ["-hwaccel_device", "hw"]
+            i += 2
+            continue
+        out.append(a)
+        i += 1
+    return ["-init_hw_device", "vaapi=hw:%s" % device] + out + ["-filter_hw_device", "hw"]
 
 def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h264", hdr="", item=None):
     """ffmpeg arguments for one transcode stage.

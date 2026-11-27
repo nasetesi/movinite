@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.1 -- 2026-11-27 (subtitle burn-in part; merge with the HDR tone-map / speed part)
+- **Turning on picture-based captions (PGS / VobSub) no longer turns the video solid green on Intel GPU servers.** In 2.3–2.6 the burn-in decoded on one VAAPI device (`-hwaccel_device /dev/dri/renderD128`), uploaded the subtitle plane to a second one (`-init_hw_device vaapi=hw:…`), and mixed the two in `overlay_vaapi`. On the Arc A310 (iHD 24.1, ffmpeg 6.1.1) every frame came out green; even on one shared device `overlay_vaapi` drew a pink box behind each line. Seen on Zootopia and John Adams from the phone.
+- **New burn-in chain:** one shared VAAPI device for decode and filters; decode, scale and (when on) HDR tone-map on the GPU, then `hwdownload,format=nv12`, overlay the subtitle on the CPU, `hwupload`, and encode with `h264_vaapi` / `hevc_vaapi`. `overlay_vaapi` is no longer used. 4K → 1080p with subtitles runs well above real time on the Arc.
+- **HDR tone-mapping now also applies while subtitles are burned in** on the CPU-decode (`enc`) and CPU fallback stages; 2.6 dropped the tone-map there and used a plain scale.
+- Text subtitles (SRT / ASS / WebVTT) are unchanged: they are still served as WebVTT sidecars and never restart the transcode. The TV app uses the same server burn-in path for picture-based tracks, so it gets the same fix; no new Android app is needed.
+
 ## 2.6 -- 2026-11-27
 An HDR detection update on top of 2.5.10. After 2.5.10 the version rolls to the next minor (the third digit maxes out at .10). Schema stays at 15: additive `hdr_type` and `hdr_primaries` columns are added on items, with no schema bump. No new Android app is needed.
 

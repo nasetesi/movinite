@@ -404,9 +404,8 @@ class Session:
             self.rot = hwaccel.rotation(item)
             if self.rot and self.hw[0] == "nvenc":
                 self.stages = ["enc", "cpu"]     # no GPU rotate filter for CUDA frames in ffmpeg 6.1
-        if self.burn and self.hw[0] == "vaapi" and not hwaccel.has_filter("overlay_vaapi"):
-            # 2.3: no overlay_vaapi — CPU-overlay the subtitle plane and hwupload (enc), then CPU
-            self.stages = [x for x in self.stages if x != "full"] or ["enc", "cpu"]
+        # 2.6.1: VAAPI burn-in no longer needs overlay_vaapi (GPU decode -> hwdownload -> CPU
+        # overlay -> hwupload), so the "full" stage is kept for every VAAPI server.
         if self.burn and self.hw[0] == "nvenc":
             self.stages = [x for x in self.stages if x != "full"] or ["enc", "cpu"]
         if self.hevc:
@@ -603,10 +602,11 @@ class Session:
         elif config.HWACCEL and not audio_only:
             cmd += ["-hwaccel", config.HWACCEL]
         burn = int(getattr(self, "burn", 0) or 0) if not audio_only else 0
-        # overlay_vaapi needs a named VAAPI device to hwupload the subtitle plane
-        if burn and hw and self.hw[0] == "vaapi" and self.stage == "full" and hwaccel.has_filter("overlay_vaapi"):
-            if "-init_hw_device" not in cmd:
-                cmd += ["-init_hw_device", "vaapi=hw:%s" % self.hw[1], "-filter_hw_device", "hw"]
+        # 2.6.1: the burn chain hwuploads after a CPU overlay. Decoder and filters must share
+        # ONE VAAPI device (two devices = solid green picture on the Arc).
+        if burn and hw and self.hw[0] == "vaapi" and self.stage == "full":
+            n_pre = len(hw[0])
+            cmd = cmd[:len(cmd) - n_pre] + hwaccel.vaapi_one_device(hw[0], self.hw[1])
         cmd += ["-ss", "%.3f" % t0, "-i", it["path"]]
         if audio_only:
             cmd += ["-map", "0:a:%d?" % self.audio_idx, "-vn", "-sn", "-dn"]
@@ -617,7 +617,12 @@ class Session:
             if src_h and src_h < maxh and not box:
                 vk = max(600, int(vk * (src_h / maxh) ** 1.5))
             ow, oh = hwaccel.output_size(it, h, box, getattr(self, "rot", 0))
-            base_vf = hw[1] if hw else None
+            if hw:
+                base_vf = hw[1]
+            else:
+                # 2.6.1: CPU burn keeps the HDR tone-map (and the fitted 2K/4K box)
+                base_vf = (hwaccel.software_scale(box[1], box[0], hdr=hdr_kind(it), item=it) if box
+                           else hwaccel.software_scale(h, hdr=hdr_kind(it), item=it))
             method = self.hw[0] if (hw and self.stage != "cpu") else "cpu"
             fc = hwaccel.burn_filter_complex(self.stage if hw else "cpu", method or "cpu",
                                              ow, oh, burn, base_video_f=base_vf)
