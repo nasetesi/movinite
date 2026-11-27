@@ -65,6 +65,27 @@ def test_glossy_gray_tokens():
           "the TV slide-out keeps its own panel (it is not this component)")
 
 
+def test_gauge_tiles_are_gray():
+    i = CSS.index(".ss-gauge{")
+    chunk = CSS[i:i + 500]
+    check("43,46,53" in chunk and "22,24,29" in chunk,
+          "CPU and RAM tiles use the same charcoal-to-graphite fill")
+    check("rgba(20,10,36" not in chunk and "var(--acc)" not in chunk.split(".ss-gauge")[1][:280],
+          "the purple-tinted tile backgrounds are gone")
+    check("255,255,255" in chunk,
+          "the tiles have a light sheen or light border")
+    # rings, core bars and usage bars keep the purple accent
+    check("color:var(--acc-text)" in CSS[CSS.index(".ss-ring-wrap{position"):CSS.index(".ss-ring-wrap{position") + 120],
+          "the gauge rings stay purple")
+    bar = CSS[CSS.index(".ss-bar i{display:block;height:100%;background:linear-gradient"):]
+    bar = bar[:200]
+    check("var(--acc-fill)" in bar or "var(--acc-text)" in bar,
+          "usage bars keep the purple accent")
+    check("var(--acc-text)" in CSS[CSS.index(".ss-cores i{"):CSS.index(".ss-cores i{") + 200]
+          or "var(--acc-fill)" in CSS[CSS.index(".ss-cores i{"):CSS.index(".ss-cores i{") + 200],
+          "the load bars keep the purple accent")
+
+
 def test_exclusive_open_kept():
     check("function closeSiblingPops(" in JS, "closeSiblingPops is defined")
     sys = JS.split("function setSysOpen(")[1].split("function stopSysstat")[0]
@@ -90,6 +111,7 @@ if __name__ == "__main__":
     print("2.5.1 glossy gray popovers")
     test_version_and_schema()
     test_glossy_gray_tokens()
+    test_gauge_tiles_are_gray()
     test_exclusive_open_kept()
     test_docs()
     print("all ok")

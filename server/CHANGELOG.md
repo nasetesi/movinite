@@ -3,7 +3,7 @@
 ## 2.5.1 -- 2026-11-26
 A visual fix on top of 2.5: the profile menu and the server status dropdown (and the other page dropdowns that already shared that chrome) use a glossy charcoal-to-graphite style instead of the 2.4.2 purple glass. Schema stays at 15. No new Android app is needed.
 
-- **Glossy gray dropdowns.** The shared popover fill is a charcoal-to-graphite gradient (about #2b2e35 at the top to #16181d) with a faint white sheen across the top third, a 1px light highlight on the top edge, a frosted blur, a fine light border, and a soft shadow. Text stays readable. Hovered rows go light gray, not purple. The avatar and the status dots keep their purple accents. Opening one menu still closes the others. The TV slide-out is unchanged.
+- **Glossy gray dropdowns.** The shared popover fill is a charcoal-to-graphite gradient (about #2b2e35 at the top to #16181d) with a faint white sheen across the top third, a 1px light highlight on the top edge, a frosted blur, a fine light border, and a soft shadow. Text stays readable. Hovered rows go light gray, not purple. The avatar and the status dots keep their purple accents. Opening one menu still closes the others. The TV slide-out is unchanged. The CPU and RAM tiles inside the server status panel use the same glossy gray; the rings, dots and usage bars keep their purple accents.
 
 ## 2.5 -- 2026-11-26
 Watch progress for titles played from a shared (remote) server, on top of 2.4.4. Schema 15. No new Android app is needed — the phone, the TV app and the web UI all use the same progress API.
