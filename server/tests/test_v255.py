@@ -86,6 +86,8 @@ check("tv-tabs-off" in tvcss and "tabsEnabled: false" in tvjs,
 check("--tv-focus-pad" in tvcss and "html.tv-mode.tv-plex .hrow > .strip" in tvcss, "the row strip leaves room so a focused poster is not clipped")
 check("--tv-title-size" in tvcss and "syncViewportVars" in tvjs, "the hero title size is tied to the window")
 check("0.24" in tvjs, "posters are sized at about 24% of the screen")
+check("0.11" in tvjs, "the hero title is about 11% of the 1080 layout")
+check("-webkit-line-clamp: 2" in tvcss, "long hero and details titles can wrap two lines")
 check("scale(1.13)" in tvcss, "the focused poster scales up about 13%")
 check("card .why" in tvcss, "TV hides the captions under cards")
 check("rgba(0,0,0,.82)" in tvcss, "the slide-out dims the page heavily")
@@ -192,7 +194,26 @@ def seed(data):
                       (uid, ids[title], pos, 7200, now))
         c.execute("INSERT OR REPLACE INTO home_pins(row, item_id, mode, created_at) VALUES(?,?,?,?)",
                   ("recommended", ids["Northstar"], 1, now))
-    return ids["Ember Road"], lid
+        c.execute("INSERT INTO libraries(name, kind, path, scan_interval_h, created_at) VALUES(?,?,?,?,?)",
+                  ("Shows", "tv", str(media), 0, now))
+        slid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        show = "Cedar Harbor"
+        sname = hashlib.sha1((show + "show").encode()).hexdigest() + ".jpg"
+        paint(thumbs / sname, (40, 70, 110), show)
+        c.execute("INSERT INTO metadata(kind,tmdb_id,title,year,overview,genres,poster,backdrop,fetched_at) "
+                  "VALUES(?,?,?,?,?,?,?,?,?)",
+                  ("tv", 92001, show, 2019, LONG_OV, '["Drama"]', sname, sname, now))
+        c.execute("INSERT INTO show_matches(library_id, show, tmdb_id, status, checked_at) VALUES(?,?,?,?,?)",
+                  (slid, show, 92001, "matched", now))
+        for ep in range(1, 5):
+            clip = media / ("s1e%d.mp4" % ep)
+            clip.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 200)
+            c.execute("INSERT INTO items(library_id, path, media_type, kind, title, sort_title, year, duration, "
+                      "added_at, probed, show, season, episode, poster, thumb, meta_status) "
+                      "VALUES(?,?, 'video','episode',?,?,?,2400,?,1,?,?,?,?,?,?)",
+                      (slid, str(clip), "The Landing" if ep == 1 else "Episode %d" % ep,
+                       "Cedar Harbor S01E%02d" % ep, 2019, now, show, 1, ep, sname, sname, "matched"))
+    return ids["Ember Road"], lid, slid
 
 def start_server(data, port):
     starter = r'''
@@ -260,7 +281,7 @@ BAR = """() => {
 }"""
 
 DATA = Path(os.environ["MS_DATA_DIR"])
-iid, lid = seed(DATA)
+iid, lid, slid = seed(DATA)
 sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close()
 proc, ready = start_server(DATA, port)
 check(ready, "isolated preview server started")
@@ -483,7 +504,7 @@ if ready:
                 check(info.get("tabsOff") and info.get("topDisplay") == "none",
                       "%s: the For You / Recently Added / Libraries tabs are hidden (off=%s display=%s)" % (
                           label, info.get("tabsOff"), info.get("topDisplay")))
-                check(info.get("titleSize") and info["titleSize"] >= 79,
+                check(info.get("titleSize") and info["titleSize"] >= 109,
                       "%s: hero title is large (font-size=%s)" % (label, info.get("titleSize")))
                 if info.get("metaTop") is not None and info.get("innerH"):
                     check(info["metaTop"] >= info["innerH"] * 0.07,
@@ -594,19 +615,138 @@ if ready:
             p1080.wait_for_function(
                 "() => document.documentElement.classList.contains('tv-plex-off') && document.querySelector('#view h1, #view .actions, .detail-bg, #view .hero-text')",
                 timeout=15000)
-            p1080.wait_for_timeout(300)
-            det = p1080.evaluate("""() => {
+            p1080.wait_for_timeout(400)
+            TV_DETAILS = """() => {
               const v = document.getElementById('view');
               const cs = v && getComputedStyle(v);
+              const h1 = document.querySelector('#view .detail h1, #view h1');
+              const hs = h1 && getComputedStyle(h1);
+              const hr = h1 && h1.getBoundingClientRect();
+              const ov = document.querySelector('#view .overview');
+              const os = ov && getComputedStyle(ov);
+              const btn = document.querySelector('#view .actions .btn, #play, #playnext, #resume');
+              const bs = btn && getComputedStyle(btn);
+              const br = btn && btn.getBoundingClientRect();
+              const bg = document.querySelector('.detail-bg, .detail-bg-phone');
+              const img = bg && bg.querySelector('.dbg-img');
+              const poster = document.querySelector('#view .detail .poster');
+              const pr = poster && poster.getBoundingClientRect();
+              const detail = document.querySelector('#view .detail');
+              const dr = detail && detail.getBoundingClientRect();
+              const H = window.innerHeight;
               return {
                 off: document.documentElement.classList.contains('tv-plex-off'),
                 pos: cs && cs.position,
                 overflowY: cs && cs.overflowY,
+                title: h1 && (h1.textContent||'').trim(),
+                titleSize: hs && parseFloat(hs.fontSize),
+                titleClamp: hs && String(hs.webkitLineClamp || ''),
+                titleTop: hr && hr.top,
+                titleH: hr && hr.height,
+                ovSize: os && parseFloat(os.fontSize),
+                btnMinH: bs && parseFloat(bs.minHeight),
+                btnSize: bs && parseFloat(bs.fontSize),
+                btnTop: br && br.top,
+                btnBottom: br && br.bottom,
+                btnLeft: br && br.left,
+                bgOn: !!bg,
+                bgH: bg && bg.getBoundingClientRect().height,
+                bgFilter: img && getComputedStyle(img).filter,
+                posterH: pr && pr.height,
+                posterTop: pr && pr.top,
+                detailH: dr && dr.height,
+                detailBottom: dr && dr.bottom,
+                innerH: H,
+                canScroll: !!(v && v.scrollHeight > v.clientHeight + 20),
+                scrollTop: v && v.scrollTop,
+                viewOverflow: cs && cs.overflowY,
+              };
+            }"""
+
+            def check_tv_details(label, info, scrollable=False):
+                check(info["off"] and info["pos"] in ("static", "relative", "absolute") and info["overflowY"] in ("auto", "scroll", "overlay"),
+                      "%s: details leave the fixed home pane and can scroll (off=%s pos=%s overflow=%s)" % (
+                          label, info["off"], info["pos"], info["overflowY"]))
+                check(info.get("titleSize") and info["titleSize"] >= 109,
+                      "%s: details title is large (font-size=%s)" % (label, info.get("titleSize")))
+                check(info.get("titleClamp") in ("2", "2.0"),
+                      "%s: details title can wrap two lines (clamp=%s)" % (label, info.get("titleClamp")))
+                check(info.get("titleTop") is not None and info["titleTop"] >= info["innerH"] * 0.05,
+                      "%s: details title is not crammed into a corner (top=%s)" % (label, info.get("titleTop")))
+                if info.get("ovSize"):
+                    check(info["ovSize"] >= 22,
+                          "%s: details synopsis is readable (font-size=%s)" % (label, info.get("ovSize")))
+                check(info.get("btnMinH") and info["btnMinH"] >= 60 and info.get("btnSize") and info["btnSize"] >= 20,
+                      "%s: details buttons are large (minH=%s font=%s)" % (label, info.get("btnMinH"), info.get("btnSize")))
+                if info.get("btnBottom") is not None:
+                    check(info["btnTop"] >= 0 and info["btnBottom"] <= info["innerH"] + 8,
+                          "%s: focused-row buttons are on screen (top=%s bottom=%s)" % (
+                              label, info.get("btnTop"), info.get("btnBottom")))
+                check(info.get("bgOn") and info.get("bgH") and info["bgH"] >= info["innerH"] * 0.85,
+                      "%s: backdrop is full-bleed (on=%s h=%s innerH=%s)" % (
+                          label, info.get("bgOn"), info.get("bgH"), info.get("innerH")))
+                filt = (info.get("bgFilter") or "none").lower()
+                check("blur" not in filt,
+                      "%s: backdrop is sharp, not a small blurred fill (filter=%s)" % (label, info.get("bgFilter")))
+                if info.get("posterH"):
+                    check(info["posterH"] / info["innerH"] >= 0.25,
+                          "%s: poster fills a real share of the screen (h=%s share=%.3f)" % (
+                              label, info.get("posterH"), info["posterH"] / info["innerH"]))
+                    check(info.get("posterTop") is not None and info["posterTop"] < info["innerH"] * 0.5,
+                          "%s: the poster sits in the first screen next to the title (top=%s)" % (
+                              label, info.get("posterTop")))
+                check(info.get("detailH") and info["detailH"] / info["innerH"] >= 0.55,
+                      "%s: the details block fills the screen (h=%s share=%.3f)" % (
+                          label, info.get("detailH"), (info.get("detailH") or 0) / info["innerH"]))
+                if scrollable:
+                    check(info.get("canScroll"),
+                          "%s: lower sections can scroll (scrollHeight > view)" % label)
+
+
+            det = p1080.evaluate(TV_DETAILS)
+            check_tv_details("1080p movie details", det, scrollable=False)
+            # Focus the primary action and confirm it is fully on screen
+            p1080.evaluate("""() => {
+              const b = document.querySelector('#view .actions .btn, #play, #resume');
+              if (b && window.TV) TV.focus(b); else if (b) b.focus();
+            }""")
+            p1080.wait_for_timeout(200)
+            foc = p1080.evaluate("""() => {
+              const b = document.activeElement;
+              const r = b && b.getBoundingClientRect();
+              const cs = b && getComputedStyle(b);
+              return {
+                isBtn: !!(b && b.classList && b.classList.contains('btn')),
+                border: cs && (cs.borderTopWidth + ' ' + cs.borderTopColor),
+                top: r && r.top, bottom: r && r.bottom, left: r && r.left, right: r && r.right,
+                innerH: window.innerHeight, innerW: window.innerWidth,
               };
             }""")
-            check(det["off"] and det["pos"] in ("static", "relative") and det["overflowY"] in ("auto", "scroll", "overlay"),
-                  "1080p: details pages leave the fixed home pane and can scroll (off=%s pos=%s overflow=%s)" % (
-                      det["off"], det["pos"], det["overflowY"]))
+            check(foc["isBtn"] and foc["top"] >= 0 and foc["bottom"] <= foc["innerH"] + 4 and foc["left"] >= 0,
+                  "1080p movie details: Play is focused and fully on screen (top=%s bottom=%s border=%s)" % (
+                      foc.get("top"), foc.get("bottom"), foc.get("border")))
+            # Lower sections (cast / similar) scroll
+            p1080.evaluate("() => { const v=document.getElementById('view'); if (v) v.scrollTop = Math.min(400, Math.max(0, v.scrollHeight - v.clientHeight)); }")
+            p1080.wait_for_timeout(200)
+            scrolled = p1080.evaluate("""() => {
+              const v = document.getElementById('view');
+              return { top: v.scrollTop, can: v.scrollHeight > v.clientHeight + 20, overflow: getComputedStyle(v).overflowY };
+            }""")
+            if scrolled["can"]:
+                check(scrolled["top"] > 0, "1080p movie details: the lower sections scroll (scrollTop=%s)" % scrolled["top"])
+            else:
+                check(scrolled["overflow"] in ("auto", "scroll", "overlay"),
+                      "1080p movie details: the page is ready to scroll if content is longer (overflow=%s)" % scrolled["overflow"])
+
+            p1080.goto("http://127.0.0.1:%d/#/show/%d/Cedar%%20Harbor" % (port, slid), wait_until="domcontentloaded")
+            p1080.wait_for_function(
+                "() => document.documentElement.classList.contains('tv-plex-off') && document.querySelector('#view h1, #playnext, #view .list .li')",
+                timeout=15000)
+            p1080.wait_for_timeout(400)
+            showd = p1080.evaluate(TV_DETAILS)
+            check_tv_details("1080p show details", showd, scrollable=True)
+            check(showd.get("title") and "Cedar Harbor" in showd["title"],
+                  "1080p show details: the show title is on the page (%s)" % showd.get("title"))
             ctx1080.close()
 
             # Short Android TV WebView: 960x540 CSS px at DPR 2 (physical 1920x1080)
@@ -625,6 +765,13 @@ if ready:
             i540b = p540.evaluate(TV_LAYOUT)
             check_tv("540 WebView row 2", i540b, (280, 360), 160)
             check_second_row("540 WebView", i540, i540b)
+            p540.goto("http://127.0.0.1:%d/#/item/%d" % (port, iid), wait_until="domcontentloaded")
+            p540.wait_for_function(
+                "() => document.documentElement.classList.contains('tv-plex-off') && document.querySelector('#view h1, #view .actions')",
+                timeout=15000)
+            p540.wait_for_timeout(400)
+            det540 = p540.evaluate(TV_DETAILS)
+            check_tv_details("540 WebView movie details", det540, scrollable=False)
             ctx540.close()
 
             br.close()

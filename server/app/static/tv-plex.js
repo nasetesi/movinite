@@ -561,8 +561,8 @@
       const w = size.w, h = size.h;
       root.style.setProperty("--tv-screen-w", w + "px");
       root.style.setProperty("--tv-screen-h", h + "px");
-      // ~8% of the 1080 layout (about 2× the 40px title that looked small on the TV).
-      const title = Math.max(80, Math.round(h * 0.08));
+      // ~11% of the 1080 layout (~119px), a step up from the 86px 2.5.5 first pass.
+      const title = Math.max(110, Math.round(h * 0.11));
       root.style.setProperty("--tv-title-size", title + "px");
       const safe = Math.max(32, Math.round(w * 0.04));
       const btn = h <= 700 ? 60 : 68;
