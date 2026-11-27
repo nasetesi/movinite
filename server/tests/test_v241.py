@@ -14,7 +14,7 @@ def check(cond, msg):
 
 def test_version():
     from app.version import __version__
-    check(__version__ == "2.4.1", "version is 2.4.1")
+    check(tuple(int(x) for x in __version__.split(".")) >= (2, 4, 1), "version is 2.4.1 or later")
 
 
 def short_gpu_name(name):

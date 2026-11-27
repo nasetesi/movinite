@@ -1,6 +1,19 @@
 /* 1.5.0 Movinite purple theme. --acc: lines, bars, outlines, toggles; --acc-fill + --on-acc: filled controls with text
    (white on #8424EA = 6.1:1, WCAG AA); --acc-text / --acc2: purple text on the dark panels (>= 5.9:1). Purple sampled from the Movinite logo (#9637FA). Warnings stay amber (--warn). */
-:root{--bg:#0f1115;--panel:#171a21;--panel2:#1f232c;--line:#2a2f3a;--text:#e8e9ec;--muted:#8d93a0;--acc:#9637FA;--acc2:#D4BBFF;--acc-text:#B07CFF;--acc-fill:#8424EA;--acc-fill-h:#6A16C4;--on-acc:#fff;--acc-rgb:150,55,250;--acc-tint:#26163d;--warn:#e5a00d;--warn-rgb:229,160,13;--bad:#e5534b;--ok:#3fb950;--r:10px;--glass-bg:color-mix(in srgb, var(--panel) 88%, var(--acc) 12%);--glass-border:color-mix(in srgb, var(--acc) 32%, var(--line));--glass-shadow:0 16px 40px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);--glass-blur:blur(16px);--top-h:64px}
+:root{--bg:#0f1115;--panel:#171a21;--panel2:#1f232c;--line:#2a2f3a;--text:#e8e9ec;--muted:#8d93a0;--acc:#9637FA;--acc2:#D4BBFF;--acc-text:#B07CFF;--acc-fill:#8424EA;--acc-fill-h:#6A16C4;--on-acc:#fff;--acc-rgb:150,55,250;--acc-tint:#26163d;--warn:#e5a00d;--warn-rgb:229,160,13;--bad:#e5534b;--ok:#3fb950;--r:10px;--glass-bg:color-mix(in srgb, var(--panel) 88%, var(--acc) 12%);--glass-border:color-mix(in srgb, var(--acc) 32%, var(--line));--glass-shadow:0 16px 40px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);--glass-blur:blur(16px);--top-h:64px;
+  /* 2.4.2: shared dropdown / popover chrome (deep aubergine to violet, frosted) */
+  --pop-bg:linear-gradient(165deg,rgba(52,24,86,.84) 0%,rgba(26,12,46,.90) 48%,rgba(16,8,30,.93) 100%);
+  --pop-border:color-mix(in srgb,var(--acc2) 42%,rgba(255,255,255,.12));
+  --pop-shadow:0 20px 50px rgba(6,2,16,.65),inset 0 1px 0 rgba(212,187,255,.22);
+  --pop-blur:blur(20px) saturate(1.28);
+  --pop-radius:16px;
+  --pop-row-hover:rgba(var(--acc-rgb),.22);
+  --pop-divider:color-mix(in srgb,var(--acc2) 26%,transparent)}
+/* Shared by the profile menu, server status, details "more" menu, library more menu, player options, and volume popover. */
+.ss-panel,.acct-menu,.more-menu,.ml-menu,.pl-pop,.ab-vol-pop{
+  background:var(--pop-bg);border:1px solid var(--pop-border);border-radius:var(--pop-radius);
+  box-shadow:var(--pop-shadow);-webkit-backdrop-filter:var(--pop-blur);backdrop-filter:var(--pop-blur)}
+
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif}
 a{color:inherit;text-decoration:none}
@@ -229,9 +242,7 @@ td .btn{margin:0 4px 4px 0}
 #ab-mute.muted .i-muted{display:block}
 #ab-vol-open{display:none}
 .ab-vol-pop{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);
-  width:48px;height:148px;padding:14px 0;display:flex;align-items:center;justify-content:center;
-  background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:16px;
-  box-shadow:var(--glass-shadow);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);z-index:40}
+  width:48px;height:148px;padding:14px 0;display:flex;align-items:center;justify-content:center;z-index:40}
 .ab-vol-pop.hidden{display:none}
 #ab-vol-v{width:120px;height:44px;margin:0;transform:rotate(-90deg);accent-color:var(--acc);cursor:pointer}
 #ab-vol{
@@ -498,15 +509,12 @@ b.warn,.ss-spark.warn{color:var(--warn)} b.bad,.ss-spark.bad{color:var(--bad)}
 .ss-dot{display:none;width:9px;height:9px;border-radius:50%;background:var(--acc-text);box-shadow:0 0 0 3px rgba(var(--acc-rgb),.28);flex:none}
 .ss-dot.warn{background:var(--warn);box-shadow:0 0 0 3px rgba(var(--warn-rgb),.28)}.ss-dot.bad{background:var(--bad);box-shadow:0 0 0 3px rgba(229,83,75,.28)}
 .ss-panel{position:absolute;right:0;top:calc(100% + 8px);z-index:60;width:340px;
-  background:var(--glass-bg);
-  border:1px solid var(--glass-border);border-radius:16px;
-  box-shadow:var(--glass-shadow);padding:14px;
-  font-size:13px;font-variant-numeric:tabular-nums;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
+  padding:14px 16px;font-size:13px;font-variant-numeric:tabular-nums}
 .ss-panel::before{content:"";position:absolute;right:0;left:0;top:-10px;height:10px}
-.ss-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;font-size:14px}
+.ss-h{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 12px;padding:0 0 10px;font-size:14px;letter-spacing:.01em;border-bottom:1px solid var(--pop-divider)}
 .ss-gauges{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
 .ss-gauge{display:flex;align-items:center;gap:10px;min-width:0;padding:8px 10px;border-radius:12px;
-  background:color-mix(in srgb, var(--panel2) 80%, var(--acc) 20%);border:1px solid color-mix(in srgb, var(--acc) 20%, var(--line))}
+  background:color-mix(in srgb, rgba(20,10,36,.45) 70%, var(--acc) 18%);border:1px solid color-mix(in srgb, var(--acc2) 22%, transparent)}
 .ss-gauge .ss-ring-wrap{flex:none}
 .ss-gauge .ss-g-txt{display:flex;flex-direction:column;gap:1px;min-width:0}
 .ss-gauge .ss-g-txt span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
@@ -620,12 +628,12 @@ body.selecting #lib-body .card .qplay{display:none}
 .more-wrap{position:relative;display:inline-flex}
 .more-btn{font-size:22px;line-height:1;padding:6px 14px;letter-spacing:1px}
 .more-btn[aria-expanded="true"]{background:var(--panel);border-color:var(--acc)}
-.more-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:230px;max-width:min(340px,90vw);background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 14px 36px rgba(0,0,0,.55);padding:6px;display:flex;flex-direction:column}
+.more-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:230px;max-width:min(340px,90vw);padding:6px;display:flex;flex-direction:column}
 .more-menu[hidden]{display:none}
 .more-menu .mh{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:6px 10px 4px}
-.more-menu .msep{height:1px;background:var(--line);margin:6px 4px}
+.more-menu .msep{height:1px;background:var(--pop-divider);margin:6px 4px}
 .more-menu .mi{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;color:var(--text);font:inherit;font-size:14px;padding:8px 10px;border-radius:7px;cursor:pointer;text-decoration:none;white-space:normal}
-.more-menu .mi:hover,.more-menu .mi:focus-visible{background:var(--panel2);outline:none}
+.more-menu .mi:hover,.more-menu .mi:focus-visible{background:var(--pop-row-hover);outline:none}
 .more-menu .mi:focus-visible{box-shadow:inset 0 0 0 2px var(--acc)}
 .more-menu .mbadge{margin-left:auto;background:#e0a03a;color:#111;font-size:11px;font-weight:700;border-radius:20px;padding:1px 8px;white-space:nowrap}
 .strip.sim{grid-auto-columns:clamp(170px,15vw,215px);gap:20px}
@@ -839,14 +847,12 @@ html.android-pip .pl-top,html.android-pip .pl-ov,html.android-pip .pl-ss,html.an
   background:rgba(20,20,20,.55);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);pointer-events:none}
 .pl-tip.hidden{display:none}
 /* popovers (Quality / Subtitles / Audio): see-through menus above their button; bottom sheets on phones */
-.pl-pop{position:absolute;z-index:6;min-width:220px;max-width:min(320px,calc(100% - 24px));max-height:min(60vh,420px);overflow:auto;padding:6px;border-radius:14px;
-  background:rgba(20,20,20,.55);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:#fff;box-shadow:0 8px 30px rgba(0,0,0,.35);
-  border:1px solid rgba(255,255,255,.12);text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.pl-pop{position:absolute;z-index:6;min-width:220px;max-width:min(320px,calc(100% - 24px));max-height:min(60vh,420px);overflow:auto;padding:6px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6)}
 .pl-pop.hidden{display:none}
 .pl-pop h4{margin:8px 10px 4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.7;font-weight:700}
 .pl-pop button{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:8px 12px;border:0;border-radius:9px;background:transparent;color:#fff;
   font:500 14px/1.2 inherit;text-align:left;cursor:pointer}
-.pl-pop button:hover,.pl-pop button:focus-visible{background:rgba(255,255,255,.14);outline:none}
+.pl-pop button:hover,.pl-pop button:focus-visible{background:var(--pop-row-hover);outline:none}
 .pl-pop button .ck{width:16px;flex:none;color:var(--acc-text,#B07CFF);font-weight:700}
 .pl-pop button[aria-checked="true"]{font-weight:700}
 .pl-pop .sp{display:flex;flex-wrap:wrap;gap:6px;padding:2px 6px 8px}
@@ -947,13 +953,12 @@ html.pl-pseudo-fs #player.fit-fill video{object-fit:cover}
   background:linear-gradient(135deg,#B07CFF,#6A16C4);color:#fff;font-weight:800;font-size:15px;cursor:pointer;box-shadow:0 0 0 2px rgba(255,255,255,.12)}
 .avatar.big{width:44px;height:44px;font-size:19px;cursor:default}
 .acct-w{position:relative}
-.acct-menu{position:absolute;right:0;top:calc(100% + 10px);z-index:70;width:250px;background:rgba(23,26,33,.92);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
-  border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px rgba(0,0,0,.55);padding:8px;display:flex;flex-direction:column}
+.acct-menu{position:absolute;right:0;top:calc(100% + 10px);z-index:70;width:250px;padding:8px;display:flex;flex-direction:column}
 .acct-menu.hidden{display:none}
-.acct-who{display:flex;gap:12px;align-items:center;padding:8px 8px 12px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.acct-who{display:flex;gap:12px;align-items:center;padding:8px 8px 12px;border-bottom:1px solid var(--pop-divider);margin-bottom:6px}
 .acct-who b{display:block;font-size:15px}
 .acct-menu>a,.acct-menu>button{display:flex;align-items:center;min-height:46px;padding:0 12px;border-radius:10px;color:var(--text);background:none;border:0;font:inherit;font-size:15px;text-align:left;cursor:pointer;text-decoration:none}
-.acct-menu>a:hover,.acct-menu>button:hover,.acct-menu>a:focus-visible,.acct-menu>button:focus-visible{background:rgba(var(--acc-rgb),.18);outline:none}
+.acct-menu>a:hover,.acct-menu>button:hover,.acct-menu>a:focus-visible,.acct-menu>button:focus-visible{background:var(--pop-row-hover);outline:none}
 .acct-menu>a[hidden]{display:none}
 .acct-menu .danger-t{color:#ff9d96}
 .acct-ver{font-size:12px;padding:8px 12px 4px}
@@ -1187,10 +1192,9 @@ html.mls-on #view{overflow:hidden}
   .mlib-q button{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:50%;background:rgba(255,255,255,.1);color:var(--text);padding:0;flex:none}
   .mlib-q button[hidden]{display:none}
   .mlib-q button svg{width:15px;height:15px}
-  .ml-menu{position:absolute;right:-6px;top:46px;z-index:30;min-width:230px;padding:6px;display:flex;flex-direction:column;background:rgba(23,26,33,.96);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
-    border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px rgba(0,0,0,.55)}
+  .ml-menu{position:absolute;right:-6px;top:46px;z-index:30;min-width:230px;padding:6px;display:flex;flex-direction:column}
   .ml-menu button{min-height:46px;padding:0 14px;border:0;border-radius:10px;background:none;color:var(--text);font:inherit;font-size:15px;text-align:left;cursor:pointer}
-  .ml-menu button:active,.ml-menu button:focus-visible{background:rgba(var(--acc-rgb),.18);outline:none}
+  .ml-menu button:hover,.ml-menu button:active,.ml-menu button:focus-visible{background:var(--pop-row-hover);outline:none}
   /* the category tabs: one row you swipe, short labels */
   #view .libtabs{flex-wrap:nowrap;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;margin:2px -14px 12px;padding:0 14px;-webkit-overflow-scrolling:touch}
   #view .libtabs::-webkit-scrollbar{display:none}

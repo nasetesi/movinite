@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.2 -- 2026-11-26
+A small visual fix on top of 2.4.1 (schema stays 14; no database upgrade). No new Android app is needed.
+
+- **Dropdowns share one purple, classier style.** The profile menu was a dark gray glass panel while the server status popup used a purple glass fill, so they looked like two different products (and could both be open at once, overlapping). They now use the same tokens (`--pop-bg` and friends): a deep aubergine-to-violet gradient, a frosted blur, a fine light-purple border with a soft inner highlight, and a soft shadow. Hovered rows get a gentle purple tint, and dividers match. Sign out stays a readable red. The same chrome is used for the details "More" menu, the library More menu, the in-page player options menu, and the music volume popover. The TV slide-out is a different component and is unchanged.
+- **Opening one dropdown closes the other.** Tapping the avatar closes server status, and opening server status closes the profile menu (and the other page menus listed above).
+
+The 2.4.1 stats overlay fix (short GPU name, more see-through player stats) is unchanged.
+
 ## 2.4.1 -- 2026-11-26
 A small layout fix on top of 2.4 (schema stays 14; no database upgrade). No new Android app is needed.
 
