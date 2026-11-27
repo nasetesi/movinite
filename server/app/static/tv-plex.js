@@ -34,6 +34,16 @@
     const h = (location.hash || "#/home").replace(/^#\/?/, "") || "home";
     return h === "home" || h === "";
   }
+  function isSearch() {
+    const h = (location.hash || "").replace(/^#\/?/, "") || "";
+    return h === "search" || h.startsWith("search/");
+  }
+  function searchQuery() {
+    const h = (location.hash || "").replace(/^#\/?/, "");
+    if (!h.startsWith("search/")) return "";
+    try { return decodeURIComponent(h.slice("search/".length)); }
+    catch (err) { return h.slice("search/".length); }
+  }
   function playerOn() {
     const p = document.getElementById("player");
     return !!(p && !p.classList.contains("hidden"));
@@ -111,16 +121,30 @@
       const who = (window.ME && (ME.username || ME.name)) || "Admin";
       document.body.appendChild(el(`
         <div id="tv-rail" aria-label="Menu">
-          <button type="button" class="tv-rail-av" id="tv-rail-av" data-rail="menu" tabindex="0" aria-label="Account">${esc(initials(who))}</button>
+          <button type="button" class="tv-rail-av" id="tv-rail-av" data-rail="profile" tabindex="0" aria-label="Account">${esc(initials(who))}</button>
           <div class="tv-rail-nav">
-            <button type="button" data-rail="search" tabindex="0" aria-label="Search">${ico.search}</button>
             <button type="button" data-rail="home" tabindex="0" aria-label="Home">${ico.home}</button>
-            <button type="button" data-rail="menu" tabindex="0" aria-label="Libraries">${ico.grid}</button>
+            <button type="button" data-rail="search" tabindex="0" aria-label="Search">${ico.search}</button>
+            <button type="button" data-rail="lists" tabindex="0" aria-label="My List">${ico.list}</button>
+            <button type="button" data-rail="libraries" tabindex="0" aria-label="Libraries">${ico.grid}</button>
+            <button type="button" data-rail="settings" tabindex="0" aria-label="Settings">${ico.settings}</button>
           </div>
         </div>`));
       document.body.appendChild(el(`<div id="tv-dim" aria-hidden="true"></div>`));
       document.body.appendChild(el(`<div id="tv-menu" role="menu" aria-label="Menu"></div>`));
+      document.body.appendChild(el(`
+        <div id="tv-search" hidden>
+          <div class="tv-s-query">
+            <div class="tv-s-qbox" id="tv-s-qbox" tabindex="0">
+              <span class="tv-s-ico">${ico.search}</span>
+              <span id="tv-s-qtext" class="tv-s-qtext" data-placeholder="Find a movie, show, episode, album or song"></span>
+            </div>
+          </div>
+          <div id="tv-s-keys" class="tv-s-keys" role="group" aria-label="On-screen keyboard"></div>
+          <div id="tv-s-results" class="tv-s-results"></div>
+        </div>`));
       this.drawMenu();
+      this.buildSearchKeys();
       document.getElementById("tv-tabs").addEventListener("click", (e) => {
         const b = e.target.closest("button[data-tab]");
         if (b) this.setTab(b.getAttribute("data-tab"));
@@ -131,7 +155,16 @@
         const act = b.getAttribute("data-rail");
         if (act === "search") { this.closeMenu(); location.hash = "#/search"; return; }
         if (act === "home") { this.closeMenu(); location.hash = "#/home"; return; }
-        this.openMenu(b);
+        if (act === "lists") { this.closeMenu(); location.hash = "#/mylist"; return; }
+        if (act === "settings") { this.closeMenu(); location.hash = "#/settings"; return; }
+        this.openMenu(b, act === "profile" ? "profile" : "lib");
+      });
+      const keys = document.getElementById("tv-s-keys");
+      if (keys) keys.addEventListener("click", (e) => {
+        const k = e.target.closest(".tv-s-key");
+        if (!k) return;
+        if (this._searchKeyed && this._searchKeyed.key === k && (Date.now() - this._searchKeyed.at) < 200) return;
+        this.pressSearchKey(k);
       });
       document.getElementById("tv-dim").addEventListener("click", () => this.closeMenu());
       document.getElementById("tv-menu").addEventListener("click", (e) => this.onMenuClick(e));
@@ -159,25 +192,26 @@
           <button type="button" data-act="account" tabindex="0">My account</button>
           <button type="button" data-act="signout" tabindex="0">Sign out</button>
         </div>
-        <a class="tv-mi" href="#/mylist" data-act="lists" tabindex="0">
-          <span class="tv-mi-ico">${ico.list}</span>
-          <span class="tv-mi-txt"><b>My Lists</b></span>
-        </a>
-        <button type="button" data-act="search" tabindex="0">
-          <span class="tv-mi-ico">${ico.search}</span>
-          <span class="tv-mi-txt"><b>Search</b></span>
-        </button>
         <button type="button" class="on" data-act="home" tabindex="0">
           <span class="tv-mi-ico">${ico.home}</span>
           <span class="tv-mi-txt"><b>Home</b></span>
         </button>
+        <button type="button" data-act="search" tabindex="0">
+          <span class="tv-mi-ico">${ico.search}</span>
+          <span class="tv-mi-txt"><b>Search</b></span>
+        </button>
+        <a class="tv-mi" href="#/mylist" data-act="lists" tabindex="0">
+          <span class="tv-mi-ico">${ico.list}</span>
+          <span class="tv-mi-txt"><b>My List</b></span>
+        </a>
         <div class="tv-div">Libraries</div>
         ${libRows}
-        <div class="tv-div">More</div>
         <button type="button" data-act="settings" tabindex="0">
           <span class="tv-mi-ico">${ico.settings}</span>
           <span class="tv-mi-txt"><b>Settings</b></span>
         </button>`;
+      this._menuDrawn = true;
+      this.syncMenuMarks();
     },
 
     hook() {
@@ -265,7 +299,11 @@
         const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
         if (self._candCache && (now - self._candAt) < 80) return self._candCache;
         let list;
-        if (isHome() && !playerOn()) {
+        if (isSearch() && !playerOn()) {
+          list = [
+            ...document.querySelectorAll("#tv-rail button, #tv-s-qbox, #tv-s-keys .tv-s-key, #tv-s-results .card")
+          ];
+        } else if (isHome() && !playerOn()) {
           const extra = this.tabsEnabled
             ? [...document.querySelectorAll("#tv-tabs button, #tv-rail button")]
             : [...document.querySelectorAll("#tv-rail button")];
@@ -309,8 +347,12 @@
       this.syncAuth();
       if (authOpen()) return;
       const home = isHome() && !playerOn();
-      document.documentElement.classList.toggle("tv-plex-off", !home);
-      if (this.menuOpen && !home) this.closeMenu(true);
+      const search = isSearch() && !playerOn();
+      document.documentElement.classList.toggle("tv-plex-off", !home && !search);
+      document.documentElement.classList.toggle("tv-search-on", search);
+      if (this.menuOpen && !home && !search) this.closeMenu(true);
+      if (search) { this.syncViewportVars(); this.showSearch(); }
+      else this.hideSearch();
       this.retagRows();
       if (home) {
         this.ensureItems().then(() => {
@@ -586,6 +628,16 @@
       root.style.setProperty("--tv-safe-left", safe + "px");
       root.style.setProperty("--tv-rail-btn", btn + "px");
       root.style.setProperty("--tv-rail-w", railW + "px");
+      // ~28% of the 1920 layout (~538px). The rail stays slim when the
+      // slide-out is tucked away, so names can use this full width.
+      const menuW = Math.max(240, Math.round(w * 0.28));
+      root.style.setProperty("--tv-menu-w", menuW + "px");
+      root.style.setProperty("--tv-menu-font", Math.max(20, Math.round(h * 0.022)) + "px");
+      root.style.setProperty("--tv-menu-sub", Math.max(14, Math.round(h * 0.016)) + "px");
+      root.style.setProperty("--tv-menu-row", Math.max(52, Math.round(h * 0.056)) + "px");
+      const sH = Math.max(160, Math.round(h * 0.22));
+      root.style.setProperty("--tv-s-card-h", sH + "px");
+      root.style.setProperty("--tv-s-card-w", Math.max(100, Math.round(sH * 2 / 3)) + "px");
     },
 
     syncRowPitch() {
@@ -717,6 +769,49 @@
       });
     },
 
+    inferMenuAct(from, focusAct) {
+      if (focusAct) return focusAct;
+      const src = from && from.closest && from.closest("#tv-rail button");
+      if (!src) return isSearch() ? "search" : "home";
+      const rail = src.getAttribute("data-rail");
+      if (rail === "profile" || src.id === "tv-rail-av") return "profile";
+      if (rail === "libraries" || rail === "menu") return "lib";
+      if (rail === "home" || rail === "search" || rail === "lists" || rail === "settings") return rail;
+      return "home";
+    },
+
+    syncMenuMarks() {
+      const home = isHome();
+      const search = isSearch();
+      const hash = (location.hash || "");
+      document.querySelectorAll("#tv-menu [data-act]").forEach((n) => {
+        const act = n.getAttribute("data-act");
+        let on = false;
+        if (act === "home") on = home;
+        else if (act === "search") on = search;
+        else if (act === "lists") on = hash.indexOf("#/mylist") === 0;
+        else if (act === "settings") on = hash.indexOf("#/settings") === 0;
+        else if (act === "lib") {
+          const id = n.getAttribute("data-id");
+          on = !!(id && hash.indexOf("#/library/" + id) === 0);
+        }
+        n.classList.toggle("on", on);
+      });
+    },
+
+    focusMenuAct(want) {
+      let focus = document.querySelector("#tv-menu [data-act='home']");
+      if (want === "lib") focus = document.querySelector("#tv-menu [data-act='lib']") || focus;
+      if (want === "profile") focus = document.querySelector("#tv-menu [data-act='profile']") || focus;
+      if (want && want !== "lib" && want !== "profile") {
+        const named = document.querySelector("#tv-menu [data-act='" + want + "']");
+        if (named) focus = named;
+      }
+      if (window.TV && focus) TV.focus(focus);
+      else if (focus) focus.focus();
+      return focus;
+    },
+
     openMenu(from, focusAct) {
       this.returnEl = from || document.activeElement;
       this.menuOpen = true;
@@ -724,29 +819,27 @@
       const acct = document.getElementById("tv-acct");
       if (acct) acct.classList.remove("open");
       document.documentElement.classList.add("tv-menu-open");
-      const finish = (keepAct) => {
-        this.drawMenu();
-        document.querySelectorAll("#tv-menu [data-act='home']").forEach((n) => n.classList.toggle("on", isHome()));
-        let focus = document.querySelector("#tv-menu [data-act='home']");
-        const want = keepAct || focusAct;
-        if (want === "lib") focus = document.querySelector("#tv-menu [data-act='lib']") || focus;
-        if (want === "profile") focus = document.querySelector("#tv-menu [data-act='profile']") || focus;
-        if (want && want !== "lib" && want !== "profile") {
-          const named = document.querySelector("#tv-menu [data-act='" + want + "']");
-          if (named) focus = named;
-        }
-        if (window.TV && focus) TV.focus(focus);
-        else if (focus) focus.focus();
-      };
-      // Paint immediately so Left feels instant; refresh library rows if they were not cached.
-      finish();
+      const want = this.inferMenuAct(from, focusAct);
+      const menu = document.getElementById("tv-menu");
+      const libCount = menu ? menu.querySelectorAll("[data-act='lib']").length : 0;
+      const known = ((this.libs && this.libs.length) ? this.libs : (window.LIBS || [])).length;
+      const painted = !!(this._menuDrawn && menu && menu.childElementCount);
+      // Only rewrite when the menu is empty or the library list changed.
+      // A same-turn redraw plus an immediate focus does not flash.
+      if (!painted || libCount !== known) this.drawMenu();
+      else this.syncMenuMarks();
+      this.focusMenuAct(want);
       if (!(this.libs && this.libs.length)) {
-        const stay = focusAct;
         this.ensureItems().then(() => {
           if (!this.menuOpen) return;
           const cur = document.activeElement;
-          const keep = (cur && cur.getAttribute && cur.getAttribute("data-act")) || stay;
-          finish(keep);
+          const item = cur && cur.closest && cur.closest("#tv-menu button, #tv-menu a.tv-mi");
+          const keep = (item && item.getAttribute("data-act")) || want;
+          const after = document.getElementById("tv-menu");
+          const have = after ? after.querySelectorAll("[data-act='lib']").length : 0;
+          const n = (this.libs && this.libs.length) || 0;
+          if (have !== n) this.drawMenu();
+          this.focusMenuAct(keep);
         });
       }
     },
@@ -776,23 +869,11 @@
         this.previewTimer = setTimeout(() => { this.flushPreview(); }, 250);
         return;
       }
+      // 2.5.9: pausing on a slide-out row must not auto-click it. That
+      // was sending focus back to Home as soon as you moved past Search,
+      // so Libraries and Settings could never be reached.
       const item = el.closest && el.closest("#tv-menu button, #tv-menu a.tv-mi");
-      if (!item) return;
-      const act = item.getAttribute("data-act");
-      if (act === "signout") return;
-      if (act === "profile") {
-        if (!this.acctOpen) {
-          this.acctOpen = true;
-          const acct = document.getElementById("tv-acct");
-          if (acct) acct.classList.add("open");
-        }
-        return;
-      }
-      this._pendingPreview = () => {
-        if (document.activeElement !== item && !(item.contains && item.contains(document.activeElement))) return;
-        item.click();
-      };
-      this.previewTimer = setTimeout(() => { this.flushPreview(); }, 250);
+      if (item) return;
     },
 
     closeMenu(silent) {
@@ -895,11 +976,14 @@
     },
 
     currentRailButton() {
-      if (this.tab === "libraries") {
-        return document.querySelector("#tv-rail button[aria-label='Libraries']")
-          || document.querySelector("#tv-rail button[data-rail='menu']:not(.tv-rail-av)");
+      if (isSearch()) return document.querySelector("#tv-rail button[data-rail='search']");
+      const hash = (location.hash || "");
+      if (hash.indexOf("#/mylist") === 0) return document.querySelector("#tv-rail button[data-rail='lists']");
+      if (hash.indexOf("#/settings") === 0) return document.querySelector("#tv-rail button[data-rail='settings']");
+      if (hash.indexOf("#/library/") === 0 || this.tab === "libraries") {
+        return document.querySelector("#tv-rail button[data-rail='libraries']");
       }
-      return document.querySelector("#tv-rail button[data-rail='home']") || this.railButtons()[2] || this.railButtons()[0];
+      return document.querySelector("#tv-rail button[data-rail='home']") || this.railButtons()[0];
     },
 
     focusRail(preferred) {
@@ -914,7 +998,8 @@
       if (!el || !el.closest) return false;
       if (this.menuOpen) return !!el.closest("#tv-menu");
       if (el.closest("#tv-tabs") || el.closest("#tv-rail") || el.closest("#tv-menu")) return true;
-      if (el.classList && el.classList.contains("card") && el.closest("#view")) return true;
+      if (el.closest("#tv-search")) return true;
+      if (el.classList && el.classList.contains("card") && el.closest("#view, #tv-s-results")) return true;
       if (el.closest("#view") && el.matches && el.matches("button, a, [tabindex], .btn, .lib-li, .card")) return true;
       return false;
     },
@@ -927,6 +1012,11 @@
       if (!fallback && this.contentEl && document.contains(this.contentEl) && this.isTvChrome(this.contentEl)) {
         fallback = this.contentEl;
       }
+      if (!fallback && isSearch()) {
+        fallback = this._searchKeyEl
+          || document.querySelector("#tv-s-keys .tv-s-key")
+          || document.getElementById("tv-s-qbox");
+      }
       if (!fallback) {
         fallback = document.querySelector("#view .card")
           || document.querySelector("#tv-tabs button.on")
@@ -937,6 +1027,271 @@
         else fallback.focus();
       }
       return fallback;
+    },
+
+
+    buildSearchKeys() {
+      const root = document.getElementById("tv-s-keys");
+      if (!root) return;
+      if (root.childElementCount && this._searchGrid && this._searchGrid.length) return;
+      const rows = [
+        "ABCDEFGHIJ".split(""),
+        "KLMNOPQRST".split(""),
+        "UVWXYZ1234".split(""),
+        [
+          { k: "5", label: "5" }, { k: "6", label: "6" }, { k: "7", label: "7" },
+          { k: "8", label: "8" }, { k: "9", label: "9" }, { k: "0", label: "0" },
+          { k: "bksp", label: "del" },
+          { k: "space", label: "space", span: 2 },
+          { k: "clear", label: "clear" }
+        ]
+      ];
+      const grid = [];
+      const html = rows.map((row, r) => {
+        const cells = [];
+        let c = 0;
+        const parts = row.map((cell) => {
+          const k = typeof cell === "string" ? cell : cell.k;
+          const label = typeof cell === "string" ? cell : cell.label;
+          const span = typeof cell === "string" ? 1 : (cell.span || 1);
+          const cls = "tv-s-key" + (k === "space" || k === "clear" || k === "bksp" ? " tv-s-key-wide" : "");
+          const btn = `<button type="button" class="${cls}" data-key="${k}" data-row="${r}" data-col="${c}" tabindex="0">${label}</button>`;
+          c += span;
+          return btn;
+        });
+        grid.push([]); // filled after paint
+        return `<div class="tv-s-keyrow">${parts.join("")}</div>`;
+      }).join("");
+      root.innerHTML = html;
+      this._searchGrid = rows.map((_, r) => {
+        const line = [];
+        root.querySelectorAll('.tv-s-key[data-row="' + r + '"]').forEach((btn) => {
+          const span = btn.getAttribute("data-key") === "space" ? 2 : 1;
+          for (let i = 0; i < span; i++) line.push(btn);
+        });
+        return line;
+      });
+    },
+
+    paintSearchQuery() {
+      const t = document.getElementById("tv-s-qtext");
+      if (!t) return;
+      const q = this.searchQ || "";
+      t.textContent = q;
+      t.classList.toggle("placeholder", !q);
+      if (!q) t.textContent = t.getAttribute("data-placeholder") || "Find a movie, show, episode, album or song";
+    },
+
+    setSearchQuery(q, fetchNow) {
+      this.searchQ = q || "";
+      this.paintSearchQuery();
+      const hash = "#/search" + (this.searchQ ? "/" + encodeURIComponent(this.searchQ) : "");
+      if ((location.hash || "") !== hash) {
+        this._searchQuiet = true;
+        history.replaceState(null, "", hash);
+      }
+      if (fetchNow) this.scheduleSearch();
+    },
+
+    scheduleSearch(immediate) {
+      clearTimeout(this._searchTimer);
+      const run = () => { this._searchTimer = 0; this.runSearch(); };
+      if (immediate) run();
+      else this._searchTimer = setTimeout(run, 180);
+    },
+
+    async runSearch() {
+      const q = (this.searchQ || "").trim();
+      const out = document.getElementById("tv-s-results");
+      if (!out) return;
+      const token = (this._searchToken = (this._searchToken || 0) + 1);
+      if (!q) {
+        out.innerHTML = `<div class="tv-s-hint">Start typing to search movies, shows, episodes, albums and songs.</div>`;
+        return;
+      }
+      let d;
+      try {
+        const r = await fetch("/api/search?q=" + encodeURIComponent(q), { credentials: "same-origin" });
+        if (!r.ok) throw new Error("search " + r.status);
+        d = await r.json();
+      } catch (err) {
+        if (token !== this._searchToken) return;
+        out.innerHTML = `<div class="tv-s-hint">Search could not be completed.</div>`;
+        return;
+      }
+      if (token !== this._searchToken) return;
+      const rows = [];
+      const add = (title, html) => { if (html) rows.push(`<div class="tv-s-row"><div class="tv-s-row-h">${title}</div><div class="strip hs">${html}</div></div>`); };
+      const items = (d && d.items) || [];
+      const shows = (d && d.shows) || [];
+      const episodes = (d && d.episodes) || [];
+      const albums = (d && d.albums) || [];
+      const tracks = (d && d.tracks) || [];
+      const itemFn = window.cardItem;
+      const showFn = window.cardShow;
+      const albumFn = window.cardAlbum;
+      if (items.length && itemFn) add("Movies", items.map((i) => itemFn(i)).join(""));
+      if (shows.length && showFn) add("Shows", shows.map((s) => showFn(s.library_id, s)).join(""));
+      if (episodes.length && itemFn) add("Episodes", episodes.map((i) => itemFn(i)).join(""));
+      if (albums.length && albumFn) add("Albums", albums.map((a) => albumFn(a.library_id, a)).join(""));
+      if (tracks.length && itemFn) add("Tracks", tracks.map((i) => itemFn(i)).join(""));
+      if (!rows.length) out.innerHTML = `<div class="tv-s-hint">Nothing found for “${esc(this.searchQ || "")}”.</div>`;
+      else out.innerHTML = rows.join("");
+      this._candCache = null;
+    },
+
+    showSearch() {
+      const panel = document.getElementById("tv-search");
+      if (!panel) return;
+      this.buildSearchKeys();
+      panel.hidden = false;
+      const q = (typeof searchQuery === "function" ? searchQuery() : "") || this.searchQ || "";
+      const changed = q !== (this.searchQ || "") || !this._searchReady;
+      this.searchQ = q;
+      this.paintSearchQuery();
+      if (changed) this.scheduleSearch(true);
+      this._searchReady = true;
+      if (this._searchQuiet) { this._searchQuiet = false; return; }
+      const cur = document.activeElement;
+      if (cur && cur.closest && (cur.closest("#tv-search") || cur.closest("#tv-rail") || cur.closest("#tv-menu"))) return;
+      const first = this._searchKeyEl || document.querySelector("#tv-s-keys .tv-s-key") || document.getElementById("tv-s-qbox");
+      if (first && window.TV) TV.focus(first);
+      else if (first) first.focus();
+    },
+
+    hideSearch() {
+      const panel = document.getElementById("tv-search");
+      if (panel) panel.hidden = true;
+      this._searchReady = false;
+    },
+
+    pressSearchKey(btn) {
+      if (!btn) return;
+      this._searchKeyed = { key: btn, at: Date.now() };
+      this._searchKeyEl = btn;
+      const k = btn.getAttribute("data-key") || "";
+      if (k === "bksp") this.setSearchQuery((this.searchQ || "").slice(0, -1), true);
+      else if (k === "clear") this.setSearchQuery("", true);
+      else if (k === "space") this.setSearchQuery((this.searchQ || "") + " ", true);
+      else this.setSearchQuery((this.searchQ || "") + k, true);
+      if (window.TV) TV.focus(btn);
+      else btn.focus();
+    },
+
+    focusSearchCell(r, c) {
+      const grid = this._searchGrid || [];
+      const row = grid[r];
+      if (!row || !row.length) return;
+      let i = Math.max(0, Math.min(c, row.length - 1));
+      const here = document.activeElement;
+      // skip cells that point at the same spanning button
+      if (here && row[i] === here) {
+        if (c > i) return;
+      }
+      const btn = row[i];
+      if (btn && window.TV) TV.focus(btn);
+      else if (btn) btn.focus();
+    },
+
+    moveSearchKey(btn, key) {
+      const grid = this._searchGrid || [];
+      const r = parseInt(btn.getAttribute("data-row"), 10) || 0;
+      // Use the visual column from the grid so a wide 'space' key lands correctly.
+      let c = 0;
+      const row = grid[r] || [];
+      const idx = row.indexOf(btn);
+      c = idx >= 0 ? idx : (parseInt(btn.getAttribute("data-col"), 10) || 0);
+      if (key === "ArrowLeft") {
+        if (c <= 0) {
+          this.focusRail(document.querySelector("#tv-rail button[data-rail='search']"));
+          return;
+        }
+        // step off a spanning key
+        let n = c - 1;
+        while (n > 0 && row[n] === btn) n--;
+        this.focusSearchCell(r, n);
+      } else if (key === "ArrowRight") {
+        if (c >= row.length - 1) return;
+        let n = c + 1;
+        while (n < row.length - 1 && row[n] === btn) n++;
+        this.focusSearchCell(r, n);
+      } else if (key === "ArrowUp") {
+        if (r <= 0) {
+          const box = document.getElementById("tv-s-qbox");
+          if (box && window.TV) TV.focus(box);
+          else if (box) box.focus();
+          return;
+        }
+        this.focusSearchCell(r - 1, c);
+      } else if (key === "ArrowDown") {
+        if (r >= grid.length - 1) {
+          const card = document.querySelector("#tv-s-results .card");
+          if (card && window.TV) TV.focus(card);
+          else if (card) card.focus();
+          return;
+        }
+        this.focusSearchCell(r + 1, c);
+      }
+    },
+
+    isFirstSearchRow(card) {
+      if (!card) return false;
+      const rows = [...document.querySelectorAll("#tv-s-results .tv-s-row")].filter((row) => row.querySelector(".card"));
+      return !!(rows[0] && rows[0].contains(card));
+    },
+
+    onSearchKey(e) {
+      const key = e.key;
+      const cur = document.activeElement;
+      if (cur && cur.closest && cur.closest("#tv-rail")) return false;
+      if (key === "Escape" || key === "Backspace" || key === "BrowserBack") {
+        e.preventDefault(); e.stopPropagation();
+        location.hash = "#/home";
+        return true;
+      }
+      const onBox = cur && cur.closest && cur.closest("#tv-s-qbox");
+      const onKeyBtn = cur && cur.closest && cur.closest("#tv-s-keys .tv-s-key");
+      const onCard = cur && cur.classList && cur.classList.contains("card") && cur.closest("#tv-s-results");
+      if (onBox) {
+        e.preventDefault(); e.stopPropagation();
+        if (key === "ArrowDown" || key === "ArrowRight" || key === "Enter" || key === " " || key === "NumpadEnter") {
+          const k = this._searchKeyEl || document.querySelector("#tv-s-keys .tv-s-key");
+          if (k && window.TV) TV.focus(k);
+          else if (k) k.focus();
+        } else if (key === "ArrowLeft" || key === "ArrowUp") {
+          this.focusRail(document.querySelector("#tv-rail button[data-rail='search']"));
+        }
+        return true;
+      }
+      if (onKeyBtn) {
+        if (key === "Enter" || key === " " || key === "NumpadEnter") {
+          e.preventDefault(); e.stopPropagation();
+          this.pressSearchKey(onKeyBtn);
+          return true;
+        }
+        if (key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp" || key === "ArrowDown") {
+          e.preventDefault(); e.stopPropagation();
+          this.moveSearchKey(onKeyBtn, key);
+          return true;
+        }
+        return true;
+      }
+      if (onCard) {
+        if (key === "ArrowLeft" && this.firstInRow(cur)) {
+          e.preventDefault(); e.stopPropagation();
+          this.focusRail(document.querySelector("#tv-rail button[data-rail='search']"));
+          return true;
+        }
+        if (key === "ArrowUp" && this.isFirstSearchRow(cur)) {
+          e.preventDefault(); e.stopPropagation();
+          const k = this._searchKeyEl || document.querySelector("#tv-s-keys .tv-s-key");
+          if (k && window.TV) TV.focus(k);
+          else if (k) k.focus();
+          return true;
+        }
+        return false;
+      }
+      return false;
     },
 
     onKey(e) {
@@ -955,24 +1310,36 @@
         if (key === "ArrowUp" || key === "ArrowDown") {
           const items = this.menuItems();
           const cur = document.activeElement;
-          const i = items.indexOf(cur);
+          const item = (cur && cur.closest && cur.closest("#tv-menu button, #tv-menu a.tv-mi")) || cur;
+          let i = items.indexOf(item);
+          if (i < 0 && cur) {
+            i = items.findIndex((n) => n === cur || (n.contains && n.contains(cur)));
+          }
+          if (i < 0) i = 0;
           const n = key === "ArrowDown" ? items[Math.min(items.length - 1, i + 1)] : items[Math.max(0, i - 1)];
-          if (n && window.TV) { e.preventDefault(); e.stopPropagation(); TV.focus(n); this.armPreview(n); }
+          e.preventDefault(); e.stopPropagation();
+          if (n && window.TV) TV.focus(n);
+          else if (n) n.focus();
           return true;
         }
         if (key === "Enter" || key === " " || key === "NumpadEnter") {
           const cur = document.activeElement;
-          if (cur && (cur.closest && cur.closest("#tv-menu"))) {
+          const item = cur && cur.closest && cur.closest("#tv-menu button, #tv-menu a.tv-mi");
+          if (item) {
             e.preventDefault(); e.stopPropagation();
             this.cancelPreview();
-            cur.click();
+            item.click();
             return true;
           }
         }
-        return false;
+        return true;
       }
 
-      if (!isHome()) {
+      if (isSearch() && !playerOn()) {
+        if (this.onSearchKey(e)) return true;
+      }
+
+      if (!isHome() && !isSearch()) {
         // Back still handled by core TV on details/player
         return false;
       }
@@ -998,6 +1365,14 @@
       }
       if (key === "ArrowRight" && onRail) {
         e.preventDefault(); e.stopPropagation();
+        if (isSearch()) {
+          const back = this._searchKeyEl
+            || document.querySelector("#tv-s-keys .tv-s-key")
+            || document.getElementById("tv-s-qbox");
+          if (back && window.TV) TV.focus(back);
+          else if (back) back.focus();
+          return true;
+        }
         const back = (this.contentEl && document.contains(this.contentEl))
           ? this.contentEl : document.querySelector("#view .card");
         if (back && window.TV) TV.focus(back);

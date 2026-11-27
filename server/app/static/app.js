@@ -6267,6 +6267,10 @@ const TV = {
 };
 window.TV = TV;
 window.__msTvBack = () => TV.back();
+window.cardItem = cardItem;
+window.cardShow = cardShow;
+window.cardAlbum = cardAlbum;
+window.api = api;
 TV.prepare();
 
 boot();

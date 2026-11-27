@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.9 -- 2026-11-27
+A television search and slide-out fix on top of 2.5.8. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only. Phone and desktop search are unchanged.
+
+- **TV Search works with a dark page and an on-screen keyboard.** Opening Search used to show a solid blue screen with a faint, unfocused input and no way to type except Back. Search now stays on the dark #0F1115 theme with the slim rail still visible, autofocuses a D-pad keyboard (A–Z, 0–9, space, backspace, clear) with a white focus, and updates live results as poster rows (movies, shows, episodes using the series poster, and music). Up from the results returns to the keyboard; Left from the first key or the first result goes to the rail; Back goes home.
+- **You can move past Search in the slide-out menu.** Pausing on a menu row no longer auto-opens it, which had jumped focus back to Home as soon as you pressed Down from Search and made Libraries and Settings unreachable. Up and Down now walk every item (Profile, Home, Search, My List, each library, Settings) while the menu stays open. Right or Back closes it and returns focus to where you were. Opening with Left focuses the matching item (Home opens on Home, Search on Search, and so on) without a brief focus loss.
+- **The slide-out and the slim rail show the same items, and the open menu is wider.** The rail is Profile at the top, with Home, Search, My List, Libraries, and Settings centered below, matching the slide-out order. Because the menu is tucked away when closed, it now uses about 28% of the screen (~538px at 1080) with larger type and taller rows so library names like "Sunset Movies" are no longer cut off. The page behind it stays dimmed.
+
+
 ## 2.5.8 -- 2026-11-27
 A card-art fix on top of 2.5.7, for the phone, the television, and the desktop. Schema stays at 15 (new optional columns on the shared-title cache only). No new Android app is needed.
 
