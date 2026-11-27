@@ -290,6 +290,7 @@
     ingest(d) {
       const add = (arr) => (arr || []).forEach((i) => { if (i && i.id) this.items[String(i.id)] = i; });
       add(d.continue);
+      add(d.watched);
       (d.libraries || []).forEach((L) => {
         add(L.items);
         (L.smart_rows || []).forEach((R) => add(R.items));
@@ -354,7 +355,8 @@
       const needLibs = !(this.libs && this.libs.length);
       if (!needHome && !needLibs) return;
       this._loadingItems = Promise.all([
-        needHome ? fetch("/api/home", { credentials: "same-origin" }).then((r) => r.json()).then((d) => this.ingest(d)) : null,
+        needHome ? fetch("/api/home", { credentials: "same-origin" }).then((r) => r.json()).then((d) => this.ingest(d))
+          .then(() => fetch("/api/mylist", { credentials: "same-origin" }).then((r) => r.ok ? r.json() : {}).then((d) => this.ingest(d || {})).catch(() => {})) : null,
         needLibs ? fetch("/api/libraries", { credentials: "same-origin" }).then((r) => r.json()).then((d) => {
           const arr = Array.isArray(d) ? d : (d && (d.libraries || d.items));
           if (Array.isArray(arr) && arr.length) this.libs = arr;
@@ -402,7 +404,7 @@
         if (!c) return;
         const id = c.dataset.id || (c.dataset.href || "").split("/").pop();
         const it = this.items[String(id)] || {};
-        const name = it.backdrop || it.poster;
+        const name = (it.kind === "episode" ? (it.show_backdrop || it.backdrop || it.show_poster || it.poster) : (it.backdrop || it.poster));
         if (!name) return;
         const im = new Image();
         im.src = "/api/thumb/" + name;
@@ -411,7 +413,9 @@
 
     paintHero(card, id) {
       const it = this.items[String(id)] || {};
-      const title = it.title || (card && card.querySelector(".t") && card.querySelector(".t").textContent) || "";
+      const isEp = it.kind === "episode";
+      const title = (isEp ? (it.show_title || it.show || it.title) : it.title)
+        || (card && card.querySelector(".t") && card.querySelector(".t").textContent) || "";
       const hero = document.getElementById("tv-hero");
       if (!hero) return;
       if (String(id || "") && String(this.heroId) === String(id)) return;
@@ -431,6 +435,11 @@
         }
         const bits = [];
         if (it.year) bits.push("<span>" + esc(it.year) + "</span>");
+        if (isEp) {
+          const code = (it.season != null ? "S" + String(it.season).padStart(2, "0") : "")
+            + (it.episode != null ? "E" + String(it.episode).padStart(2, "0") : "");
+          if (code) bits.push("<span class='dot'>·</span><span>" + esc(code) + "</span>");
+        }
         const rt = runtimeLabel(it.runtime);
         if (rt) bits.push("<span class='dot'>·</span><span>" + esc(rt) + "</span>");
         const genres = (it.genres || []).slice(0, 3);
@@ -438,7 +447,7 @@
         if (it.certification) bits.push("<span class='tv-cert'>" + esc(it.certification) + "</span>");
         if (it.rating) bits.push("<span class='tv-rate'><b>★</b> " + Number(it.rating).toFixed(1) + "</span>");
         document.getElementById("tv-hero-facts").innerHTML = bits.join("");
-        document.getElementById("tv-hero-ov").textContent = it.overview || "";
+        document.getElementById("tv-hero-ov").textContent = (isEp ? (it.show_overview || it.overview) : it.overview) || "";
         const cast = (it.cast || []).slice(0, 4);
         document.getElementById("tv-hero-cast").textContent = cast.length ? "Cast  " + cast.join(", ") : "";
       };
@@ -451,7 +460,9 @@
       } else {
         writeText();
       }
-      const bg = it.backdrop ? "/api/thumb/" + it.backdrop : (it.poster ? "/api/thumb/" + it.poster : "");
+      const bgName = isEp ? (it.show_backdrop || it.backdrop || it.show_poster || it.poster)
+        : (it.backdrop || it.poster);
+      const bg = bgName ? "/api/thumb/" + bgName : "";
       const a = document.getElementById("tv-hero-a");
       const b = document.getElementById("tv-hero-b");
       if (bg) {

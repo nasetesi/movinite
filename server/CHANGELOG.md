@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.8 -- 2026-11-27
+A card-art fix on top of 2.5.7, for the phone, the television, and the desktop. Schema stays at 15 (new optional columns on the shared-title cache only). No new Android app is needed.
+
+- **TV episode cards in home-style rows use the show's poster, not the episode still.** Continue Watching, My List, Recently watched, Recently added, search results, and other rows showed a wide 16:9 still ("the clip") for an episode, next to tall movie posters. Those cards now use the parent series' 2:3 poster, in the same size as a movie. The card title is the series name; the subtitle is SxxExx, plus the episode name when it fits. The progress bar and the watched check are unchanged. If the series has no poster, the season poster is used, then the episode still (still in a tall card). Shared (remote) episodes use the same art once both servers are on this version. Episode lists on a show details page still use the stills.
+- **On a television, focusing an episode in a row uses the series backdrop in the hero,** with the series title (and the episode code in the facts line). The show details page is unchanged.
+
+
 ## 2.5.7 -- 2026-11-26
 A typography and layout fix on top of 2.5.6, for the television and for phones. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only. Desktop is unchanged.
 

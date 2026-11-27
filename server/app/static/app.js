@@ -1021,17 +1021,38 @@ async function route() {
 }
 
 // ---------------------------------------------------------------- cards
+// 2.5.8: episode cards in home-style rows use the series (or season) portrait poster
+function seriesPoster(i) {
+  if (!i) return "";
+  if (i.show_poster) return i.show_poster;
+  if (i.season_poster) return i.season_poster;
+  if (i.poster && i.poster !== i.thumb) return i.poster;
+  return i.thumb || i.poster || "";
+}
 function cardItem(i, opts) {
   opts = opts || {};
-  const land = opts.landscape || i.kind === "episode" || i.kind === "video" || (!i.poster && i.media_type === "video" && i.kind !== "movie");
-  const img = land ? (i.thumb || i.poster) : (i.poster || i.thumb);
+  // Episode rows use a movie-sized portrait card unless the caller asked for a still (landscape).
+  const useSeries = i.kind === "episode" && !opts.landscape;
+  const land = !useSeries && (opts.landscape || i.kind === "video" || (!i.poster && i.media_type === "video" && i.kind !== "movie"));
+  const img = useSeries ? (seriesPoster(i) || i.thumb || i.poster) : (land ? (i.thumb || i.poster) : (i.poster || i.thumb));
   const pct = i.position && i.duration ? Math.min(100, 100 * i.position / i.duration) : 0;
   let t = i.title, s = (i.year || "") + (i.edition ? ` <span class="ed" title="${esc(i.edition)}">${esc(i.edition)}</span>` : "");
-  if (i.kind === "episode") { t = opts.showName === false ? i.title : (i.show || i.title); s = epCode(i) + (opts.showName === false ? "" : " · " + esc(i.title)); }
+  if (i.kind === "episode") {
+    t = opts.showName === false ? i.title : (i.show_title || i.show || i.title);
+    const epBit = epCode(i);
+    const epName = (!opts.showName && i.title && i.title !== t) ? " · " + esc(i.title) : "";
+    s = epBit + (opts.showName === false ? "" : epName);
+  }
   if (i.media_type === "audio") { s = i.artist || ""; }
   const cls = land ? "landscape" : (i.media_type === "audio" ? "square" : "");
   const srcName = i.peer_name || i.source_name || "";
-  if (opts.resume && i.duration && i.position) { const left = Math.max(1, Math.round((i.duration - i.position) / 60)); const leftTxt = (i.kind === "episode" ? epCode(i) + " · " : "") + left + " min left"; s = `<span class="d-only">${leftTxt}${srcName ? " · " + esc(srcName) : ""}</span><span class="m-only">${i.kind === "episode" ? epCode(i) : (i.year || left + " min left")}</span>`; }
+  if (opts.resume && i.duration && i.position) {
+    const left = Math.max(1, Math.round((i.duration - i.position) / 60));
+    const epBit = i.kind === "episode" ? epCode(i) : "";
+    const epName = (i.kind === "episode" && i.title && i.title !== t) ? " · " + esc(i.title) : "";
+    const leftTxt = (epBit ? epBit + epName + " · " : "") + left + " min left";
+    s = `<span class="d-only">${leftTxt}${srcName ? " · " + esc(srcName) : ""}</span><span class="m-only">${epBit || (i.year || left + " min left")}</span>`;
+  }
   else if (srcName && i.is_remote) { s = (s ? s + " · " : "") + esc(srcName); }
   // 1.4.3: a poster always opens the details page; the small round button plays (resumes where you stopped)
   const resumeAt = i.position > 30 && !i.watched ? i.position : 0;
@@ -1496,7 +1517,7 @@ async function viewHome(live) {
   // 1.4.1: Continue watching first (only when something is part-watched); click resumes where you stopped
   if (d.continue.length) html += rowHead("Continue watching") + `<div class="strip hs cw">${d.continue.map(i => cardItem(i, { resume: true })).join("")}</div>`;
   if (OFF.on()) {   // 2.0: the Downloads tab took My List's place, so My List's recently watched films get a home row
-    try { const ml = await api("/api/mylist"); if (ml.watched.length) html += rowHead("My List", "#/mylist", { sub: "Recently watched" }) + `<div class="strip hs">${ml.watched.slice(0, 20).map(i => cardItem(i)).join("")}</div>`; } catch (e) { /* row is optional */ }
+    try { const ml = await api("/api/mylist"); if (window.TV && TV.ingest) TV.ingest({ continue: ml.continue || [], libraries: [], watched: ml.watched || [] }); if (ml.watched.length) html += rowHead("My List", "#/mylist", { sub: "Recently watched" }) + `<div class="strip hs">${ml.watched.slice(0, 20).map(i => cardItem(i)).join("")}</div>`; } catch (e) { /* row is optional */ }
   }
   const nMovieLibs = d.libraries.filter(L => L.library.kind === "movies").length;
   for (const L of d.libraries) {
@@ -1512,7 +1533,7 @@ async function viewHome(live) {
     } else html += rowHead(`Recently added in ${esc(lib.name)}`, `#/library/${lib.id}`, { sub: nf(lib.item_count || 0) + " items", extra: (lib.mirrors || []).length ? ` <span class="muted d-only mirror-note" style="font-size:13px;font-weight:400" title="These libraries hold the same shows; each is shown once">&middot; same shows as ${esc(lib.mirrors.join(", "))}</span>` : "" });
     if (L.smart_rows) { /* rows above */ }
     else if (L.albums) html += L.albums.length ? `<div class="strip hs">${L.albums.map(a => cardAlbum(lib.id, a)).join("")}</div>` : `<div class="empty">Nothing here yet</div>`;
-    else if (lib.kind === "tv") html += L.items.length ? `<div class="strip hs wide">${L.items.map(i => cardItem(i, { landscape: true })).join("")}</div>` : `<div class="empty">Nothing here yet</div>`;
+    else if (lib.kind === "tv") html += L.items.length ? `<div class="strip hs">${L.items.map(i => cardItem(i)).join("")}</div>` : `<div class="empty">Nothing here yet</div>`;
     else html += L.items.length ? `<div class="strip hs">${L.items.map(i => cardItem(i)).join("")}</div>` : `<div class="empty">Nothing here yet -- scanning may still be running.</div>`;
     for (const G of (L.genre_rows || [])) {   // 1.4: the library's biggest genres
       if (!G.items.length) continue;
@@ -2147,7 +2168,7 @@ async function viewSearch(q) {
   let html = `<h2>Results for "${esc(q)}"</h2>`;
   if (d.items.length) html += `<h3>Movies &amp; videos</h3><div class="grid">${d.items.map(i => cardItem(i)).join("")}</div>`;
   if (d.shows.length) html += `<h3>Shows</h3><div class="grid">${d.shows.map(s => cardShow(s.library_id, s)).join("")}</div>`;
-  if (d.episodes.length) html += `<h3>Episodes</h3><div class="grid wide">${d.episodes.map(i => cardItem(i, { landscape: true })).join("")}</div>`;
+  if (d.episodes.length) html += `<h3>Episodes</h3><div class="grid">${d.episodes.map(i => cardItem(i)).join("")}</div>`;
   if (d.albums.length) html += `<h3>Albums</h3><div class="grid">${d.albums.map(a => cardAlbum(a.library_id, a)).join("")}</div>`;
   if (d.tracks.length) html += `<h3>Tracks</h3>${trackList(d.tracks, true)}`;
   if (!d.items.length && !d.shows.length && !d.episodes.length && !d.albums.length && !d.tracks.length) html += `<div class="empty">Nothing found.</div>`;
@@ -2169,6 +2190,7 @@ async function viewLibraries() {
 // 1.5.1: the My List tab -- your films in progress and the ones you watched last
 async function viewMyList() {
   const d = await api("/api/mylist");
+  if (window.TV && TV.ingest) TV.ingest({ continue: d.continue || [], libraries: [], watched: d.watched || [] });
   let html = `<h2 class="pg-h">My List</h2>`;
   if (d.continue.length) html += rowHead("Continue watching", "", { sub: `${d.continue.length} in progress` }) + `<div class="strip hs cw">${d.continue.map(i => cardItem(i, { resume: true })).join("")}</div>`;
   if (d.watched.length) html += rowHead("Watched", "", { sub: "Most recent first" }) + `<div class="grid">${d.watched.map(i => cardItem(i)).join("")}</div>`;

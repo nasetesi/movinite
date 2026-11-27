@@ -474,7 +474,19 @@ ADDED_COLUMNS = [
     ("metadata", "collection_name", "TEXT"),
     ("metadata", "certification", "TEXT"),
     ("metadata", "cat_v", "INTEGER"),
+
+    # 2.5.8: series art and episode identity for shared (remote) titles — no schema bump
+    ("remote_items", "show", "TEXT"),
+    ("remote_items", "season", "INTEGER"),
+    ("remote_items", "episode", "INTEGER"),
+    ("remote_items", "episode_title", "TEXT"),
+    ("remote_items", "thumb", "TEXT"),
+    ("remote_items", "show_poster", "TEXT"),
+    ("remote_items", "season_poster", "TEXT"),
+    ("remote_items", "show_title", "TEXT"),
+    ("remote_items", "show_backdrop", "TEXT"),
 ]
+
 
 
 def migrate():
