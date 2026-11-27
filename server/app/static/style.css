@@ -1,15 +1,16 @@
 /* 1.5.0 Movinite purple theme. --acc: lines, bars, outlines, toggles; --acc-fill + --on-acc: filled controls with text
    (white on #8424EA = 6.1:1, WCAG AA); --acc-text / --acc2: purple text on the dark panels (>= 5.9:1). Purple sampled from the Movinite logo (#9637FA). Warnings stay amber (--warn). */
 :root{--bg:#0f1115;--panel:#171a21;--panel2:#1f232c;--line:#2a2f3a;--text:#e8e9ec;--muted:#8d93a0;--acc:#9637FA;--acc2:#D4BBFF;--acc-text:#B07CFF;--acc-fill:#8424EA;--acc-fill-h:#6A16C4;--on-acc:#fff;--acc-rgb:150,55,250;--acc-tint:#26163d;--warn:#e5a00d;--warn-rgb:229,160,13;--bad:#e5534b;--ok:#3fb950;--r:10px;--glass-bg:color-mix(in srgb, var(--panel) 88%, var(--acc) 12%);--glass-border:color-mix(in srgb, var(--acc) 32%, var(--line));--glass-shadow:0 16px 40px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);--glass-blur:blur(16px);--top-h:64px;
-  /* 2.4.2: shared dropdown / popover chrome (deep aubergine to violet, frosted) */
-  --pop-bg:linear-gradient(165deg,rgba(52,24,86,.84) 0%,rgba(26,12,46,.90) 48%,rgba(16,8,30,.93) 100%);
-  --pop-border:color-mix(in srgb,var(--acc2) 42%,rgba(255,255,255,.12));
-  --pop-shadow:0 20px 50px rgba(6,2,16,.65),inset 0 1px 0 rgba(212,187,255,.22);
-  --pop-blur:blur(20px) saturate(1.28);
+  /* 2.5.1: shared dropdown / popover chrome (glossy charcoal to graphite, frosted) */
+  --pop-bg:linear-gradient(180deg,rgba(255,255,255,.14) 0%,rgba(255,255,255,.045) 32%,transparent 58%),linear-gradient(180deg,rgba(43,46,53,.92) 0%,rgba(22,24,29,.95) 100%);
+  --pop-border:rgba(255,255,255,.18);
+  --pop-shadow:0 18px 44px rgba(0,0,0,.52),inset 0 1px 0 rgba(255,255,255,.22);
+  --pop-blur:blur(20px) saturate(1.08);
   --pop-radius:16px;
-  --pop-row-hover:rgba(var(--acc-rgb),.22);
-  --pop-divider:color-mix(in srgb,var(--acc2) 26%,transparent)}
-/* Shared by the profile menu, server status, details "more" menu, library more menu, player options, and volume popover. */
+  --pop-row-hover:rgba(255,255,255,.11);
+  --pop-divider:rgba(255,255,255,.10)}
+/* Shared by the profile menu, server status, details "more" menu, library more menu, player options, and volume popover.
+   2.5.1: glossy gray fill and a light-gray row hover; purple stays on the avatar and status dots. */
 .ss-panel,.acct-menu,.more-menu,.ml-menu,.pl-pop,.ab-vol-pop{
   background:var(--pop-bg);border:1px solid var(--pop-border);border-radius:var(--pop-radius);
   box-shadow:var(--pop-shadow);-webkit-backdrop-filter:var(--pop-blur);backdrop-filter:var(--pop-blur)}
@@ -514,7 +515,8 @@ b.warn,.ss-spark.warn{color:var(--warn)} b.bad,.ss-spark.bad{color:var(--bad)}
 .ss-h{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 12px;padding:0 0 10px;font-size:14px;letter-spacing:.01em;border-bottom:1px solid var(--pop-divider)}
 .ss-gauges{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
 .ss-gauge{display:flex;align-items:center;gap:10px;min-width:0;padding:8px 10px;border-radius:12px;
-  background:color-mix(in srgb, rgba(20,10,36,.45) 70%, var(--acc) 18%);border:1px solid color-mix(in srgb, var(--acc2) 22%, transparent)}
+  background:linear-gradient(180deg,rgba(255,255,255,.10) 0%,rgba(255,255,255,.03) 40%,transparent 70%),linear-gradient(180deg,rgba(43,46,53,.78) 0%,rgba(22,24,29,.88) 100%);
+  border:1px solid rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.16)}
 .ss-gauge .ss-ring-wrap{flex:none}
 .ss-gauge .ss-g-txt{display:flex;flex-direction:column;gap:1px;min-width:0}
 .ss-gauge .ss-g-txt span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
