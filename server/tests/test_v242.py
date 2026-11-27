@@ -19,11 +19,13 @@ def test_version():
 
 
 def test_shared_tokens():
+    from app.version import __version__
+    parts = tuple(int(x) for x in __version__.split(".")[:3])
     for tok in ("--pop-bg:", "--pop-border:", "--pop-shadow:", "--pop-blur:", "--pop-radius:",
                 "--pop-row-hover:", "--pop-divider:"):
         check(tok in CSS, "token %s is defined" % tok)
-    check("linear-gradient(" in CSS[CSS.index("--pop-bg:"):CSS.index("--pop-bg:") + 220],
-          "popover fill is a deep purple gradient")
+    bg = CSS[CSS.index("--pop-bg:"):CSS.index("--pop-bg:") + 280]
+    check("linear-gradient(" in bg, "popover fill is a gradient")
     check("inset 0 1px 0" in CSS[CSS.index("--pop-shadow:"):CSS.index("--pop-shadow:") + 200],
           "a soft inner highlight is on the shadow")
     grouped = ".ss-panel,.acct-menu,.more-menu,.ml-menu,.pl-pop,.ab-vol-pop{"
@@ -31,17 +33,21 @@ def test_shared_tokens():
     chunk = CSS[CSS.index(grouped):CSS.index(grouped) + 400]
     check("background:var(--pop-bg)" in chunk and "border:1px solid var(--pop-border)" in chunk
           and "backdrop-filter:var(--pop-blur)" in chunk and "box-shadow:var(--pop-shadow)" in chunk,
-          "the shared rule applies the purple glass chrome")
-    check("var(--pop-row-hover)" in CSS, "row hover uses the shared purple tint")
+          "the shared rule applies the glass chrome")
+    check("var(--pop-row-hover)" in CSS, "row hover uses the shared token")
     check("var(--pop-divider)" in CSS, "dividers use the shared rule")
     check(".acct-menu .danger-t{color:#ff9d96}" in CSS or "danger-t{color:#ff" in CSS,
           "Sign out stays a readable red")
-    # individual menus no longer carry the old gray fill
+    # individual menus no longer carry the pre-2.4.2 solid gray fill
     acct = CSS[CSS.index(".acct-menu{position:absolute"):CSS.index(".acct-menu{position:absolute") + 280]
     check("rgba(23,26,33" not in acct and "var(--line)" not in acct,
-          "the profile menu no longer uses the gray panel fill")
+          "the profile menu no longer uses the old solid gray panel fill")
     check("background: rgba(22, 22, 26, .96)" in TV,
           "the TV slide-out keeps its own panel (it is not this component)")
+    if parts < (2, 5, 1):
+        check("rgba(52,24,86" in bg, "popover fill is a deep purple gradient")
+        check("var(--acc-rgb)" in CSS[CSS.index("--pop-row-hover:"):CSS.index("--pop-row-hover:") + 80],
+              "row hover uses the shared purple tint")
 
 
 def test_exclusive_open():
