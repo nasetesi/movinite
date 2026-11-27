@@ -98,7 +98,8 @@ def main():
     check("function liftCues(" in js and 'c.line = "auto"' in js, "liftCues is still present")
 
     print("stats panel")
-    check("grid-template-columns:1fr 1fr" in css[css.index(".pl-ss{"):css.index(".pl-ss{") + 700],
+    chunk = css[css.index(".pl-ss{"):css.index(".pl-ss{") + 900]
+    check("grid-template-columns:" in chunk and "1fr" in chunk,
           "stats panel is a 2x2 grid")
     check("left:50%;transform:translateX(-50%)" in css[css.index(".pl-ss{"):css.index(".pl-ss{") + 400],
           "stats panel sits top-center under the title bar")

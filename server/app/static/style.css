@@ -149,24 +149,27 @@ td .btn{margin:0 4px 4px 0}
 /* 1.7.5: glass stats panel under the title bar (top center, 2x2), fades with the controls.
    The panel is see-through; the GPU badge stays the solid purple pill. */
 .pl-ss{position:absolute;top:calc(var(--pltop,56px) + 2px);left:50%;transform:translateX(-50%);right:auto;z-index:3;
-  display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;padding:8px 12px;border-radius:14px;min-width:min(260px,calc(100% - 24px));
-  max-width:min(360px,calc(100% - 24px));box-sizing:border-box;
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px 12px;padding:8px 12px;border-radius:14px;
+  width:min(360px,calc(100% - 24px));max-width:min(360px,calc(100% - 24px));min-width:0;box-sizing:border-box;
   font-size:12px;line-height:1.2;color:#fff;background:rgba(16,12,22,.38);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
-  border:1px solid rgba(255,255,255,.16);pointer-events:none;opacity:0;transition:opacity .25s ease;font-variant-numeric:tabular-nums;white-space:nowrap}
+  border:1px solid rgba(255,255,255,.16);pointer-events:none;opacity:0;transition:opacity .25s ease;font-variant-numeric:tabular-nums}
 .player.ov-on .pl-ss{opacity:1}
 .pl-ss .k{opacity:.75;font-weight:500;font-size:10px;letter-spacing:.04em;text-transform:uppercase}
 .pl-ss b{font-weight:700;font-size:13px}
 .pl-ss b.warn{color:#ffd27a}.pl-ss b.bad{color:#ff8b84}
 .pl-ss .sep{opacity:.5}
-.pl-ss-cell{display:flex;flex-direction:column;gap:3px;min-width:0;align-items:flex-start}
-.pl-ss-cell .row{display:flex;align-items:baseline;gap:6px;min-width:0}
+.pl-ss-cell{display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;align-items:flex-start;overflow:hidden}
+.pl-ss-cell .row{display:flex;align-items:baseline;gap:6px;min-width:0;max-width:100%}
+.pl-ss-cell .row b,.pl-ss-cell .ss-gpu-name{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-ss-cell .ss-gpu-name{display:block;font-size:11px;font-weight:600;line-height:1.25;white-space:normal;overflow-wrap:anywhere}
 .pl-ss-cell .ss-bar{display:block;width:100%;height:3px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden}
 .pl-ss-cell .ss-bar i{display:block;height:100%;background:rgba(255,255,255,.7);border-radius:99px}
 .pl-ss-cell .ss-bar.ok i{background:linear-gradient(90deg,var(--acc-fill),var(--acc-text))}
 .pl-ss-cell .ss-bar.warn i{background:#ffd27a}
 .pl-ss-cell .ss-bar.bad i{background:#ff8b84}
 .pl-ss .hw-badge{background:var(--acc-fill);color:var(--on-acc);font-size:11px;padding:1px 8px;border-radius:999px;letter-spacing:.06em}
-.pl-ss-fr{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;min-width:0;grid-template-columns:none}
+.pl-ss-fr{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;min-width:0;width:auto;max-width:min(360px,calc(100% - 24px));grid-template-columns:none;white-space:nowrap}
+@media (max-width:420px){.pl-ss{gap:6px 8px;padding:8px 10px}.pl-ss b{font-size:12px}}
 .pl-ss-cap{grid-column:1/-1;font-size:11px;font-weight:600;opacity:.9;white-space:normal;text-align:center;line-height:1.3}
 /* double-tap ripple */
 .pl-rip{position:absolute;top:0;bottom:0;width:38%;z-index:2;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;
