@@ -44,7 +44,7 @@ def film(w=3840, h=2160, codec="hevc", **extra):
     return it
 
 print("source and docs")
-check(__version__ == "2.4", "version is 2.4")
+check(tuple(int(x) for x in __version__.split(".")) >= (2, 4), "version is 2.4 or later")
 check("## 2.4" in ch and ch.find("## 2.4") < ch.find("## 2.3"), "CHANGELOG has 2.4 above 2.3")
 check("192.0.2.10" in rd and "192.168.1.10" not in rd, "public examples use 192.0.2.10")
 for bad in ("tukuia.com", "Waimea", "Sunset", "nasetesi", "naseaho"):

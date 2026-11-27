@@ -547,12 +547,32 @@ function sysRing(pct, lvl, size, icon) {
   if (!icon) return `<span class="ss-ring-wrap ${lvl}">${svg}</span>`;
   return `<span class="ss-ring-wrap ${lvl}">${svg}<span class="ss-ring-ico">${icon}</span></span>`;
 }
-function transcodeLabel(d) {
+function shortGpuName(name) {
+  // "Intel Corporation DG2 [Arc A310]" -> "Arc A310". Full PCI name stays in the tooltip.
+  const s = String(name || "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  const br = s.match(/\[([^\]]+)\]/);
+  if (br && br[1].trim()) return br[1].trim();
+  return s.replace(/^Intel Corporation\s+/i, "")
+    .replace(/^NVIDIA Corporation\s+/i, "NVIDIA ")
+    .replace(/^Advanced Micro Devices,?\s*Inc\.?\s*/i, "AMD ")
+    .trim();
+}
+function transcodeLabel(d, opts) {
   const hw = d.hw || {};
-  if (hw.streams) return `<span class="hw-badge">GPU</span> ${esc(hw.label || "GPU")} · ${hw.streams} stream${hw.streams > 1 ? "s" : ""}`;
-  if (hw.method) return `Idle · GPU (${esc(hw.label || "ready")})${hw.name ? ` <span class="muted">(${esc(hw.name)})</span>` : ""}`;
-  if ((hw.mode || "off") === "off") return "Off (CPU)";
-  return "Idle (CPU)";
+  const short = shortGpuName(hw.name);
+  const full = String(hw.name || "").replace(/\s+/g, " ").trim();
+  const tip = full ? ` title="${esc(full)}"` : "";
+  const nameLine = short ? `<div class="ss-gpu-name muted"${tip}>${esc(short)}</div>` : "";
+  const nameInline = short ? ` <span class="muted ss-gpu-name"${tip}>(${esc(short)})</span>` : "";
+  let main;
+  if (hw.streams) main = `<span class="hw-badge">GPU</span> ${esc(hw.label || "GPU")} · ${hw.streams} stream${hw.streams > 1 ? "s" : ""}`;
+  else if (hw.method) main = `Idle · GPU (${esc(hw.label || "ready")})`;
+  else if ((hw.mode || "off") === "off") main = "Off (CPU)";
+  else main = "Idle (CPU)";
+  if (opts && opts.parts) return { main, name: (hw.method && !hw.streams) ? nameLine : "" };
+  if (hw.method && !hw.streams) return main + nameInline;
+  return main;
 }
 function backgroundLabel(d) {
   const bg = d.background || {};
@@ -617,8 +637,8 @@ function renderPlayerStat() {
   const cl = sysLevel(d.cpu, 60, 85), ml = sysLevel(memPct, 75, 90);
   const gpu = !!(d.hw && d.hw.streams);
   const enc = gpu
-    ? `<span class="hw-badge" title="${d.hw.streams} stream${d.hw.streams > 1 ? "s" : ""} on the video card (${esc(d.hw.label || "")})">GPU</span>`
-    : `<span class="k">Encoder</span><div class="row"><b>${transcodeLabel(d)}</b></div>`;
+    ? `<span class="k">Encoder</span><div class="row"><span class="hw-badge" title="${d.hw.streams} stream${d.hw.streams > 1 ? "s" : ""} on the video card (${esc(d.hw.label || "")})">GPU</span></div>`
+    : (() => { const t = transcodeLabel(d, { parts: true }); return `<span class="k">Encoder</span><div class="row"><b>${t.main}</b></div>${t.name}`; })();
   el.className = "pl-ss";
   const qCap = P && P.cappedTo ? `Auto-capped to ${qualName(P.cappedTo)}` : (P && P.mode ? (P.mode === "direct" ? "Direct play" : P.mode === "remux" ? "Remux" : qualName(P.mode)) : "");
   el.innerHTML = `<div class="pl-ss-cell"><span class="k">CPU</span><div class="row"><b class="${cl}">${cpuPct(d)}</b></div>${sysBar(d.cpu || 0, cl)}</div>
