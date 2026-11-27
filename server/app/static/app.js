@@ -4492,10 +4492,12 @@ function paintCues() {
   el.classList.remove("hidden");
 }
 async function fetchVtt(id, key) {
-  // 1.7.9: 202 means the server is extracting in the background — retry instead of blocking the first encode
-  for (let i = 0; i < 24; i++) {
+  // 1.7.9: 202 means the server is extracting in the background — retry instead of blocking the first encode.
+  // fix/transcode-stuck: one pass over a big 4K remux on the share can take ~3 minutes, so keep
+  // retrying for up to ~6 minutes (delay capped at 5 s) instead of giving up after ~1 minute.
+  for (let i = 0; i < 90; i++) {
     const r = await fetch(`/api/items/${id}/subs/${key}.vtt`, { credentials: "same-origin" });
-    if (r.status === 202) { await new Promise(res => setTimeout(res, 400 + i * 200)); continue; }
+    if (r.status === 202) { await new Promise(res => setTimeout(res, Math.min(5000, 400 + i * 200))); continue; }
     if (!r.ok) throw new Error("sub " + r.status);
     return r.text();
   }
