@@ -2658,6 +2658,7 @@ def _range_response(path, request: Request, mime):
     length = end - start + 1
 
     def gen():
+        last_note = 0.0
         with open(path, "rb") as f:
             f.seek(start)
             remaining = length
@@ -2666,6 +2667,14 @@ def _range_response(path, request: Request, mime):
                 if not chunk:
                     break
                 remaining -= len(chunk)
+                now = time.time()
+                if now - last_note >= 5:
+                    try:
+                        from . import preload
+                        preload.note_direct_play()
+                    except Exception:
+                        pass
+                    last_note = now
                 yield chunk
 
     headers = {"Accept-Ranges": "bytes", "Content-Length": str(length), "Cache-Control": "private, no-transform"}
@@ -2676,6 +2685,15 @@ def _range_response(path, request: Request, mime):
 
 @app.get("/api/items/{item_id}/file")
 def direct_file(item_id: int, request: Request, download: int = 0, u=Depends(auth.require_user)):
+    # 2.6.2: stop background remux/subtitle work before we touch the share. Transcode
+    # already calls yield_to_playback(); Direct Play did not, so a /file start could
+    # sit on "Waiting for the first picture…" while ffprobe still held the NAS.
+    try:
+        from . import preload
+        preload.yield_to_playback()
+        preload.note_direct_play()
+    except Exception:
+        pass
     it = _get_item(item_id)
     ext = Path(it["path"]).suffix.lower()
     resp = _range_response(it["path"], request, MIME.get(ext) or mimetypes.guess_type(it["path"])[0]

@@ -3834,6 +3834,16 @@ function nativeDecoderCaps() {
 function nativePlaySupported() {
   try { return !!(window.MSAndroid && typeof MSAndroid.playNative === "function"); } catch (e) { return false; }
 }
+// 2.6.2: 2.4.4 still exposes playNative on phones, but it returns ok=false so Play
+// uses the in-page <video> element. Advertising native=1 made the server offer
+// Direct Play of HEVC / Matroska as if this were ExoPlayer on a TV.
+function usingNativePlayer() {
+  try {
+    if (!nativePlaySupported()) return false;
+    if (window.MSAndroid && typeof MSAndroid.isTv === "function") return !!MSAndroid.isTv();
+    return isTvMode();
+  } catch (e) { return false; }
+}
 function clientCaps() {
   if (clientCaps._c) return clientCaps._c;
   const v = document.createElement("video");
@@ -3873,12 +3883,12 @@ function capsQuery() {
     "hevc=" + ((c.hevc_mse || c.hevc_el || n.hevc) ? "1" : "0"),
     "hevc_mse=" + (c.hevc_mse ? "1" : "0"),
     "hevc_el=" + encodeURIComponent(c.hevc_el || "no"),
-    "mkv=" + ((c.el.mkv || n.mkv || nativePlaySupported()) ? "1" : "0"),
+    "mkv=" + ((c.el.mkv || (usingNativePlayer() && n.mkv)) ? "1" : "0"),
     "ac3=" + ((c.el.ac3 || n.ac3) ? "1" : "0"),
     "eac3=" + ((c.el.eac3 || n.eac3) ? "1" : "0"),
     "surr=" + (c.surr ? "6" : "0"),
     "hlsjs=" + (c.hlsjs ? "1" : "0")];
-  if (nativePlaySupported() || n.native) parts.push("native=1");
+  if (usingNativePlayer()) parts.push("native=1");
   if (n.hevc10) parts.push("hevc10=1");
   if (n.av1) parts.push("av1=1");
   if (n.vp9) parts.push("vp9=1");
@@ -4360,7 +4370,7 @@ function showWait(title) {
   const h = $("#pl-wait-t"); if (h) h.textContent = title || "Starting…";
   box.classList.remove("hidden");
 }
-function hideWait() { const box = $("#pl-wait"); if (box) box.classList.add("hidden"); }
+function hideWait() { clearStartWatch(); const box = $("#pl-wait"); if (box) box.classList.add("hidden"); }
 function modeLabel(m) {
   const cap = P && P.cappedTo ? ` · Auto-capped to ${qualName(P.cappedTo)}` : "";
   return (m === "direct" ? "Direct play" : m === "remux" ? "Remux (original video)" : `Transcoding ${qualName(m)}`)
@@ -4379,6 +4389,23 @@ function hdrNote() {
   if (!hdr) return "";
   if (P.it.playback.hdr_tonemap) return " · " + hdr + " with GPU tone-mapping";
   return " · " + hdr + " without tone-mapping (colors may look flat)";
+}
+
+// 2.6.2: Direct Play and remux have no error if the first bytes hang (share stuck,
+// background remux still reading the NAS). The overlay stays on "Waiting for the
+// first picture…" until the user picks a transcode quality. Fall back automatically.
+const DIRECT_START_MS = 12000;
+function clearStartWatch() {
+  if (P && P.startWatch) { clearTimeout(P.startWatch); P.startWatch = 0; }
+}
+function armStartWatch() {
+  clearStartWatch();
+  if (!P || (P.mode !== "direct" && P.mode !== "remux")) return;
+  P.startWatch = setTimeout(function () {
+    if (!P || (P.mode !== "direct" && P.mode !== "remux")) return;
+    if (video.readyState >= 2 || video.videoWidth > 0) { clearStartWatch(); return; }
+    fallback("no picture yet");
+  }, DIRECT_START_MS);
 }
 
 function startStream(mode, at) {
@@ -4426,6 +4453,7 @@ function startStream(mode, at) {
   if (P) P.burning = isBurnSub(subKey);
   if (subKey) addSubTrack(subKey);
   video.play().catch(() => {});
+  armStartWatch();
 }
 
 // 1.5.3: a 2K / 4K stream that fails: HEVC -> H.264 at the same size -> the usual best transcode
@@ -4603,6 +4631,7 @@ video.addEventListener("waiting", () => { if (P && P.mode !== "direct") setStatu
 video.addEventListener("playing", () => { if (P) { P.played = true; setStatus(modeLabel(P.mode)); } setTimeout(() => setStatus(""), 4000); });
 
 function teardownVideo(stopServer) {
+  clearStartWatch();
   if (hls) { hls.destroy(); hls = null; }
   video.removeAttribute("src"); $$("track", video).forEach(t => t.remove()); video.load();
   hideWait();

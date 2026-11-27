@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.2 -- 2026-11-27
+A quick fix on top of 2.6.1 for Direct Play sitting on “Starting direct play — Waiting for the first picture…” until you change the quality. Schema stays at 15. No new Android app is needed.
+
+- **Direct Play now stops background remux and subtitle work, the same way a transcode already did.** Prefetch of remux cut points kept reading the library share after you pressed Play on the original file, so the first picture could hang (The Iceman, a 1080p H.264/AAC MP4 that was already set up for streaming, was one case). The web player only fell back on an error, not on a hang, so the wait overlay stayed up until you picked a transcode quality, which starts immediately because a transcode already yields that background work. Direct Play now yields too, and counts as “busy” for 20 seconds after each read so the NAS stays free while you watch.
+- **If the first picture still does not arrive within 12 seconds, the player switches to remux or transcode on its own.** That is the automatic version of changing the quality.
+- **The 2.4.4 phone app no longer advertises itself as the native TV player.** `playNative` exists on phones but returns ok=false, so Play uses the in-page player. The web app was still sending `native=1`, which could offer Direct Play of HEVC Matroska files the phone WebView cannot start reliably. Television ExoPlayer is unchanged.
+
+
 ## 2.6.1 -- 2026-11-27
 A quick fix on top of 2.6 for Heart of the Beast playback and for picture-based captions turning the video green. Schema stays at 15. No new Android app is needed.
 
