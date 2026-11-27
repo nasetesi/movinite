@@ -77,12 +77,13 @@ def test_v181():
     print("frosted glass chrome")
     check("--glass-bg:" in css and "--glass-border:" in css and "--glass-shadow:" in css and "--glass-blur:" in css,
           "shared glass tokens are defined")
-    check(".ss-panel{" in css and "background:var(--glass-bg)" in css[css.index(".ss-panel{"):css.index(".ss-panel{")+500],
-          "status panel uses the shared glass tokens")
+    check(("--pop-bg:" in css and ".ss-panel,.acct-menu" in css) or
+          ("background:var(--glass-bg)" in css[css.index(".ss-panel{"):css.index(".ss-panel{")+500]),
+          "status panel uses the shared popover or glass tokens")
     top = css[css.index(".top{"):css.index(".top{")+500]
-    check("background:var(--glass-bg)" in top and "backdrop-filter:var(--glass-blur)" in top
-          and "border-bottom:1px solid var(--glass-border)" in top,
-          "top status bar uses the glass tokens")
+    check(("background:var(--glass-bg)" in top and "backdrop-filter:var(--glass-blur)" in top)
+          or ("background:var(--panel)" in top),
+          "top bar is themed (glass or the solid panel used since 2.1.1)")
     ab = css[css.index(".audiobar{"):css.index(".audiobar{")+500]
     check("background:var(--glass-bg)" in ab and "backdrop-filter:var(--glass-blur)" in ab
           and "border:1px solid var(--glass-border)" in ab and "border-radius:16px" in ab,
@@ -90,9 +91,10 @@ def test_v181():
     check("html.af-open .audiobar{" in css and "background:var(--bg)" in css[css.index("html.af-open .audiobar{"):css.index("html.af-open .audiobar{")+400]
           and "backdrop-filter:none" in css[css.index("html.af-open .audiobar{"):css.index("html.af-open .audiobar{")+400],
           "full now-playing stays a solid page")
-    pop = css[css.index(".ab-vol-pop{"):css.index(".ab-vol-pop{")+500]
-    check("background:var(--glass-bg)" in pop and "backdrop-filter:var(--glass-blur)" in pop,
-          "volume popover uses the same glass tokens")
+    # 2.4.2: volume popover shares --pop-* chrome (grouped rule may precede the layout rule)
+    check(("background:var(--pop-bg)" in css and ".ab-vol-pop" in css.split("background:var(--pop-bg)")[0][-200:])
+          or ("background:var(--glass-bg)" in css[css.index(".ab-vol-pop{"):css.index(".ab-vol-pop{")+500]),
+          "volume popover uses the shared popover or glass tokens")
     i = css.index(".tabbar{display:grid")
     check("background:var(--glass-bg)" in css[i:i+700] and "backdrop-filter:var(--glass-blur)" in css[i:i+700],
           "phone tab bar uses the glass tokens")

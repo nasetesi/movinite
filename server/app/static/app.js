@@ -686,7 +686,32 @@ function renderSysPanel() {
     ${row("App memory", fmtSize(d.app_rss))}
     <div class="ss-foot muted">Refreshes every 4 s${ME && ME.is_admin ? ` · <a href="#/settings/system">Who can see this</a>` : ""}</div>`;
 }
+function closeSiblingPops(except) {
+  // 2.4.2: only one header / page dropdown at a time (profile and status used to overlap).
+  if (except !== "sys" && SYS.open) {
+    SYS.open = false; SYS.pinned = false;
+    const p = document.getElementById("ss-panel"), pill = document.getElementById("ss-pill");
+    if (p) p.classList.add("hidden");
+    if (pill) pill.setAttribute("aria-expanded", "false");
+  }
+  if (except !== "acct") {
+    const menu = document.getElementById("acct-menu"), av = document.getElementById("m-avatar");
+    if (menu && !menu.classList.contains("hidden")) {
+      menu.classList.add("hidden");
+      if (av) av.setAttribute("aria-expanded", "false");
+    }
+  }
+  if (except !== "more") {
+    const menu = document.getElementById("more-menu"), btn = document.getElementById("more");
+    if (menu && !menu.hidden) { menu.hidden = true; if (btn) btn.setAttribute("aria-expanded", "false"); }
+  }
+  if (except !== "ml") {
+    const m = document.getElementById("ml-menu"), btn = document.getElementById("ml-more");
+    if (m) { m.remove(); if (btn) btn.setAttribute("aria-expanded", "false"); }
+  }
+}
 function setSysOpen(on, pinned) {
+  if (on) closeSiblingPops("sys");
   SYS.open = on; if (pinned !== undefined) SYS.pinned = pinned;
   $("#ss-panel").classList.toggle("hidden", !on); $("#ss-pill").setAttribute("aria-expanded", on ? "true" : "false");
   if (on) renderSysPanel();
@@ -840,6 +865,7 @@ const MOB = (() => {
   function tab() { const t = tabFor(); $$("#tabbar a").forEach(a => { const on = a.dataset.tab === t; a.classList.toggle("on", on); if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); }); }
   function sound() { const on = SFX.get().on; $("#acct-sound").textContent = "Poster sounds: " + (on ? "on" : "off"); }
   function open(v) {
+    if (v) closeSiblingPops("acct");
     menu.classList.toggle("hidden", !v); av.setAttribute("aria-expanded", v ? "true" : "false");
     if (v) { sound(); const f = [...menu.querySelectorAll("a,button")].find(el => !el.hidden && el.getAttribute("aria-hidden") !== "true"); if (f) f.focus({ preventScroll: true }); }
   }
@@ -1238,6 +1264,7 @@ function mlBind(o) {
 function mlMenu(items) {
   const btn = $("#ml-more"); let m = $("#ml-menu");
   if (m) { m.remove(); btn.setAttribute("aria-expanded", "false"); return; }
+  closeSiblingPops("ml");
   m = document.createElement("div"); m.id = "ml-menu"; m.className = "ml-menu"; m.setAttribute("role", "menu");
   m.innerHTML = items.map((it, i) => `<button type="button" role="menuitem" data-i="${i}">${esc(it[0])}</button>`).join("");
   $(".mlib").appendChild(m); btn.setAttribute("aria-expanded", "true");
@@ -1919,7 +1946,7 @@ function resName(w, h) { return w >= 3200 || h >= 2000 ? "4K" : w >= 2400 || h >
 function bindMoreMenu() {
   const btn = $("#more"), menu = $("#more-menu"); if (!btn || !menu) return;
   const items = () => $$("#more-menu .mi");
-  const open = (focusFirst) => { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); if (focusFirst) (items()[0] || btn).focus(); };
+  const open = (focusFirst) => { closeSiblingPops("more"); menu.hidden = false; btn.setAttribute("aria-expanded", "true"); if (focusFirst) (items()[0] || btn).focus(); };
   const close = (refocus) => { if (menu.hidden) return; menu.hidden = true; btn.setAttribute("aria-expanded", "false"); if (refocus) btn.focus(); };
   btn.onclick = (e) => { e.stopPropagation(); menu.hidden ? open(e.detail === 0) : close(false); };
   btn.onkeydown = (e) => { if (e.key === "ArrowDown") { e.preventDefault(); open(true); } else if (e.key === "Escape") close(true); };
