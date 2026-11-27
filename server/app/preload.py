@@ -33,6 +33,10 @@ _lock = threading.Lock()
 _urgent_subs = []                 # (item_dict, key) requested at play time
 _worker = None
 _job = {"kind": None, "proc": None}   # in-flight background ffmpeg/ffprobe
+# 2.6.2: direct play (/api/items/<id>/file) is not a transcode session, so busy()
+# used to stay false and background remux kept hammering the NAS.
+DIRECT_BUSY_S = 20.0
+_direct_until = 0.0
 
 
 def cache_gb():
@@ -57,9 +61,18 @@ def set_cache_gb(n):
     evict_lru()
 
 
+def note_direct_play():
+    """Keep preload idle while a client is reading the original file (Direct Play)."""
+    global _direct_until
+    with _lock:
+        _direct_until = time.time() + DIRECT_BUSY_S
+
+
 def busy():
     """True when a viewer is using a transcode/remux session (or one just started)."""
     now = time.time()
+    if now < _direct_until:
+        return True
     for s in list(transcode._sessions.values()):
         if getattr(s, "destroyed", False):
             continue
