@@ -3715,6 +3715,18 @@ function playerId() {
     return id;
   } catch (e) { return "anon" + String(Date.now()).slice(-10); }
 }
+function nativeDecoderCaps() {
+  try {
+    if (window.MSAndroid && typeof MSAndroid.decoderCaps === "function") {
+      const raw = MSAndroid.decoderCaps();
+      return (typeof raw === "string") ? JSON.parse(raw) : raw;
+    }
+  } catch (e) {}
+  return null;
+}
+function nativePlaySupported() {
+  try { return !!(window.MSAndroid && typeof MSAndroid.playNative === "function"); } catch (e) { return false; }
+}
 function clientCaps() {
   if (clientCaps._c) return clientCaps._c;
   const v = document.createElement("video");
@@ -3733,23 +3745,44 @@ function clientCaps() {
     try { el[k] = v.canPlayType(tests[k]) || ""; } catch (e) { el[k] = ""; }
     try { mse[k] = !!(window.MediaSource && MediaSource.isTypeSupported(tests[k])); } catch (e) { mse[k] = false; }
   });
-  const hevc_mse = !!(mse.hvc1_l153 || mse.hvc1_main10 || mse.hev1_main10 || mse.hvc1_l120);
-  const hevc_el = el.hvc1_l153 || el.hvc1_main10 || el.hev1_main10 || el.hvc1_l120 || "";
+  const nat = nativeDecoderCaps();
+  let hevc_mse = !!(mse.hvc1_l153 || mse.hvc1_main10 || mse.hev1_main10 || mse.hvc1_l120);
+  let hevc_el = el.hvc1_l153 || el.hvc1_main10 || el.hev1_main10 || el.hvc1_l120 || "";
   // 2.2: 5.1 AAC uses the same codec string as stereo AAC; offer surround when AAC plays.
-  const surr = !!(mse.aac || el.aac);
-  return (clientCaps._c = { hevc_mse, hevc_el, el, mse, surr, ua: navigator.userAgent || "", hlsjs: !!(window.Hls && Hls.isSupported()) });
+  // 2.4: a native player also reports real AudioCapabilities / MediaCodec support.
+  let surr = !!(mse.aac || el.aac);
+  if (nat) {
+    if (nat.hevc || nat.hevc10) { hevc_el = hevc_el || "native"; hevc_mse = hevc_mse || !!nat.hevc; }
+    if (nat.ac3) el.ac3 = el.ac3 || "native";
+    if (nat.eac3) el.eac3 = el.eac3 || "native";
+    if (nat.surr || nat.ac3 || nat.eac3 || nat.dts || nat.truehd) surr = true;
+  }
+  return (clientCaps._c = { hevc_mse, hevc_el, el, mse, surr, ua: navigator.userAgent || "", hlsjs: !!(window.Hls && Hls.isSupported()), native: nat });
 }
 function capsQuery() {
   const c = clientCaps();
-  return ["player=" + encodeURIComponent(playerId()),
-    "hevc=" + ((c.hevc_mse || c.hevc_el) ? "1" : "0"),
+  const n = c.native || {};
+  const parts = ["player=" + encodeURIComponent(playerId()),
+    "hevc=" + ((c.hevc_mse || c.hevc_el || n.hevc) ? "1" : "0"),
     "hevc_mse=" + (c.hevc_mse ? "1" : "0"),
     "hevc_el=" + encodeURIComponent(c.hevc_el || "no"),
-    "mkv=" + (c.el.mkv ? "1" : "0"),
-    "ac3=" + (c.el.ac3 ? "1" : "0"),
-    "eac3=" + (c.el.eac3 ? "1" : "0"),
+    "mkv=" + ((c.el.mkv || n.mkv || nativePlaySupported()) ? "1" : "0"),
+    "ac3=" + ((c.el.ac3 || n.ac3) ? "1" : "0"),
+    "eac3=" + ((c.el.eac3 || n.eac3) ? "1" : "0"),
     "surr=" + (c.surr ? "6" : "0"),
-    "hlsjs=" + (c.hlsjs ? "1" : "0")].join("&");
+    "hlsjs=" + (c.hlsjs ? "1" : "0")];
+  if (nativePlaySupported() || n.native) parts.push("native=1");
+  if (n.hevc10) parts.push("hevc10=1");
+  if (n.av1) parts.push("av1=1");
+  if (n.vp9) parts.push("vp9=1");
+  if (n.dts) parts.push("dts=1");
+  if (n.truehd) parts.push("truehd=1");
+  if (n.hdr10 || n.hdr) parts.push("hdr10=1");
+  if (n.hlg) parts.push("hlg=1");
+  if (n.dv) parts.push("dv=1");
+  if (n.ac3 || n.eac3) parts.push("acopy=1");
+  if (n.maxh) parts.push("maxh=" + (+n.maxh || 0));
+  return parts.join("&");
 }
 // 1.7.8: cap quality to this screen (and a MediaCapabilities decode limit when available)
 const Q_LONG = { "360p": 640, "480p": 854, "720p": 1280, "1080p": 1920, "1440p": 2560, "2160p": 3840 };
@@ -3801,9 +3834,10 @@ async function probeDecoders() {
       if (window.MSAndroid && typeof MSAndroid.decoderCaps === "function") {
         const raw = MSAndroid.decoderCaps();
         const j = (typeof raw === "string") ? JSON.parse(raw) : raw;
-        if (j && (j.maxHevc || j.maxH264 || j.max)) {
-          out.maxHevc = +j.maxHevc || +j.max || 0;
-          out.maxH264 = +j.maxH264 || +j.max || 0;
+        if (j && (j.maxHevc || j.maxH264 || j.max || j.maxh)) {
+          const mh = +j.maxHevc || +j.max || +j.maxh || 0;
+          out.maxHevc = +j.maxHevc || mh;
+          out.maxH264 = +j.maxH264 || +j.max || mh;
         }
       }
     } catch (e) {}
@@ -4116,6 +4150,17 @@ async function playItem(id, startAt, opts) {
   }
   if (it.media_type === "audio") { playQueue([it], 0); return; }
   if (startAt === undefined) startAt = it.position > 30 ? it.position : 0;
+  // 2.4: the Android TV (and phone) app hands Play to the native ExoPlayer. Browse stays in the WebView.
+  if (nativePlaySupported() && it.media_type === "video") {
+    try {
+      const sub = (function(){ try { return localStorage.getItem("pl-subs") || ""; } catch (e) { return ""; } })();
+      const raw = window.MSAndroid.playNative(JSON.stringify({
+        item_id: it.id, start: startAt || 0, audio: 0, sub: sub
+      }));
+      const r = (typeof raw === "string" && raw) ? JSON.parse(raw) : raw;
+      if (!r || r.ok !== false) return;
+    } catch (e) { /* fall through to the in-page player (and to the 2.0.2 app, which has no playNative) */ }
+  }
   stopAudio();
   if (P) { saveProgress(); PIP.leave(); teardownVideo(true); }   // 1.4.12: another film picked while one plays in picture-in-picture
   P = { it, start: startAt || 0, mode: null, audio: 0, lastSave: 0, triedDirect: false };

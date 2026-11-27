@@ -3,7 +3,7 @@
 A native Android app for your Movinite server. It has a native sign-in screen, and once you're signed in it shows
 the server's web app in a WebView, with picture-in-picture, rotate-to-full-screen, and (from 2.0) offline downloads.
 
-* Package `org.movinite.app`, Android 7.0+ (minSdk 24, targetSdk 34). **2.0.2** is `versionCode` 9.
+* Package `org.movinite.app`, Android 7.0+ (minSdk 24, targetSdk 34). **2.4** is `versionCode` 10.
 * **First launch:** a welcome screen asks for your server's address (for example `https://movies.example.com`, or
   `http://192.0.2.10:8099` on your home network). **Test** checks it with the server's `/api/health`, and **Connect** saves it.
   Then the native **Sign in** screen appears.
@@ -23,6 +23,12 @@ the server's web app in a WebView, with picture-in-picture, rotate-to-full-scree
 * **2.0 — Android TV:** the app includes a Leanback launcher and a Movinite wordmark banner for the TV home row, plus
   WebView zoom settings (`setTextZoom(100)` on televisions only, wide viewport) so a 4K TV shows the server's 1920-wide
   layout instead of a zoomed-in page. The D-pad uses the server's TV remote navigation (1.9.1 and 1.9.2).
+* **2.4 — native online player:** Play and Resume open a Media3 / ExoPlayer activity instead of the WebView's hls.js
+  player. Browse stays in the WebView. The app reports real decoder, display and audio-passthrough capabilities so the
+  server can Direct Play HEVC, HDR and surround when the television supports them. The on-screen controls are built for
+  a D-pad and include seek-bar thumbnails, Skip Intro / Credits, Up Next, and audio / subtitle / quality menus.
+  The 2.0.2 app still works against a 2.4 server (in-page player). Optional `APPLICATION_ID` (or `-PapplicationIdOverride`)
+  sets a private package name for a release you already install; the public source stays `org.movinite.app`.
 
 ## Build
 

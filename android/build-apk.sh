@@ -5,6 +5,7 @@
 #   JAVA_HOME / ANDROID_HOME from the environment, else the box defaults below.
 # Signs with keystore/keystore.properties + keystore/media-server-release.jks (override with KEYSTORE_PROPS=...).
 # Always sign updates with the SAME key, otherwise Android refuses to install them over the installed app.
+# Optional: APPLICATION_ID overrides applicationId for a privately packaged APK. Leave unset for org.movinite.app.
 set -euo pipefail
 cd "$(dirname "$0")"
 HERE="$PWD"
@@ -22,7 +23,11 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 V="$(sed -n "s/^ *versionName '\(.*\)'/\1/p" app/build.gradle)"
 grep -q "VERSION = \"$V\"" app/src/main/java/org/movinite/app/BuildConfigInfo.java || { echo "BuildConfigInfo.VERSION must match versionName $V"; exit 1; }
 chmod +x gradlew 2>/dev/null || true
-bash ./gradlew --no-daemon -q clean assembleRelease
+GRADLE_ARGS=(--no-daemon -q clean assembleRelease "-PkeystoreProps=$KEYSTORE_PROPS")
+if [ -n "${APPLICATION_ID:-}" ]; then
+  GRADLE_ARGS+=("-PapplicationIdOverride=$APPLICATION_ID")
+fi
+bash ./gradlew "${GRADLE_ARGS[@]}"
 APK="app/build/outputs/apk/release/app-release.apk"
 [ -f "$APK" ] || { echo "no signed APK produced -- check keystore.properties"; exit 1; }
 "$BT/apksigner" verify --print-certs "$APK" | grep -E "Signer #1 certificate (DN|SHA-256)" || { echo "apksigner verify FAILED"; exit 1; }

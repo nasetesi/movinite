@@ -375,6 +375,20 @@ public class MainActivity extends Activity {
         /** 1.4: the web player opened / closed: follow the phone's rotation only while it is open */
         @android.webkit.JavascriptInterface
         public void player(boolean open) { runOnUiThread(() -> setPlayerOpen(open)); }
+        /** 2.4: real MediaCodec / AudioCapabilities / display HDR modes, for Direct Play decisions. */
+        @android.webkit.JavascriptInterface
+        public String decoderCaps() { return Caps.detect(MainActivity.this).toString(); }
+        /** 2.4: hand Play over to the native ExoPlayer. Session cookie stays in the WebView cookie store. */
+        @android.webkit.JavascriptInterface
+        public String playNative(String json) {
+            try {
+                final String payload = json == null ? "{}" : json;
+                runOnUiThread(() -> PlayerActivity.startFromJs(MainActivity.this, payload));
+                return "{\"ok\":true}";
+            } catch (Exception e) {
+                return "{\"ok\":false}";
+            }
+        }
     }
 
     // ---------------------------------------------------------------- 1.4: rotate = full screen

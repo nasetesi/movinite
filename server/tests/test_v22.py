@@ -45,7 +45,7 @@ def film(w=1920, h=1080, codec="h264", **extra):
     return it
 
 print("source and docs")
-check(__version__ == "2.2", "version is 2.2")
+check(__version__ in ("2.2", "2.4"), "version is 2.2 or later")
 check("## 2.2" in ch and ch.find("## 2.2") < ch.find("## 2.1.4"), "CHANGELOG has 2.2 above 2.1.4")
 check("schema 13" in ch.split("## 2.1.4")[0].lower() or "schema 13" in ch.lower(), "changelog mentions schema 13")
 check("192.0.2.10" in rd and "192.168.1.10" not in rd, "public examples use 192.0.2.10")

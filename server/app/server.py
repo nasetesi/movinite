@@ -2083,15 +2083,30 @@ MIME = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".w
         ".avi": "video/x-msvideo", ".ts": "video/mp2t", ".wmv": "video/x-ms-wmv"}
 
 
-def playback_info(it, cap=None):
+def playback_info(it, cap=None, client=None):
     ext = Path(it["path"]).suffix.lower()
     auds = json.loads(it["audio_streams"] or "[]")
     subs = json.loads(it["subtitle_streams"] or "[]")
     ext_subs = json.loads(it["external_subs"] or "[]")
     a0 = it["acodec"]
+    native = bool(client and client.get("native"))
     if it["media_type"] == "audio":
-        direct = ext in DIRECT_EXT_A and (a0 in BROWSER_A or a0 in ("pcm_s16le", "pcm_s24le", "alac"))
+        direct = ext in DIRECT_EXT_A and (a0 in BROWSER_A or a0 in ("pcm_s16le", "pcm_s24le", "alac")
+                                          or (native and transcode.native_audio_ok(a0, client)))
         maybe = False
+    elif native:
+        # 2.4: the native ExoPlayer can Direct Play HEVC (Main / Main10), AV1, HDR, Matroska
+        # and bitstream-passthrough AC3/EAC3/DTS/TrueHD when the client reported those caps.
+        # 10-bit SDR (no HDR transfer) is still Direct Play when hevc10 is set.
+        v_ok = transcode.native_video_ok(it, client)
+        a_ok = (a0 is None) or transcode.native_audio_ok(a0, client)
+        mkv_ok = ext != ".mkv" or client.get("mkv", True)
+        hdr_ok = transcode.native_hdr_ok(it, client)
+        direct = ext in DIRECT_EXT_V and v_ok and a_ok and mkv_ok and hdr_ok
+        # If the panel didn't report this HDR mode, still offer a try — the TV may tone-map.
+        maybe = ext in DIRECT_EXT_V and v_ok and a_ok and mkv_ok and not direct
+        if not hdr_ok and ext in DIRECT_EXT_V and v_ok and a_ok and mkv_ok:
+            maybe = True
     else:
         v_ok = it["vcodec"] in BROWSER_V and (it["vcodec"] != "h264" or (it["pix_fmt"] or "yuv420p") in ("yuv420p", "yuvj420p"))
         a_ok = (a0 is None) or a0 in BROWSER_A
@@ -2143,16 +2158,24 @@ def playback_info(it, cap=None):
         src_fits = transcode.source_fits_cap(it, cap)
         if not src_fits:
             remux, remux_pending, remux_codec, direct, maybe = False, False, "", False, False
+    passthrough = []
+    if native:
+        for c, flag in (("ac3", "ac3"), ("eac3", "eac3"), ("dts", "dts"), ("truehd", "truehd")):
+            if client.get(flag):
+                passthrough.append(c)
     return {"direct": direct, "direct_maybe": maybe, "remux": remux, "remux_pending": remux_pending,
             "remux_codec": remux_codec,
             "mime": MIME.get(ext, "application/octet-stream"),
             "seg": transcode.SEG,
             "profiles": profiles, "hires": hires, "hires_off": hires_off, "hdr": hdr,
             "hdr_tonemap": hwaccel.hdr_tonemap_enabled(),
+            "hdr_passthrough": bool(native and hdr and transcode.native_hdr_ok(it, client)),
             "hires_kbps": {p: {"h264": transcode.video_kbps(it, p), "hevc": transcode.video_kbps(it, p, True)} for p in hires},   # 1.5.4: real maxrate
             "audio_streams": auds, "subtitles": subtitle_tracks,
             "image_subs": [s for s in subs if not s.get("text")],
-            "device_cap": cap, "source_fits_cap": src_fits}
+            "device_cap": cap, "source_fits_cap": src_fits,
+            "native": native,
+            "passthrough_audio": passthrough}
 
 
 
@@ -2181,12 +2204,13 @@ def _remote_item_detail(item_id, u):
 
 
 @app.get("/api/items/{item_id}")
-def item_detail(item_id: int, disp: int = 0, dec: int = 0, nocap: int = 0, u=Depends(auth.require_user)):
+def item_detail(item_id: int, request: Request, disp: int = 0, dec: int = 0, nocap: int = 0, u=Depends(auth.require_user)):
     if item_id < 0:
         return _remote_item_detail(item_id, u)
     it = _get_item(item_id)
     disp, dec, nocap_b = transcode.parse_cap_args(disp, dec, nocap)
     cap = None if nocap_b else transcode.device_cap_base(disp, dec)
+    client = transcode.client_caps_from_params(request.query_params)
     out = {k: it[k] for k in it if k not in ("audio_streams", "subtitle_streams", "external_subs")}
     out["filename"] = os.path.basename(it["path"]) if u["is_admin"] else None   # 1.4.9: file details are admin-only
     out["tags"] = db.rows("SELECT t.id, t.name FROM item_tags x JOIN tags t ON t.id=x.tag_id WHERE x.item_id=? "
@@ -2195,7 +2219,7 @@ def item_detail(item_id: int, disp: int = 0, dec: int = 0, nocap: int = 0, u=Dep
     out["folder"] = os.path.dirname(it["path"]) if u["is_admin"] else None
     if not u["is_admin"]:
         out.pop("path", None)
-    out["playback"] = playback_info(it, cap=cap)
+    out["playback"] = playback_info(it, cap=cap, client=client)
     try:
         tmdb.enrich([out])
     except Exception:
@@ -2246,7 +2270,7 @@ def item_detail(item_id: int, disp: int = 0, dec: int = 0, nocap: int = 0, u=Dep
     lib = db.row("SELECT id, name, kind FROM libraries WHERE id=?", (it["library_id"],))
     out["library"] = lib
     try:
-        out.update(_versions(it, cap=cap))
+        out.update(_versions(it, cap=cap, client=client))
     except Exception:   # never break the details page
         log.exception("versions")
     if it["kind"] == "movie":
@@ -2259,7 +2283,7 @@ def item_detail(item_id: int, disp: int = 0, dec: int = 0, nocap: int = 0, u=Dep
     return out
 
 
-def _versions(it, cap=None):
+def _versions(it, cap=None, client=None):
     """1.7: {"versions": [this library's files of the title, best first], "copies": n other libraries,
     "fallback": id of a copy on a share that is up (only when this item's share is down)}."""
     ids = titles.same_title_ids(it["id"]) if it["kind"] in ("movie", "episode") else [it["id"]]
@@ -2272,7 +2296,7 @@ def _versions(it, cap=None):
     out["copies"] = len({r["library_id"] for r in rows if r["library_id"] != it["library_id"]})
     if len(mine) > 1:
         for r in mine:
-            pb = playback_info(r, cap=cap)
+            pb = playback_info(r, cap=cap, client=client)
             out["versions"].append({
                 "id": r["id"], "res": titles.RES_LABEL[titles.res_rank(r["width"], r["height"])],
                 "width": r["width"], "height": r["height"], "vcodec": r["vcodec"], "acodec": r["acodec"],
@@ -2526,7 +2550,7 @@ def _profile_ok(profile):
         raise HTTPException(409, "2K and 4K need hardware transcoding")
 
 
-def _player_query(audio, player, start=None, surr=0, burn=0):
+def _player_query(audio, player, start=None, surr=0, burn=0, acopy=0):
     q = "?audio=%d" % audio
     if player:
         q += "&player=%s" % transcode.normalize_player(player)
@@ -2536,6 +2560,8 @@ def _player_query(audio, player, start=None, surr=0, burn=0):
         q += "&surr=6"
     if int(burn or 0) > 0:
         q += "&burn=%d" % int(burn)
+    if int(acopy or 0):
+        q += "&acopy=1"
     return q
 
 
@@ -2544,6 +2570,7 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
                  player: str = "", caps: str = "", hevc: str = "", hevc_mse: str = "",
                  hevc_el: str = "", mkv: str = "", ac3: str = "", eac3: str = "", hlsjs: str = "",
                  disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
+                 native: int = 0, acopy: int = 0, dts: str = "", truehd: str = "", hevc10: str = "",
                  u=Depends(auth.require_user)):
     if item_id < 0:
         info = fed.start_remote_play(u, item_id, profile, request)
@@ -2565,9 +2592,13 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
         q = str(request.url.query or "")
         return RedirectResponse(path + (("?" + q) if q else ""), status_code=302)
     _profile_ok(profile)
-    cap = caps or ("hevc=%s hevc_mse=%s hevc_el=%s mkv=%s ac3=%s eac3=%s hlsjs=%s disp=%s dec=%s" %
-                   (hevc, hevc_mse, hevc_el, mkv, ac3, eac3, hlsjs, dpx or "", kpx or "")).strip()
+    cap = caps or ("native=%s hevc=%s hevc10=%s hevc_mse=%s hevc_el=%s mkv=%s ac3=%s eac3=%s dts=%s truehd=%s hlsjs=%s disp=%s dec=%s acopy=%s" %
+                   (native, hevc, hevc10, hevc_mse, hevc_el, mkv, ac3, eac3, dts, truehd, hlsjs, dpx or "", kpx or "", acopy)).strip()
     transcode.note_client(player, u, request, cap)
+    if not acopy:
+        cli = transcode.client_caps_from_params(request.query_params)
+        if cli and cli.get("acopy"):
+            acopy = 1
     bounds = None
     if profile == "remux":
         bounds = transcode.remux_bounds(it)
@@ -2576,19 +2607,19 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
         if int(burn or 0) > 0:
             raise HTTPException(409, "Image subtitles need a transcode; remux cannot burn them in")
     need_init = transcode.split_profile(profile)[1] == "hevc" or (profile == "remux" and transcode.remux_codec(it) == "hevc")
-    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn)) if need_init else None
+    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn, acopy)) if need_init else None
     # 1.7.9: start ffmpeg as soon as the playlist is requested, so the first segment overlaps the player's next RTT
     if profile != "audio":
         try:
-            s = transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr, burn=burn)
+            s = transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr, burn=burn, acopy=acopy)
             transcode.kickoff(s, max(0, start))
         except ValueError:
             pass
-    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn), bounds, init), media_type="application/vnd.apple.mpegurl",
+    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn, acopy=acopy), bounds, init), media_type="application/vnd.apple.mpegurl",
                              headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
-def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0, surr=0, burn=0):
+def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0, surr=0, burn=0, acopy=0):
     it = _get_item(item_id)
     dpx, kpx, no_cap = transcode.parse_cap_args(disp, dec, nocap)
     new, device_cap, changed = transcode.clamp_profile(profile, it, dpx, kpx, no_cap)
@@ -2597,7 +2628,7 @@ def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0, 
     profile = new
     _profile_ok(profile)
     try:
-        return transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr, burn=burn)
+        return transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr, burn=burn, acopy=acopy)
     except ValueError as e:
         raise HTTPException(409, "This file cannot be remuxed" if profile == "remux" else str(e))
 
@@ -2605,12 +2636,12 @@ def _hls_session(item_id, profile, audio, u, player="", disp=0, dec=0, nocap=0, 
 @app.get("/api/items/{item_id}/hls/{profile}/init.mp4")
 def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player: str = "",
              disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
-             u=Depends(auth.require_user)):
+             acopy: int = 0, u=Depends(auth.require_user)):
     """1.5.3: init segment of an HEVC (fMP4) stream (transcode or HEVC remux)."""
     it = _get_item(item_id)
     if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr, burn)
+    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr, burn, acopy)
     p = s.get_init(max(0, start))
     if not p:
         raise HTTPException(500, "Transcode failed" + (": " + s.failed if s.failed else ""))
@@ -2620,17 +2651,17 @@ def hls_init(item_id: int, profile: str, audio: int = 0, start: int = 0, player:
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.m4s")
 def hls_segment_m4s(item_id: int, profile: str, n: int, audio: int = 0, player: str = "",
                     disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0,
-                    u=Depends(auth.require_user)):
+                    acopy: int = 0, u=Depends(auth.require_user)):
     it = _get_item(item_id)
     if transcode.split_profile(profile)[1] != "hevc" and not (profile == "remux" and transcode.remux_codec(it) == "hevc"):
         raise HTTPException(404)
-    return hls_segment(item_id, profile, n, audio, u, player, disp, dec, nocap, surr, burn)
+    return hls_segment(item_id, profile, n, audio, u, player, disp, dec, nocap, surr, burn, acopy)
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/seg{n}.ts")
 def hls_segment(item_id: int, profile: str, n: int, audio: int = 0, u=Depends(auth.require_user),
                 player: str = "", disp: int = 0, dec: int = 0, nocap: int = 0, surr: int = 0, burn: int = 0):
-    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr, burn)
+    s = _hls_session(item_id, profile, audio, u, player, disp, dec, nocap, surr, burn, acopy)
     if n < 0 or n >= s.nseg:
         raise HTTPException(404)
     p = s.get_segment(n)

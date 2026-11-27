@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4 -- 2026-11-26
+Builds on 2.3 (schema stays 14; no database upgrade). A new Android TV app is included.
+
+- **Online playback on the Android TV app uses a native player (Media3 / ExoPlayer), not the WebView.** Browse, search and the 2.1.4 remote navigation stay in the WebView. Pressing Play (or Resume) hands the title to a full-screen native player through the app bridge. The login session is the WebView cookie, applied to media requests on the native side — it is not passed through JavaScript.
+- **The app reports real decoder, display and audio capabilities** (HEVC Main10, AV1, HDR10 / HLG / Dolby Vision display modes, 4K, and AC3 / EAC3 / DTS / TrueHD through AudioCapabilities). The server prefers Direct Play of HEVC, HDR and surround when those caps are present, then remux, then transcode. Remux can bitstream-copy AC3 / EAC3 when the player can passthrough. DTS and TrueHD are Direct Played in the original file when the TV or AVR reports them. The 2.0.2 app and ordinary browsers keep the previous, safer rules (no `native=1`), so a 2.0.2 APK still works against this server.
+- **The native player matches the 2.2 / 2.3 playback features:** resume and progress reporting, seek-bar thumbnails, an Up Next countdown with Play now and Cancel, Skip Intro and Skip Credits buttons that take focus on the remote, a subtitle menu (text tracks are soft WebVTT; image subtitles still use a transcode burn-in), and an audio and quality menu. The on-screen controls are built for a D-pad.
+
+Desktop and phone browsers are unchanged (they still use the in-page player). TV home-screen navigation from 2.1.4 is unchanged. 2.3 Skip Intro / image-subtitle burn-in and 2.2 playback behaviour are unchanged on the web player.
+
+
 ## 2.3 -- 2026-11-26
 Builds on 2.2. Schema 14 (a `media-server.db.pre-schema14` backup, mode 600, is written once before the bump).
 

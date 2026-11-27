@@ -154,6 +154,134 @@ def source_fits_cap(item, cap_base):
     return long <= PROFILE_LONG[cap_base] + 16
 
 
+
+# 2.4: decoder / display / audio caps advertised by the native Android player (and ignored by 2.0.2).
+PASS_AUDIO = {"ac3", "eac3", "dts", "dca", "truehd", "mlp"}
+NATIVE_VIDEO = {"h264", "hevc", "h265", "vp8", "vp9", "av1"}
+
+
+def _flag(v):
+    if v is True or v == 1:
+        return True
+    s = str(v or "").strip().lower()
+    return s in ("1", "true", "yes", "on")
+
+
+def _is_10bit(item):
+    pf = (item.get("pix_fmt") or "").lower()
+    return "10" in pf or "12" in pf
+
+
+def client_caps_from_params(params):
+    """Build a client-caps dict from query parameters (item detail, HLS, versions).
+
+    A missing or empty `native` keeps the 2.0.2 / browser rules. The native TV
+    app sends native=1 plus real MediaCodec, AudioCapabilities and display flags.
+    """
+    if params is None:
+        return None
+    get = params.get if hasattr(params, "get") else lambda k, d="": params.get(k, d) if isinstance(params, dict) else d
+    if not _flag(get("native", "") or get("exo", "") or get("app_native", "")):
+        return None
+    def g(*keys):
+        for k in keys:
+            v = get(k, "")
+            if v not in (None, ""):
+                return v
+        return ""
+    maxh = 0
+    try:
+        maxh = int(g("maxh") or 0)
+    except (TypeError, ValueError):
+        maxh = 0
+    return {
+        "native": True,
+        "hevc": _flag(g("hevc", "hevc_mse", "hevc_el")),
+        "hevc10": _flag(g("hevc10")) or _flag(g("hevc_main10")),
+        "av1": _flag(g("av1")),
+        "vp9": _flag(g("vp9")),
+        "ac3": _flag(g("ac3")),
+        "eac3": _flag(g("eac3")),
+        "dts": _flag(g("dts")),
+        "truehd": _flag(g("truehd")),
+        "hdr10": _flag(g("hdr10")) or _flag(g("hdr")),
+        "hlg": _flag(g("hlg")),
+        "dv": _flag(g("dv")) or _flag(g("dolby_vision")),
+        "mkv": _flag(g("mkv")) or True,  # Media3 plays Matroska over HTTP
+        "surr": int(g("surr") or 0) >= 6 or _flag(g("ac3")) or _flag(g("eac3")) or _flag(g("dts")) or _flag(g("truehd")),
+        "maxh": maxh,
+        "acopy": _flag(g("acopy")) or _flag(g("ac3")) or _flag(g("eac3")) or _flag(g("dts")) or _flag(g("truehd")),
+    }
+
+
+def audio_passthrough_ok(codec, client):
+    """True when the native player reported bitstream support for this audio codec."""
+    c = (codec or "").lower()
+    if not client or not client.get("native"):
+        return False
+    if c in ("ac3",):
+        return bool(client.get("ac3"))
+    if c in ("eac3",):
+        return bool(client.get("eac3"))
+    if c in ("dts", "dca"):
+        return bool(client.get("dts"))
+    if c in ("truehd", "mlp"):
+        return bool(client.get("truehd"))
+    return False
+
+
+def native_video_ok(item, client):
+    """Whether the native player can decode this video bitstream (container aside)."""
+    if not client or not client.get("native"):
+        return False
+    v = (item.get("vcodec") or "").lower()
+    if v in ("hevc", "h265"):
+        if not client.get("hevc"):
+            return False
+        if _is_10bit(item) and not client.get("hevc10"):
+            return False
+        return True
+    if v == "av1":
+        return bool(client.get("av1"))
+    if v == "h264":
+        return not _is_10bit(item)
+    if v == "vp9":
+        return bool(client.get("vp9"))
+    if v == "vp8":
+        return True
+    return False
+
+
+def native_audio_ok(codec, client):
+    """True when audio can be played as-is (soft decode or bitstream passthrough)."""
+    c = (codec or "").lower()
+    if not c:
+        return True
+    if c in ("aac", "mp3", "opus", "vorbis", "flac", "alac", "pcm_s16le", "pcm_s24le"):
+        return True
+    return audio_passthrough_ok(c, client)
+
+
+def native_hdr_ok(item, client):
+    """HDR passthrough: allow Direct Play when the panel reported the matching mode.
+
+    Unknown HDR (empty hdr_info) is treated as SDR. If the panel did not report the
+    type, Direct Play is still offered as a maybe — the TV OS may tone-map.
+    """
+    if not client or not client.get("native"):
+        return True
+    hdr = hdr_info(item)
+    if not hdr:
+        return True
+    if hdr == "HDR10":
+        return bool(client.get("hdr10") or client.get("dv"))
+    if hdr == "HLG":
+        return bool(client.get("hlg") or client.get("hdr10"))
+    if "Dolby" in str(hdr) or hdr in ("DV", "DoVi"):
+        return bool(client.get("dv"))
+    return True
+
+
 def parse_cap_args(disp=0, dec=0, nocap=0):
     def n(v):
         try:
@@ -236,11 +364,12 @@ def hdr_info(item):
 
 
 class Session:
-    def __init__(self, sid, item, profile, audio_idx, bounds=None, surr=0, burn=0):
+    def __init__(self, sid, item, profile, audio_idx, bounds=None, surr=0, burn=0, acopy=0):
         self.sid = sid
         self.bounds = bounds            # remux: segment start times (keyframes)
         self.surr = 6 if int(surr or 0) >= 6 else 0  # 2.2: 6 = client can play surround AAC
         self.burn = int(burn or 0)      # 2.3: image-subtitle stream index to burn in (0 = none)
+        self.acopy = 1 if int(acopy or 0) else 0  # 2.4: copy AC3/EAC3 when the client can passthrough
         self.item = item
         self.profile = profile
         self.audio_idx = audio_idx
@@ -314,13 +443,19 @@ class Session:
         a = self._audio_track()
         src = int((a.get("channels") or 2) or 2)
         want = self._audio_out_channels()
-        if a.get("codec") in ("aac", "mp3"):
+        codec = (a.get("codec") or "").lower()
+        if codec in ("aac", "mp3"):
             if src <= 2:
                 cmd += ["-c:a", "copy"]
                 return cmd
             if want >= 6 and src >= 6:
                 cmd += ["-c:a", "copy"]
                 return cmd
+        # 2.4: bitstream-copy AC3/EAC3 into the HLS remux when the native player can passthrough.
+        # DTS / TrueHD stay AAC here — those are played by Direct Play of the original file.
+        if int(getattr(self, "acopy", 0) or 0) and codec in ("ac3", "eac3"):
+            cmd += ["-c:a", "copy"]
+            return cmd
         cmd += self._aac_audio_args()
         return cmd
 
@@ -775,10 +910,11 @@ def normalize_player(player_id):
     return s[:64]
 
 
-def session_id(item_id, profile, audio_idx, user_id, player_id="", surr=0, burn=0):
+def session_id(item_id, profile, audio_idx, user_id, player_id="", surr=0, burn=0, acopy=0):
     surr = 6 if int(surr or 0) >= 6 else 0
     burn = int(burn or 0)
-    return hashlib.sha1(("%s|%s|%s|%s|%s|%s|%s" % (item_id, profile, audio_idx, user_id, normalize_player(player_id), surr, burn)).encode()).hexdigest()[:16]
+    acopy = 1 if int(acopy or 0) else 0
+    return hashlib.sha1(("%s|%s|%s|%s|%s|%s|%s|%s" % (item_id, profile, audio_idx, user_id, normalize_player(player_id), surr, burn, acopy)).encode()).hexdigest()[:16]
 
 
 def max_transcodes():
@@ -795,11 +931,12 @@ def max_transcodes():
     return config.MAX_TRANSCODES
 
 
-def get_session(item, profile, audio_idx, user_id, player_id="", surr=0, burn=0):
+def get_session(item, profile, audio_idx, user_id, player_id="", surr=0, burn=0, acopy=0):
     pid = normalize_player(player_id)
     surr = 6 if int(surr or 0) >= 6 else 0
     burn = int(burn or 0)
-    sid = session_id(item["id"], profile, audio_idx, user_id, pid, surr, burn)
+    acopy = 1 if int(acopy or 0) else 0
+    sid = session_id(item["id"], profile, audio_idx, user_id, pid, surr, burn, acopy)
     bounds = None
     if profile == "remux":
         bounds = remux_bounds(item)
@@ -822,7 +959,7 @@ def get_session(item, profile, audio_idx, user_id, player_id="", surr=0, burn=0)
                             int(time.time() - oldest.last_access))
                 oldest.destroy("cap")
                 _sessions.pop(oldest.sid, None)
-            s = Session(sid, item, profile, audio_idx, bounds, surr=surr, burn=burn)
+            s = Session(sid, item, profile, audio_idx, bounds, surr=surr, burn=burn, acopy=acopy)
             s.user_id = user_id
             s.player_id = pid
             apply_sticky(s)
