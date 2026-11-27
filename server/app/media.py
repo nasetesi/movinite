@@ -246,6 +246,16 @@ def summarize_probe(p):
         res["color_transfer"] = (v.get("color_transfer") or "").strip() or None
         res["color_primaries"] = (v.get("color_primaries") or "").strip() or None
         res["color_space"] = (v.get("color_space") or "").strip() or None
+        try:
+            from . import hdr as hdrmod
+            classified = hdrmod.classify_probe(v, pix_fmt=res.get("pix_fmt"))
+            kind = classified.get("kind")
+            if kind:
+                res["hdr_type"] = kind
+                if classified.get("hdr_primaries"):
+                    res["hdr_primaries"] = classified["hdr_primaries"]
+        except Exception:
+            pass
         rot = 0
         for sd in v.get("side_data_list") or []:
             if sd.get("rotation") not in (None, ""):

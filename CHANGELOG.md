@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6 -- 2026-11-27
+An HDR detection update on top of 2.5.10. After 2.5.10 the version rolls to the next minor (the third digit maxes out at .10). Schema stays at 15: additive `hdr_type` and `hdr_primaries` columns are added on items, with no schema bump. No new Android app is needed.
+
+- **Tone-mapping now also applies to Dolby Vision 8.1 and mistagged HDR10 files.** 2.2 already converted properly tagged HDR10 and HLG (transfer `smpte2084` or `arib-std-b67`) when **Settings → Transcoding → HDR to SDR** is on. Files that only carry a Dolby Vision configuration record (profile 8.1, whose base layer is PQ even when flagged as bt709) or HDR10 mastering-display / content-light metadata with BT.2020 or P3 primaries on a 10-bit stream were treated as ordinary video and looked washed out. Those are now detected and converted too.
+- **Genuine 10-bit SDR is left alone.** Detection uses the transfer function, the DOVI record, and mastering / content-light side data — not “10-bit 4K” by itself.
+- **The detected type is stored** (`hdr10`, `hlg`, `dv5`, `dv7`, `dv8`, `hdr10-mistagged`, or `sdr`) along with the mastering primaries when they are known (`hdr_primaries`, for example `smpte432` for Display P3), so playback does not have to probe the file again. Unclassified 4K Main 10 titles are filled in by a light idle job. Both columns are additive; schema stays at 15.
+- **Conversion uses VAAPI `tonemap_vaapi` when it is available**, with a software zscale + hable fallback. Mistagged files have their input transfer set to smpte2084, and their primaries set to the file’s mastering display (Display P3 / `smpte432` for Heart of the Beast, not BT.2020). Dolby Vision 8.1 is mapped in software (then uploaded for a GPU encode) because Intel’s `tonemap_vaapi` needs mastering-display metadata that those files often lack. Dolby Vision profile 5 has no HDR10 base layer: it is skipped (with a log line) unless ffmpeg’s libplacebo filter is present.
+
 ## 2.5.10 -- 2026-11-27
 A poster-art fix on top of 2.5.9, for the phone, the television, and the desktop. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only.
 

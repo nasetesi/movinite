@@ -202,6 +202,9 @@ def _tick():
     if _do_one_color():
         time.sleep(NAS_PAUSE_S)
         return
+    if _do_one_hdr():
+        time.sleep(NAS_PAUSE_S)
+        return
     if cache_gb() <= 0:
         try:
             from . import trickplay
@@ -642,6 +645,44 @@ def _do_one_color():
         except Exception:
             log.exception("color backfill %s", row["id"])
             return False
+        return True
+    return False
+
+
+
+# ---------------------------------------------------------------------------
+# 2.6: classify 4K 10-bit titles (Dolby Vision, mistagged HDR10) when idle
+# ---------------------------------------------------------------------------
+def _do_one_hdr():
+    """Light backfill: one 4K Main 10 item per tick, skipped while a stream is running."""
+    from . import hdr as hdrmod
+    try:
+        rows = db.rows(
+            "SELECT id, path, pix_fmt, width, height, color_transfer, color_primaries, color_space, hdr_type "
+            "FROM items WHERE media_type='video' AND probed=1 AND hdr_type IS NULL "
+            "AND (pix_fmt LIKE '%10%' OR pix_fmt LIKE '%12%' OR pix_fmt LIKE '%p010%') "
+            "AND (COALESCE(width,0) >= 3840 OR COALESCE(height,0) >= 2160) "
+            "ORDER BY added_at DESC LIMIT 20")
+    except Exception:
+        # Column missing on a pre-migrate process; migrate() adds it on startup.
+        return False
+    for row in rows:
+        if busy():
+            return False
+        if not row.get("path") or not os.path.exists(row["path"]):
+            try:
+                with db.tx() as c:
+                    c.execute("UPDATE items SET hdr_type=? WHERE id=?", (hdrmod.KIND_SDR, row["id"]))
+            except Exception:
+                pass
+            continue
+        try:
+            result = hdrmod.classify_path(row["path"], frames=True)
+        except Exception:
+            log.exception("hdr backfill %s", row["id"])
+            continue
+        hdrmod.store(row["id"], result)
+        log.info("hdr backfill item %s -> %s (%s)", row["id"], result.get("kind"), result.get("reason"))
         return True
     return False
 

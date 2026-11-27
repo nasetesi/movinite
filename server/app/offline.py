@@ -288,7 +288,9 @@ def original_ok(item, caps, audio=0):
     h = int(item.get("height") or 0)
     if h and h > caps["maxh"] * 1.05:
         return False, "Larger than this device can play (%dp)" % h
-    if (item.get("color_transfer") or "") in ("smpte2084", "arib-std-b67") and not caps.get("hdr"):
+    from . import transcode as _tc
+    _hdr = _tc.hdr_info(item) if item.get("media_type") == "video" else ""
+    if _hdr and not caps.get("hdr"):
         return False, "HDR isn't supported on this device"
     return True, ""
 

@@ -250,12 +250,65 @@ def has_filter(name):
     return name in ffmpeg_filters()
 
 
-def _vaapi_scale(gw, height, hdr=""):
+def _hdr_kind(hdr, item=None):
+    """Accept 2.2 labels (HDR10/HLG) and 2.6 kinds."""
+    from . import hdr as hdrmod
+    if not hdr:
+        return hdrmod.kind_from_item(item or {})
+    if hdr in ("HDR10", "hdr10"):
+        return hdrmod.KIND_HDR10
+    if hdr in ("HLG", "hlg"):
+        return hdrmod.KIND_HLG
+    if hdr in ("DV", "DoVi", "DV5", hdrmod.KIND_DV5):
+        return hdrmod.KIND_DV5
+    return hdr
+
+
+def _vaapi_scale(gw, height, hdr="", item=None):
     """Keep frames on the GPU: scale_vaapi, plus tonemap_vaapi for HDR when the filter exists."""
-    # 2.2: only real HDR (never 10-bit SDR / bt709), and only when the admin has turned the setting on.
-    if hdr in ("HDR10", "HLG") and has_filter("tonemap_vaapi") and hdr_tonemap_enabled():
-        return "scale_vaapi=w=%s:h=%d:format=p010,tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709" % (gw, height)
+    # 2.2/2.6: only real HDR (never 10-bit SDR / bt709), and only when the admin has turned the setting on.
+    from . import hdr as hdrmod
+    kind = _hdr_kind(hdr, item)
+    if not hdr_tonemap_enabled() or not kind or kind == hdrmod.KIND_SDR:
+        return "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
+    if kind == hdrmod.KIND_DV5:
+        if has_filter("libplacebo"):
+            # libplacebo is a software filter; download, map, upload as nv12.
+            log.info("HDR DV profile 5: tone-mapping with libplacebo (no HDR10 base layer)")
+            return ("hwdownload,format=p010le," + hdrmod.libplacebo_tonemap_vf(kind, scale="") +
+                    ",format=nv12,hwupload=extra_hw_frames=64,scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height))
+        log.info("HDR DV profile 5: skipping tone-map (no libplacebo; no HDR10 base layer)")
+        return "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
+    # Intel tonemap_vaapi requires mastering-display metadata. Dolby Vision
+    # 8.1 files often have none (One Last Shot: "No mastering display data
+    # from input" / EINVAL). Map those in software, then upload for encode.
+    if kind in (hdrmod.KIND_DV8, hdrmod.KIND_DV7) and hdrmod.can_tonemap(kind) \
+            and has_filter("zscale") and has_filter("tonemap"):
+        log.info("HDR %s: tone-mapping in software (tonemap_vaapi needs mastering display data)", kind)
+        return ("hwdownload,format=p010le," +
+                hdrmod.software_tonemap_vf(kind, item, scale="") +
+                ",format=nv12,hwupload=extra_hw_frames=64,scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height))
+    if has_filter("tonemap_vaapi") and hdrmod.can_tonemap(kind):
+        return hdrmod.vaapi_tonemap_vf(kind, item, gw, height)
     return "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
+
+
+def software_scale(height, width=None, hdr="", item=None):
+    """CPU scale, with zscale+tonemap when HDR tone-mapping is on and filters exist."""
+    from . import hdr as hdrmod
+    scale = "scale=-2:'min(%d,ih)'" % height if not width else "scale=%d:%d" % (width, height)
+    kind = _hdr_kind(hdr, item)
+    if not hdr_tonemap_enabled() or not kind or kind == hdrmod.KIND_SDR:
+        return scale + ",format=yuv420p"
+    if kind == hdrmod.KIND_DV5:
+        if has_filter("libplacebo"):
+            log.info("HDR DV profile 5: tone-mapping with libplacebo (CPU)")
+            return hdrmod.libplacebo_tonemap_vf(kind, scale=scale)
+        log.info("HDR DV profile 5: skipping tone-map (no libplacebo; no HDR10 base layer)")
+        return scale + ",format=yuv420p"
+    if hdrmod.can_tonemap(kind) and has_filter("zscale") and has_filter("tonemap"):
+        return hdrmod.software_tonemap_vf(kind, item, scale=scale)
+    return scale + ",format=yuv420p"
 
 
 
@@ -336,7 +389,7 @@ def burn_needs_hw_device(stage, method):
         return True
     return False
 
-def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h264", hdr=""):
+def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h264", hdr="", item=None):
     """ffmpeg arguments for one transcode stage.
 
     stage "full": decode, scale and encode on the GPU.  stage "enc": CPU decode + scale, GPU encode.
@@ -357,10 +410,10 @@ def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h2
             # ("ffmpeg exited", badge flipping CPU/GPU as the player restarts the same stage).
             pre = ["-threads", "1", "-noautorotate", "-hwaccel", "vaapi", "-hwaccel_device", device,
                    "-hwaccel_output_format", "vaapi", "-extra_hw_frames", "64"]
-            vf = _vaapi_turn(rot) + _vaapi_scale(gw, height, hdr)
+            vf = _vaapi_turn(rot) + _vaapi_scale(gw, height, hdr, item=item)
         else:
             pre = ["-init_hw_device", "vaapi=hw:%s" % device, "-filter_hw_device", "hw"]
-            vf = sw_scale + ",format=nv12,hwupload=extra_hw_frames=64"
+            vf = software_scale(height, width, hdr, item=item) + ",format=nv12,hwupload=extra_hw_frames=64"
         # Arc (and other recent Intel) only exposes the low-power / VDENC entry (EncSliceLP).
         return pre, vf, (["-c:v", "hevc_vaapi", "-profile:v", "main"] if hevc else ["-c:v", "h264_vaapi", "-profile:v", "high"]) + ["-rc_mode", "VBR", "-low_power", "1"] + rate + tag
     if method == "qsv":
@@ -368,7 +421,7 @@ def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h2
         if stage == "full":
             pre = init + ["-threads", "1", "-noautorotate", "-hwaccel", "vaapi", "-hwaccel_device", "va",
                           "-hwaccel_output_format", "vaapi", "-extra_hw_frames", "64"]
-            vf = _vaapi_turn(rot) + _vaapi_scale(gw, height, hdr) + ",hwmap=derive_device=qsv,format=qsv"
+            vf = _vaapi_turn(rot) + _vaapi_scale(gw, height, hdr, item=item) + ",hwmap=derive_device=qsv,format=qsv"
         else:
             pre = init
             vf = sw_scale + ",format=nv12,hwupload=extra_hw_frames=64,format=qsv"
