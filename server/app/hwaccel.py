@@ -279,15 +279,20 @@ def _vaapi_scale(gw, height, hdr="", item=None):
                     ",format=nv12,hwupload=extra_hw_frames=64,scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height))
         log.info("HDR DV profile 5: skipping tone-map (no libplacebo; no HDR10 base layer)")
         return "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
-    # Intel tonemap_vaapi requires mastering-display metadata. Dolby Vision
-    # 8.1 files often have none (One Last Shot: "No mastering display data
-    # from input" / EINVAL). Map those in software, then upload for encode.
-    if kind in (hdrmod.KIND_DV8, hdrmod.KIND_DV7) and hdrmod.can_tonemap(kind) \
-            and has_filter("zscale") and has_filter("tonemap"):
-        log.info("HDR %s: tone-mapping in software (tonemap_vaapi needs mastering display data)", kind)
-        return ("hwdownload,format=p010le," +
-                hdrmod.software_tonemap_vf(kind, item, scale="") +
-                ",format=nv12,hwupload=extra_hw_frames=64,scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height))
+    # 2.6.1: mistagged HDR10 and DV 8.1/7 cannot use tonemap_vaapi correctly
+    # (Intel wants mastering metadata DV often lacks; forcing PQ on a bt709
+    # VUI also gave a green/yellow cast). Prefer libplacebo at 1080 after a
+    # GPU scale (~1.8x when used from the enc stage). Fall back to zscale+hable.
+    if kind in (hdrmod.KIND_DV8, hdrmod.KIND_DV7, hdrmod.KIND_MISTAGGED) and hdrmod.can_tonemap(kind):
+        head = "scale_vaapi=w=%s:h=%d:format=p010,hwdownload,format=p010le," % (gw, height)
+        if has_filter("libplacebo"):
+            log.info("HDR %s: scale on GPU, libplacebo tone-map at %sp", kind, height)
+            return (head + hdrmod.libplacebo_tonemap_vf(kind, item, scale="", fmt="nv12")
+                    + ",hwupload=extra_hw_frames=64")
+        if has_filter("zscale") and has_filter("tonemap"):
+            log.info("HDR %s: scale on GPU, zscale+hable at %sp", kind, height)
+            return (head + hdrmod.software_tonemap_vf(kind, item, scale="", height=height)
+                    + ",format=nv12,hwupload=extra_hw_frames=64")
     if has_filter("tonemap_vaapi") and hdrmod.can_tonemap(kind):
         return hdrmod.vaapi_tonemap_vf(kind, item, gw, height)
     return "scale_vaapi=w=%s:h=%d:format=nv12" % (gw, height)
@@ -303,11 +308,17 @@ def software_scale(height, width=None, hdr="", item=None):
     if kind == hdrmod.KIND_DV5:
         if has_filter("libplacebo"):
             log.info("HDR DV profile 5: tone-mapping with libplacebo (CPU)")
-            return hdrmod.libplacebo_tonemap_vf(kind, scale=scale)
+            return hdrmod.libplacebo_tonemap_vf(kind, item, scale=scale)
         log.info("HDR DV profile 5: skipping tone-map (no libplacebo; no HDR10 base layer)")
         return scale + ",format=yuv420p"
+    # 2.6.1: libplacebo at 1080 + VAAPI encode is ~1.8x on the A310 for DV 8.1;
+    # zscale+hable with encode was only about realtime.
+    if kind in (hdrmod.KIND_DV8, hdrmod.KIND_DV7, hdrmod.KIND_MISTAGGED) and hdrmod.can_tonemap(kind) \
+            and has_filter("libplacebo"):
+        log.info("HDR %s: libplacebo tone-map at %sp (CPU decode)", kind, height)
+        return hdrmod.libplacebo_tonemap_vf(kind, item, scale=scale)
     if hdrmod.can_tonemap(kind) and has_filter("zscale") and has_filter("tonemap"):
-        return hdrmod.software_tonemap_vf(kind, item, scale=scale)
+        return hdrmod.software_tonemap_vf(kind, item, scale=scale, height=height)
     return scale + ",format=yuv420p"
 
 
@@ -415,6 +426,7 @@ def vaapi_one_device(pre, device):
         out.append(a)
         i += 1
     return ["-init_hw_device", "vaapi=hw:%s" % device] + out + ["-filter_hw_device", "hw"]
+
 
 def stage_args(method, device, stage, height, kbps, rot=0, width=None, codec="h264", hdr="", item=None):
     """ffmpeg arguments for one transcode stage.

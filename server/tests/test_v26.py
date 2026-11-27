@@ -76,7 +76,7 @@ def dovi(profile, compat=None, level=6):
 
 
 print("version and schema")
-check(__version__ == "2.6", "version is 2.6 (2.5.10 rolls to the next minor)")
+check(__version__.startswith("2.6"), "version is 2.6 or a 2.6.x fix (2.5.10 rolls to the next minor)")
 dbpy = (ROOT / "app/db.py").read_text()
 check("SCHEMA_VERSION = 15" in dbpy, "schema stays at 15")
 check('("items", "hdr_type", "TEXT")' in dbpy, "additive hdr_type column, no schema bump")
@@ -102,13 +102,22 @@ check("mistagged" in r.get("reason", "") or r.get("transfer") == "smpte2084",
       "8.1 base is treated as PQ even when flagged bt709: %s" % r.get("reason"))
 check(hdr.needs_setparams(r["kind"], ols), "DV 8.1 with bt709 VUI needs setparams")
 
-print("classify: mistagged HDR10 with P3 mastering (Heart of the Beast)")
+print("classify: Heart of the Beast is SDR with leftover HDR SEI (2.6.1)")
 hotb = stream(side_data_list=[p3_mastering(1000), cll(586, 346)])
 r = hdr.classify_probe(hotb)
-check(r["kind"] == hdr.KIND_MISTAGGED, "Heart of the Beast-like -> hdr10-mistagged (got %s %s)" % (r["kind"], r.get("reason")))
-check(hdr.needs_setparams(r["kind"], hotb), "mistagged HDR needs setparams")
-check(hdr.can_tonemap(r["kind"]), "mistagged HDR can tone-map")
+check(r["kind"] == hdr.KIND_SDR, "bt709 VUI + leftover P3 mastering -> sdr (got %s %s)" % (r["kind"], r.get("reason")))
+check(not hdr.can_tonemap(r["kind"]), "Heart of the Beast is not tone-mapped")
+check(not hdr.needs_setparams(r["kind"], hotb), "SDR does not need setparams")
 check(r.get("hdr_primaries") == "smpte432", "P3-D65 mastering stores hdr_primaries smpte432 (got %s)" % r.get("hdr_primaries"))
+
+print("classify: true mistagged HDR10 still detected")
+mist = stream(color_transfer="unknown", color_primaries="unknown",
+              side_data_list=[p3_mastering(1000), cll(586, 346)])
+r = hdr.classify_probe(mist)
+check(r["kind"] == hdr.KIND_MISTAGGED, "unknown VUI + P3 mastering -> hdr10-mistagged (got %s %s)" % (r["kind"], r.get("reason")))
+check(hdr.needs_setparams(r["kind"], mist), "mistagged HDR needs setparams")
+check(hdr.can_tonemap(r["kind"]), "mistagged HDR can tone-map")
+check(r.get("hdr_primaries") == "smpte432", "true mistagged stores hdr_primaries smpte432 (got %s)" % r.get("hdr_primaries"))
 
 print("classify: genuine SDR 10-bit is left alone")
 sdr = stream()
@@ -141,13 +150,13 @@ it_j = {"media_type": "video", "pix_fmt": "yuv420p10le", "color_transfer": "smpt
 check(hdr.kind_from_item(it_j) == hdr.KIND_HDR10, "smpte2084 color_transfer infers hdr10 without hdr_type")
 
 print("tone-map filters")
-sw_m = hdr.software_tonemap_vf(hdr.KIND_MISTAGGED, hotb, scale="scale=-2:'min(1080,ih)'")
+sw_m = hdr.software_tonemap_vf(hdr.KIND_MISTAGGED, mist, scale="scale=-2:'min(1080,ih)'")
 check("setparams=" in sw_m and "color_trc=smpte2084" in sw_m, "software mistagged filter overrides to smpte2084")
 check("color_primaries=smpte432" in sw_m, "P3 mastering uses Display P3, not BT.2020")
 check("zscale=" in sw_m and "tonemap=hable" in sw_m and "bt709" in sw_m, "software path is zscale+hable to bt709")
 sw_j = hdr.software_tonemap_vf(hdr.KIND_HDR10, joker, scale="scale=-2:'min(1080,ih)'")
 check("setparams=" not in sw_j and "tonemap=hable" in sw_j, "well-tagged HDR10 software path has no setparams")
-va_m = hdr.vaapi_tonemap_vf(hdr.KIND_MISTAGGED, hotb, gw="-2", height=1080)
+va_m = hdr.vaapi_tonemap_vf(hdr.KIND_MISTAGGED, mist, gw="-2", height=1080)
 check("setparams=" in va_m and "hwdownload" in va_m and "tonemap_vaapi" in va_m,
       "VAAPI mistagged path setparams then tonemap_vaapi")
 check("color_primaries=smpte432" in va_m, "VAAPI mistagged path uses Display P3")
@@ -166,8 +175,9 @@ check("tonemap" not in hwaccel.software_scale(1080, hdr="hdr10-mistagged"), "CPU
 settings.put("hdr_tonemap", "1")
 check("tonemap_vaapi" in hwaccel._vaapi_scale("-2", 1080, "HDR10"), "HDR10 uses tonemap_vaapi when enabled")
 check("tonemap_vaapi" in hwaccel._vaapi_scale("-2", 1080, "HLG"), "HLG uses tonemap_vaapi when enabled")
-vf_m = hwaccel._vaapi_scale("-2", 1080, "hdr10-mistagged", item=hotb)
-check("setparams=" in vf_m and "tonemap_vaapi" in vf_m, "mistagged uses setparams + tonemap_vaapi")
+vf_m = hwaccel._vaapi_scale("-2", 1080, "hdr10-mistagged", item=mist)
+check("tonemap_vaapi" not in vf_m, "mistagged does not use tonemap_vaapi")
+check("setparams=" in vf_m and ("tonemap=hable" in vf_m or "libplacebo" in vf_m), "mistagged uses a software hable / libplacebo map")
 vf_dv_hw = hwaccel._vaapi_scale("-2", 1080, "dv8", item=ols)
 check("tonemap_vaapi" not in vf_dv_hw, "DV 8.1 must not use tonemap_vaapi (no mastering data)")
 check("setparams=" in vf_dv_hw and "tonemap=hable" in vf_dv_hw, "DV 8.1 VAAPI graph still setparams + hable")

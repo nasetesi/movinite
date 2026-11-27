@@ -1,9 +1,15 @@
-"""2.6: detect HDR10, HLG, Dolby Vision, and mistagged HDR so tone-mapping can run.
+"""2.6 / 2.6.1: detect HDR10, HLG, Dolby Vision, and mistagged HDR so tone-mapping can run.
 
 Detection uses the bitstream's transfer function, a DOVI configuration record,
 and mastering-display / content-light-level side data with BT.2020 or P3 primaries
 on a 10- or 12-bit stream. Genuine SDR 10-bit (empty or bt709 tags, no HDR side
 data) is left alone.
+
+2.6.1: an explicit BT.709 (or other SDR) VUI is trusted even when mastering-display
+or content-light-level SEI is present. Those tags are often leftover on an SDR
+encode (Heart of the Beast). Treating the pixels as PQ produced a green/yellow
+cast and a slow software tonemap. True mistagged HDR10 still needs unknown or
+unspecified transfer, or wide primaries in the VUI. Dolby Vision is unchanged.
 
 The detected kind is stored in items.hdr_type (additive column, schema stays at 15)
 so the first play does not need a slow probe. A light idle backfill covers 4K Main 10
@@ -40,6 +46,14 @@ WIDE_PRIMARIES = frozenset({
     "smpte432", "smpte431", "dci-p3", "dcip3", "p3d65", "p3-d65", "p3",
 })
 SDR_TRANSFERS = frozenset({"bt709", "bt470m", "bt470bg", "smpte170m", "smpte240m", "iec61966-2-1", "unknown", ""})
+# Explicit SDR VUI (not unknown/empty). Leftover HDR SEI on these is ignored.
+EXPLICIT_SDR_TRANSFERS = frozenset({
+    "bt709", "bt470m", "bt470bg", "smpte170m", "smpte240m",
+    "iec61966-2-1", "iec61966-2-4", "bt1361e", "gamma22", "gamma28",
+})
+EXPLICIT_SDR_PRIMARIES = frozenset({
+    "bt709", "bt470m", "bt470bg", "smpte170m", "smpte240m", "film",
+})
 
 # Chromaticity (x, y) * 50000 as used in HEVC mastering display metadata.
 # Match with a loose box so slight rounding still counts as P3 or BT.2020.
@@ -71,6 +85,10 @@ def needs_setparams(kind, item=None):
         return transfer not in ("smpte2084", "arib-std-b67")
     return False
 
+
+def needs_software_tonemap(kind):
+    """Kinds that cannot use a correct, realtime tonemap_vaapi path."""
+    return kind in (KIND_DV8, KIND_DV7, KIND_DV5, KIND_MISTAGGED)
 
 def can_tonemap(kind, have_libplacebo=False):
     if kind in TONEMAP_KINDS:
@@ -134,6 +152,15 @@ def classify_probe(info, pix_fmt=None):
         return {"kind": kind, "reason": reason, "dovi": dovi,
                 "transfer": "smpte2084", "primaries": primaries or "bt2020", "space": space or "bt2020nc",
                 "hdr_primaries": gamut}
+
+    # Explicit SDR VUI: trust the pixels, even with leftover mastering / CLL SEI
+    # (Heart of the Beast is 10-bit bt709 with a copied P3 1000-nit master).
+    tr = transfer.lower()
+    pr = primaries.lower()
+    if tr in EXPLICIT_SDR_TRANSFERS and (pr in EXPLICIT_SDR_PRIMARIES or not pr):
+        return {"kind": KIND_SDR, "reason": "orphaned-hdr-sei-sdr-vui",
+                "transfer": transfer, "primaries": primaries, "space": space,
+                "mastering": mastering, "cll": cll, "hdr_primaries": gamut}
 
     mapped = HDR_TRANSFERS.get(transfer)
     if mapped == KIND_HDR10:
@@ -224,6 +251,20 @@ def store(item_id, result):
         log.exception("hdr store %s", item_id)
 
 
+
+def refresh_primaries(item, probe=True):
+    """Fill item['hdr_primaries'] from a stream-header probe when it is missing."""
+    if not item or item.get("hdr_primaries") or not probe or not item.get("path"):
+        return item.get("hdr_primaries") if item else None
+    result = classify_path(item["path"], frames=False)
+    if result.get("hdr_primaries"):
+        item["hdr_primaries"] = result["hdr_primaries"]
+    if result.get("kind"):
+        item["hdr_type"] = result["kind"]
+    store(item.get("id"), result)
+    return item.get("hdr_primaries")
+
+
 def hdr_info(item, probe=True):
     """Kind for a video item, preferring items.hdr_type so play does not ffprobe the NAS.
 
@@ -233,6 +274,21 @@ def hdr_info(item, probe=True):
         return ""
     k = kind_from_item(item)
     if k:
+        # 2.6.1: a stored kind without hdr_primaries used to default setparams to
+        # bt2020, which turned P3 files (Heart of the Beast) green/yellow.
+        # Also re-probe stored mistagged titles: 2.6 labelled leftover-SEI SDR
+        # files as hdr10-mistagged. A stream-header probe is enough to flip them.
+        if k == KIND_MISTAGGED and probe and item.get("path"):
+            result = classify_path(item["path"], frames=False)
+            newk = result.get("kind") or ""
+            if newk and newk != k:
+                store(item.get("id"), result)
+                item["hdr_type"] = newk
+                if result.get("hdr_primaries"):
+                    item["hdr_primaries"] = result["hdr_primaries"]
+                return "" if newk == KIND_SDR else newk
+        if k in (KIND_MISTAGGED, KIND_DV8, KIND_DV7) and not (item or {}).get("hdr_primaries"):
+            refresh_primaries(item, probe=probe)
         return k
     if not is_deep_bit(item.get("pix_fmt")) and item.get("pix_fmt"):
         return ""
@@ -302,19 +358,29 @@ def _input_color(kind, item=None):
     return gamut, minc, "smpte2084"
 
 
-def software_tonemap_vf(kind, item=None, scale="scale=-2:'min(1080,ih)'"):
-    """zscale + hable tonemap, with setparams when the file is mistagged."""
+def software_tonemap_vf(kind, item=None, scale="scale=-2:'min(1080,ih)'", height=1080):
+    """zscale + hable tonemap, sized first so the map runs at 1080 (not 4K).
+
+    2.6.1: mapping a 4K 10-bit frame in software was slower than realtime and
+    made the player buffer. Scale (or accept an already-1080 frame) first.
+    """
     pin, minc, tin = _input_color(kind, item)
     if kind == KIND_HLG or (kind == KIND_DV8 and (item or {}).get("color_transfer") == "arib-std-b67"):
         pre = ""
     else:
         pre = ("setparams=color_primaries=%s:color_trc=%s:colorspace=%s," % (pin, tin, minc)
                if needs_setparams(kind, item) else "")
-    body = ("zscale=tin=%s:pin=%s:min=%s:t=linear:npl=100,format=gbrpf32le,"
-            "tonemap=tonemap=hable:desat=0,"
-            "zscale=t=bt709:m=bt709:p=bt709:r=tv,format=yuv420p" % (tin, pin, minc))
+    try:
+        h = int(height or 1080)
+    except (TypeError, ValueError):
+        h = 1080
+    # If the caller already scaled (scale=""), only convert at the current size.
     if scale:
-        return pre + body + "," + scale
+        zhead = "zscale=w=-2:h='min(%d,ih)':tin=%s:pin=%s:min=%s:t=linear:npl=100" % (h, tin, pin, minc)
+    else:
+        zhead = "zscale=tin=%s:pin=%s:min=%s:t=linear:npl=100" % (tin, pin, minc)
+    body = ("%s,format=gbrpf32le,tonemap=tonemap=hable:desat=0,"
+            "zscale=t=bt709:m=bt709:p=bt709:r=tv,format=yuv420p" % zhead)
     return pre + body
 
 
@@ -329,12 +395,22 @@ def vaapi_tonemap_vf(kind, item=None, gw="-2", height=1080):
     return core
 
 
-def libplacebo_tonemap_vf(kind, scale="scale=-2:'min(1080,ih)'"):
-    """Best path for DV profile 5 when the filter exists."""
-    vf = "libplacebo=tonemapping=hable:colorspace=bt709:color_trc=bt709:color_primaries=bt709:format=yuv420p"
+def libplacebo_tonemap_vf(kind, item=None, scale="scale=-2:'min(1080,ih)'", fmt="yuv420p"):
+    """GPU-quality hable map via libplacebo. Scale first so it runs at 1080.
+
+    2.6.1: for DV 8.1 with a bt709 VUI, setparams must mark the input as PQ
+    or libplacebo treats the file as SDR and leaves it washed out. Mapping at
+    1080 on the CPU, then h264_vaapi, is ~1.8x realtime on the Arc A310.
+    """
+    pre = ""
+    if needs_setparams(kind, item):
+        pin, minc, tin = _input_color(kind, item)
+        pre = "setparams=color_primaries=%s:color_trc=%s:colorspace=%s," % (pin, tin, minc)
+    body = ("libplacebo=tonemapping=hable:colorspace=bt709:color_trc=bt709:"
+            "color_primaries=bt709:format=%s" % (fmt or "yuv420p"))
     if scale:
-        return vf + "," + scale
-    return vf
+        return pre + scale + "," + body
+    return pre + body
 
 
 # -------------------------------------------------------------------------------- side-data helpers

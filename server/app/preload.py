@@ -654,15 +654,19 @@ def _do_one_color():
 # 2.6: classify 4K 10-bit titles (Dolby Vision, mistagged HDR10) when idle
 # ---------------------------------------------------------------------------
 def _do_one_hdr():
-    """Light backfill: one 4K Main 10 item per tick, skipped while a stream is running."""
+    """Light backfill: one 4K Main 10 item per tick, skipped while a stream is running.
+
+    2.6.1 also re-checks stored hdr10-mistagged titles so leftover-SEI SDR files
+    (Heart of the Beast) are flipped to sdr without waiting for the next play."""
     from . import hdr as hdrmod
     try:
         rows = db.rows(
             "SELECT id, path, pix_fmt, width, height, color_transfer, color_primaries, color_space, hdr_type "
-            "FROM items WHERE media_type='video' AND probed=1 AND hdr_type IS NULL "
+            "FROM items WHERE media_type='video' AND probed=1 "
+            "AND (hdr_type IS NULL OR hdr_type='hdr10-mistagged') "
             "AND (pix_fmt LIKE '%10%' OR pix_fmt LIKE '%12%' OR pix_fmt LIKE '%p010%') "
             "AND (COALESCE(width,0) >= 3840 OR COALESCE(height,0) >= 2160) "
-            "ORDER BY added_at DESC LIMIT 20")
+            "ORDER BY CASE WHEN hdr_type='hdr10-mistagged' THEN 0 ELSE 1 END, added_at DESC LIMIT 20")
     except Exception:
         # Column missing on a pre-migrate process; migrate() adds it on startup.
         return False

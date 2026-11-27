@@ -411,6 +411,16 @@ class Session:
         if self.hevc:
             self.stages = [x for x in self.stages if x != "cpu"]   # no CPU HEVC: the player steps down instead
         self.stage_i = 0
+        # 2.6.1: DV 8.1 / 7 and true mistagged HDR need a software tonemap.
+        # A GPU-decode hop then software map was only ~1.0x; CPU decode + 1080
+        # libplacebo + VAAPI encode is ~1.8x. Start at "enc" (keep "full" in
+        # the list so a later sticky/retry can still use it). Heart of the
+        # Beast is now classified as SDR, so it stays on the fast full path.
+        if self.hw[0] == "vaapi" and "enc" in self.stages:
+            from . import hdr as hdrmod
+            kind = hdrmod.hdr_info(item, probe=True)
+            if hdrmod.needs_software_tonemap(kind):
+                self.stage_i = self.stages.index("enc")
         self.fallbacks = []
         self.started_at = 0
         if bounds:
@@ -597,7 +607,7 @@ class Session:
                 h, hk = box[1], vk
             hw = hwaccel.stage_args(self.hw[0], self.hw[1], self.stage, h, hk, self.rot,
                                     width=box[0] if box else None, codec="hevc" if self.hevc else "h264",
-                                    hdr=hdr_kind(it))
+                                    hdr=hdr_kind(it), item=it)
             cmd += hw[0]
         elif config.HWACCEL and not audio_only:
             cmd += ["-hwaccel", config.HWACCEL]
