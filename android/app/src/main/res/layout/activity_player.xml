@@ -65,6 +65,14 @@
                 android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
             <TextView android:id="@+id/mode" android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:textColor="#B07CFF" android:textSize="14sp" android:layout_marginLeft="16dp"/>
+            <Button android:id="@+id/btn_fit" android:layout_width="wrap_content" android:layout_height="40dp"
+                android:minWidth="64dp" android:layout_marginLeft="12dp" android:text="Fill"
+                android:textAllCaps="false" android:textColor="#FFFFFF" android:background="@drawable/player_btn"
+                android:focusable="true" android:clickable="true"/>
+            <Button android:id="@+id/btn_close" android:layout_width="wrap_content" android:layout_height="40dp"
+                android:minWidth="64dp" android:layout_marginLeft="8dp" android:text="Close"
+                android:textAllCaps="false" android:textColor="#FFFFFF" android:background="@drawable/player_btn"
+                android:focusable="true" android:clickable="true"/>
         </LinearLayout>
 
         <Space android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
@@ -98,29 +106,29 @@
             android:orientation="horizontal" android:gravity="center" android:layout_marginTop="10dp">
             <Button android:id="@+id/btn_back10" android:layout_width="wrap_content" android:layout_height="48dp"
                 android:minWidth="88dp" android:text="-10s" android:textAllCaps="false" android:textColor="#FFFFFF"
-                android:background="@drawable/player_btn" android:focusable="true"
+                android:background="@drawable/player_btn" android:focusable="true" android:clickable="true"
                 android:nextFocusUp="@+id/seek" android:nextFocusRight="@+id/btn_play"/>
             <Button android:id="@+id/btn_play" android:layout_width="wrap_content" android:layout_height="56dp"
                 android:minWidth="120dp" android:layout_marginLeft="16dp" android:layout_marginRight="16dp"
                 android:text="Pause" android:textAllCaps="false" android:textColor="#FFFFFF" android:textStyle="bold"
-                android:background="@drawable/player_btn" android:focusable="true"
+                android:background="@drawable/player_btn" android:focusable="true" android:clickable="true"
                 android:nextFocusUp="@+id/seek"/>
             <Button android:id="@+id/btn_fwd10" android:layout_width="wrap_content" android:layout_height="48dp"
                 android:minWidth="88dp" android:text="+10s" android:textAllCaps="false" android:textColor="#FFFFFF"
-                android:background="@drawable/player_btn" android:focusable="true"
+                android:background="@drawable/player_btn" android:focusable="true" android:clickable="true"
                 android:nextFocusUp="@+id/seek" android:nextFocusLeft="@+id/btn_play"/>
             <Space android:layout_width="24dp" android:layout_height="1dp"/>
             <Button android:id="@+id/btn_audio" android:layout_width="wrap_content" android:layout_height="48dp"
                 android:minWidth="100dp" android:text="Audio" android:textAllCaps="false" android:textColor="#FFFFFF"
-                android:background="@drawable/player_btn" android:focusable="true"/>
+                android:background="@drawable/player_btn" android:focusable="true" android:clickable="true"/>
             <Button android:id="@+id/btn_subs" android:layout_width="wrap_content" android:layout_height="48dp"
                 android:minWidth="120dp" android:layout_marginLeft="12dp" android:text="Subtitles"
                 android:textAllCaps="false" android:textColor="#FFFFFF"
-                android:background="@drawable/player_btn" android:focusable="true"/>
+                android:background="@drawable/player_btn" android:focusable="true" android:clickable="true"/>
             <Button android:id="@+id/btn_quality" android:layout_width="wrap_content" android:layout_height="48dp"
                 android:minWidth="100dp" android:layout_marginLeft="12dp" android:text="Quality"
                 android:textAllCaps="false" android:textColor="#FFFFFF"
-                android:background="@drawable/player_btn" android:focusable="true"/>
+                android:background="@drawable/player_btn" android:focusable="true" android:clickable="true"/>
         </LinearLayout>
     </LinearLayout>
 
@@ -139,12 +147,12 @@
         <Button android:id="@+id/btn_intro" android:layout_width="wrap_content" android:layout_height="52dp"
             android:minWidth="160dp" android:text="Skip Intro" android:textAllCaps="false"
             android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="16sp"
-            android:background="@drawable/player_chip" android:focusable="true" android:visibility="gone"/>
+            android:background="@drawable/player_chip" android:focusable="true" android:clickable="true" android:visibility="gone"/>
         <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
         <Button android:id="@+id/btn_credits" android:layout_width="wrap_content" android:layout_height="52dp"
             android:minWidth="180dp" android:text="Skip Credits" android:textAllCaps="false"
             android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="16sp"
-            android:background="@drawable/player_chip" android:focusable="true" android:visibility="gone"/>
+            android:background="@drawable/player_chip" android:focusable="true" android:clickable="true" android:visibility="gone"/>
     </LinearLayout>
 
     <!-- Up Next card -->
