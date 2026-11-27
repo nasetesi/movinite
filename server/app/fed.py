@@ -856,6 +856,140 @@ def local_item(local_remote_item_id: int, user=None):
     return item_as_local(ri, rl)
 
 
+def title_key_of_remote(ri) -> str:
+    """Same title-key shape as titles.key_sql(), so a shared film can share a Continue Watching card with a local copy."""
+    kind = (ri.get("kind") or "movie")
+    if kind == "movie" and ri.get("tmdb_id"):
+        return "m%s|" % ri["tmdb_id"]
+    if kind == "movie":
+        return "n%s|%s|" % ((ri.get("title") or "").lower(), ri.get("year") or "")
+    return "r%s" % ri["id"]
+
+
+def local_twins_for_remote(ri) -> list:
+    """Local item ids that are the same title as this shared catalog row (best-effort: TMDB movies, or title+year)."""
+    kind = ri.get("kind") or "movie"
+    if kind == "movie" and ri.get("tmdb_id"):
+        return [r["id"] for r in db.rows(
+            "SELECT id FROM items WHERE kind='movie' AND tmdb_id=?", (int(ri["tmdb_id"]),))]
+    if kind == "movie" and ri.get("title"):
+        return [r["id"] for r in db.rows(
+            "SELECT id FROM items WHERE kind='movie' AND tmdb_id IS NULL AND lower(title)=? AND COALESCE(year,0)=?",
+            ((ri.get("title") or "").lower(), int(ri.get("year") or 0)))]
+    return []
+
+
+def remote_twins_for_local(item_id) -> list:
+    """remote_items.id values that match this local title."""
+    it = db.row("SELECT kind, title, year, tmdb_id FROM items WHERE id=?", (item_id,))
+    if not it:
+        return []
+    if it["kind"] == "movie" and it.get("tmdb_id"):
+        return [r["id"] for r in db.rows(
+            "SELECT id FROM remote_items WHERE kind='movie' AND tmdb_id=?", (int(it["tmdb_id"]),))]
+    if it["kind"] == "movie" and it.get("title"):
+        return [r["id"] for r in db.rows(
+            "SELECT id FROM remote_items WHERE kind='movie' AND tmdb_id IS NULL AND lower(title)=? AND COALESCE(year,0)=?",
+            ((it.get("title") or "").lower(), int(it.get("year") or 0)))]
+    return []
+
+
+def save_remote_progress(user_id, remote_items_id, position, duration, watched, now):
+    with db.tx() as c:
+        c.execute(
+            "INSERT INTO remote_progress(user_id,remote_item_id,position,duration,watched,updated_at) "
+            "VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(user_id,remote_item_id) DO UPDATE SET position=excluded.position, "
+            "duration=excluded.duration, watched=MAX(watched, excluded.watched), updated_at=excluded.updated_at",
+            (user_id, int(remote_items_id), position, duration, 1 if watched else 0, now))
+        if watched:
+            c.execute("UPDATE remote_progress SET position=0 WHERE user_id=? AND remote_item_id=?",
+                      (user_id, int(remote_items_id)))
+
+
+def set_remote_watched(user_id, remote_items_id, watched, now):
+    with db.tx() as c:
+        c.execute(
+            "INSERT INTO remote_progress(user_id,remote_item_id,position,watched,updated_at) VALUES(?,?,0,?,?) "
+            "ON CONFLICT(user_id,remote_item_id) DO UPDATE SET watched=excluded.watched, position=0, "
+            "updated_at=excluded.updated_at",
+            (user_id, int(remote_items_id), 1 if watched else 0, now))
+
+
+def progress_for(user_id, remote_items_id):
+    return db.row("SELECT position, duration, watched, updated_at FROM remote_progress "
+                  "WHERE user_id=? AND remote_item_id=?", (user_id, int(remote_items_id)))
+
+
+def _continue_clause():
+    return ("p.watched=0 AND p.position>30 AND (COALESCE(p.duration, ri.duration, 0) <= 0 OR "
+            "p.position < 0.95 * COALESCE(p.duration, ri.duration))")
+
+
+def continue_items(user) -> list:
+    """Shared titles this user has in progress, newest first. Never talks to the remote server (so home cannot fail
+    if the peer is offline); those rows are marked unavailable instead."""
+    rows = db.rows(
+        "SELECT ri.*, p.position, p.updated_at, p.duration AS pduration, p.watched, "
+        "rl.kind AS lib_kind, rl.hidden_at, rl.visible_to, p2.name AS peer_name, p2.status AS peer_status, p2.id AS peer_id "
+        "FROM remote_progress p "
+        "JOIN remote_items ri ON ri.id=p.remote_item_id "
+        "JOIN remote_libraries rl ON rl.id=ri.remote_library_id "
+        "JOIN peers p2 ON p2.id=rl.peer_id "
+        "WHERE p.user_id=? AND " + _continue_clause() + " "
+        "AND COALESCE(rl.kind,'movies') IN ('movies','tv') "
+        "AND rl.hidden_at IS NULL "
+        "ORDER BY p.updated_at DESC LIMIT 80", (user["id"],))
+    out = []
+    for r in rows:
+        if user and not can_see_remote(user, r):
+            continue
+        rl = get_remote_lib(r["remote_library_id"], user=None)
+        item = item_as_local(r, rl)
+        item["position"] = r.get("position") or 0
+        item["watched"] = bool(r.get("watched"))
+        item["updated_at"] = r.get("updated_at")
+        item["duration"] = item.get("duration") or r.get("pduration")
+        item["title_key"] = title_key_of_remote(r)
+        online = (r.get("peer_status") == "active")
+        item["unavailable"] = not online
+        item["online"] = online
+        item["peer_name"] = r.get("peer_name")
+        item["source_name"] = r.get("peer_name")
+        out.append(item)
+    return out
+
+
+def watched_items(user) -> list:
+    rows = db.rows(
+        "SELECT ri.*, p.position, p.updated_at, p.watched, "
+        "rl.kind AS lib_kind, rl.hidden_at, rl.visible_to, p2.name AS peer_name, p2.status AS peer_status "
+        "FROM remote_progress p "
+        "JOIN remote_items ri ON ri.id=p.remote_item_id "
+        "JOIN remote_libraries rl ON rl.id=ri.remote_library_id "
+        "JOIN peers p2 ON p2.id=rl.peer_id "
+        "WHERE p.user_id=? AND p.watched=1 AND COALESCE(rl.kind,'movies') IN ('movies','tv') "
+        "AND rl.hidden_at IS NULL "
+        "ORDER BY p.updated_at DESC LIMIT 240", (user["id"],))
+    out = []
+    for r in rows:
+        if user and not can_see_remote(user, r):
+            continue
+        rl = get_remote_lib(r["remote_library_id"], user=None)
+        item = item_as_local(r, rl)
+        item["position"] = 0
+        item["watched"] = True
+        item["updated_at"] = r.get("updated_at")
+        item["title_key"] = title_key_of_remote(r)
+        online = (r.get("peer_status") == "active")
+        item["unavailable"] = not online
+        item["online"] = online
+        item["peer_name"] = r.get("peer_name")
+        item["source_name"] = r.get("peer_name")
+        out.append(item)
+    return out
+
+
 def home_sections(user) -> list:
     out = []
     for rl in list_remote_libraries(user=user):

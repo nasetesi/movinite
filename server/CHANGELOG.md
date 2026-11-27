@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5 -- 2026-11-26
+Watch progress for titles played from a shared (remote) server, on top of 2.4.4. Schema 15. No new Android app is needed — the phone, the TV app and the web UI all use the same progress API.
+
+- **Shared titles show up in Continue watching.** Playing a film or episode from another Movinite server used to leave no trace: progress was posted with the shared item's negative API id, which could not be stored in the local `progress` table (that table only accepts ids from this server's `items` list, and foreign keys are on). The player swallowed the error, so resume was always 0 and the title never appeared in Continue watching or My List, on the web, the phone or the TV. Progress is now kept in a `remote_progress` table, and those titles appear in Continue watching and My List with their poster and resume position. Resume opens at the saved spot. Opening the details page for a shared title no longer fails (it expected local-only fields such as audio streams and the cast list).
+- **The row stays one card per title.** If you also have a local copy of the same film (matched by TMDB id, or by title and year), the shared and local progress are merged and the local copy is preferred. The Movies / TV-only filter is unchanged. Titles you have finished, marked watched, or watched past about 95%, drop off the same way as local ones; a start under 30 seconds is ignored, as before.
+- **If the other server is offline, the card stays, marked Offline.** Home and My List never fail just because a peer is down (they only read the local catalog). Opening Play shows a short message instead of an error, and the title will play again when that server is back. Libraries that have been unshared are hidden.
+
+The first start of 2.5 copies the database to `data/media-server.db.pre-schema15` (mode 600) before applying schema 15.
+
+
 ## 2.4.4 -- 2026-11-26
 A phone-app-only update on top of 2.4.3 (schema stays 14; no server change and no database upgrade).
 
@@ -13,7 +23,6 @@ A playback fix on top of 2.4.2 (schema stays 14; no database upgrade). The nativ
 - **The native player no longer dead-ends on a source error.** If HEVC fails it retries the same height as H.264, and if that fails it opens the in-page web player. A small debug line shows the real error (for example `ERROR_CODE_IO_BAD_HTTP_STATUS · HTTP 500`) instead of only "Source error".
 
 The 2.4.2 purple dropdown chrome is unchanged.
-
 ## 2.4.2 -- 2026-11-26
 A small visual fix on top of 2.4.1 (schema stays 14; no database upgrade). No new Android app is needed.
 

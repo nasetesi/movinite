@@ -1464,17 +1464,37 @@ def _with_progress(items, user_id):
         tmdb.enrich(items)
     except Exception:  # metadata must never break browsing
         log.exception("enrich")
-    ids = [i["id"] for i in items]
+    local_ids = [i["id"] for i in items if i.get("id") and int(i["id"]) > 0]
+    remote_ids = [-int(i["id"]) for i in items if i.get("id") and int(i["id"]) < 0]
     prog = {}
-    for chunk in range(0, len(ids), 500):
-        part = ids[chunk:chunk + 500]
+    for chunk in range(0, len(local_ids), 500):
+        part = local_ids[chunk:chunk + 500]
         for r in db.rows("SELECT item_id, position, duration, watched FROM progress WHERE user_id=? AND item_id IN (%s)"
                          % ",".join("?" * len(part)), [user_id] + part):
             prog[r["item_id"]] = r
+    rprog = {}
+    for chunk in range(0, len(remote_ids), 500):
+        part = remote_ids[chunk:chunk + 500]
+        for r in db.rows("SELECT remote_item_id, position, duration, watched FROM remote_progress "
+                         "WHERE user_id=? AND remote_item_id IN (%s)"
+                         % ",".join("?" * len(part)), [user_id] + part):
+            rprog[r["remote_item_id"]] = r
     for i in items:
-        p = prog.get(i["id"])
-        i["position"] = p["position"] if p else 0
-        i["watched"] = bool(p["watched"]) if p else False
+        if i.get("id") and int(i["id"]) < 0:
+            p = rprog.get(-int(i["id"]))
+        else:
+            p = prog.get(i["id"])
+        if p and p["watched"]:
+            i["position"] = p["position"] or 0
+            i["watched"] = True
+        elif p:
+            i["watched"] = False
+            i["position"] = max(float(p["position"] or 0), float(i.get("position") or 0))
+        else:
+            i["position"] = i.get("position") or 0
+            i["watched"] = bool(i.get("watched"))
+        if p and p.get("duration") and not i.get("duration"):
+            i["duration"] = p["duration"]
     return items
 
 
@@ -1897,6 +1917,66 @@ def _dedupe(items, key_field=None):
     return out
 
 
+def _continue_title_key(it):
+    if it.get("title_key"):
+        return it["title_key"]
+    if it.get("id") and int(it["id"]) < 0:
+        return "r%s" % (-int(it["id"]))
+    return titles.key_of(it["id"]) or ("i%s" % it["id"])
+
+
+def _merge_continue(local_rows, remote_rows, limit=20):
+    """One Continue Watching card per title, local copy preferred; carry the newest position."""
+    groups, keys = {}, []
+    for it in list(local_rows or []) + list(remote_rows or []):
+        k = _continue_title_key(it)
+        it = dict(it)
+        it["title_key"] = k
+        if k not in groups:
+            groups[k] = []
+            keys.append(k)
+        groups[k].append(it)
+
+    def _when(row):
+        return int(row.get("updated_at") or 0)
+
+    keys.sort(key=lambda k: -max(_when(x) for x in groups[k]))
+    down = titles.lib_down()
+    out = []
+    for k in keys:
+        g = groups[k]
+        latest = max(g, key=_when)
+        local_online = [x for x in g if int(x.get("id") or 0) > 0 and not down.get(x.get("library_id"))]
+        local_any = [x for x in g if int(x.get("id") or 0) > 0]
+        remote_online = [x for x in g if int(x.get("id") or 0) < 0 and not x.get("unavailable")]
+        remote_any = [x for x in g if int(x.get("id") or 0) < 0]
+        if local_online or local_any:
+            winner = titles.collapse(local_online or local_any, down=down)[0]
+            if down.get(winner.get("library_id")):
+                tw = titles.online_twin(winner["id"])
+                if tw:
+                    r = db.row("SELECT " + ITEM_COLS + " FROM items WHERE id=?", (tw,))
+                    if r:
+                        winner = r
+            winner = dict(winner)
+            winner["unavailable"] = False
+        else:
+            winner = dict((remote_online or remote_any)[0])
+        for field in ("position", "updated_at"):
+            if latest.get(field) is not None:
+                winner[field] = latest[field]
+        dur = winner.get("duration") or latest.get("duration") or latest.get("pduration")
+        if dur:
+            winner["duration"] = dur
+        winner.pop("pduration", None)
+        winner.pop("title_key", None)
+        winner.pop("copies", None)
+        out.append(winner)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _continue(u):
     cont = db.rows(
         "SELECT " + ", ".join("i." + c.strip() for c in ITEM_COLS.split(",")) + ", p.position, p.updated_at, p.duration pduration "
@@ -1904,7 +1984,13 @@ def _continue(u):
         "WHERE p.user_id=? AND p.watched=0 AND p.position>30 "
         "AND i.media_type='video' AND l.kind IN " + HOME_KINDS_SQL + " AND (COALESCE(p.duration, i.duration, 0) <= 0 OR "
         "p.position < 0.95 * COALESCE(p.duration, i.duration)) ORDER BY p.updated_at DESC LIMIT 80", (u["id"],))
-    cont = _dedupe(cont)[:20]      # 1.7: progress is kept on every copy -- show each title once
+    try:
+        remote = fed.continue_items(u)
+    except Exception:
+        log.exception("continue remotes")
+        remote = []
+    # 1.7 / 2.5: one card per title, including a shared copy of a film that is also here
+    cont = _merge_continue(_dedupe(cont), remote, 20)
     cont = _with_progress(cont, u["id"])
     for i in cont:   # the progress bar needs a length even when ffprobe could not read one
         i["duration"] = i.get("duration") or i.pop("pduration", None)
@@ -1993,10 +2079,16 @@ def home(u=Depends(auth.require_user)):
 def mylist(u=Depends(auth.require_user)):
     """1.5.1: the phone's My List tab -- this user's films in progress and the ones watched most recently."""
     cont = _continue(u)
-    watched = db.rows("SELECT " + ", ".join("i." + c.strip() for c in ITEM_COLS.split(",")) + " FROM progress p JOIN items i "
+    watched = db.rows("SELECT " + ", ".join("i." + c.strip() for c in ITEM_COLS.split(",")) + ", p.updated_at FROM progress p JOIN items i "
                       "ON i.id=p.item_id WHERE p.user_id=? AND p.watched=1 AND i.media_type='video' "
                       "ORDER BY p.updated_at DESC LIMIT 240", (u["id"],))
-    return {"continue": cont, "watched": _with_progress(_dedupe(watched)[:60], u["id"])}
+    try:
+        remote_watched = fed.watched_items(u)
+    except Exception:
+        log.exception("mylist remotes")
+        remote_watched = []
+    watched = _merge_continue(_dedupe(watched), remote_watched, 60)
+    return {"continue": cont, "watched": _with_progress(watched, u["id"])}
 
 
 @app.get("/api/search")
@@ -2190,16 +2282,28 @@ def _remote_item_detail(item_id, u):
     out["tags"] = []
     out["pins"] = {}
     out["tmdb_enabled"] = settings.tmdb_enabled()
-    out["playback"] = {"remote": True, "direct": False,
-                       "src": "/api/items/%d/hls/1080p/index.m3u8" % item_id}
-    out["library"] = fed._remote_lib_out(fed.get_remote_lib(it["library_id"], u))
-    p = db.row("SELECT position, watched FROM progress WHERE user_id=? AND item_id=?", (u["id"], item_id))
+    out["playback"] = {"remote": True, "direct": False, "direct_maybe": False, "remux": False,
+                       "src": "/api/items/%d/hls/1080p/index.m3u8" % item_id,
+                       "audio_streams": [], "subtitle_streams": [], "subtitles": []}
+    rl = fed.get_remote_lib(it["library_id"], u)
+    out["library"] = fed._remote_lib_out(rl) if rl else None
+    p = fed.progress_for(u["id"], -item_id)
     out["position"] = p["position"] if p else 0
     out["watched"] = bool(p["watched"]) if p else False
+    if p and p.get("duration") and not out.get("duration"):
+        out["duration"] = p["duration"]
+    online = bool(rl and rl.get("peer_status") == "active")
+    out["unavailable"] = not online
+    out["online"] = online
     out["next"] = None
     out["versions"] = []
     out["copies"] = 0
     out["similar"] = []
+    out["directors"] = []
+    out["writers"] = []
+    out["cast"] = []
+    out["tags"] = out.get("tags") or []
+    out["pins"] = out.get("pins") or {}
     return out
 
 
@@ -2432,24 +2536,39 @@ def person_detail(person_id: int, library_id: int = 0, u=Depends(auth.require_us
     return {"person": p, "items": items}
 
 
+def _write_local_progress(c, user_id, item_ids, pos, dur, watched, now):
+    for iid in item_ids:
+        c.execute("INSERT INTO progress(user_id,item_id,position,duration,watched,updated_at) VALUES(?,?,?,?,?,?) "
+                  "ON CONFLICT(user_id,item_id) DO UPDATE SET position=excluded.position, duration=excluded.duration, "
+                  "watched=MAX(watched, excluded.watched), updated_at=excluded.updated_at",
+                  (user_id, iid, pos, dur, watched, now))
+        if watched:
+            c.execute("UPDATE progress SET position=0 WHERE user_id=? AND item_id=?", (user_id, iid))
+
+
 @app.post("/api/items/{item_id}/progress")
 def save_progress(item_id: int, body: dict = Body(...), u=Depends(auth.require_user)):
     it = _get_item(item_id)
     pos = float(body.get("position") or 0)
-    dur = float(body.get("duration") or it["duration"] or 0)
+    dur = float(body.get("duration") or it.get("duration") or 0)
     watched = 1 if (dur and pos / dur > 0.92) or body.get("ended") else 0
     if watched:
         pos = 0
     now = int(time.time())
+    if item_id < 0:
+        # 2.5: shared titles live in remote_items, not items, so progress cannot use the local FK
+        fed.save_remote_progress(u["id"], -item_id, pos, dur, watched, now)
+        ri = db.row("SELECT * FROM remote_items WHERE id=?", (-item_id,))
+        local_ids = set()
+        for lid in (fed.local_twins_for_remote(ri) if ri else []):
+            local_ids.update(titles.same_title_ids(lid) or [lid])
+        if local_ids:
+            with db.tx() as c:
+                _write_local_progress(c, u["id"], local_ids, pos, dur, watched, now)
+        return {"ok": True, "watched": bool(watched)}
     with db.tx() as c:
         # 1.7: the same position for every version and copy of the title (4K / 1080p, the other share)
-        for iid in (titles.same_title_ids(item_id) or [item_id]):
-            c.execute("INSERT INTO progress(user_id,item_id,position,duration,watched,updated_at) VALUES(?,?,?,?,?,?) "
-                      "ON CONFLICT(user_id,item_id) DO UPDATE SET position=excluded.position, duration=excluded.duration, "
-                      "watched=MAX(watched, excluded.watched), updated_at=excluded.updated_at",
-                      (u["id"], iid, pos, dur, watched, now))
-            if watched:
-                c.execute("UPDATE progress SET position=0 WHERE user_id=? AND item_id=?", (u["id"], iid))
+        _write_local_progress(c, u["id"], titles.same_title_ids(item_id) or [item_id], pos, dur, watched, now)
     return {"ok": True, "watched": bool(watched)}
 
 
@@ -2458,6 +2577,20 @@ def set_watched(item_id: int, body: dict = Body(...), u=Depends(auth.require_use
     _get_item(item_id)
     w = 1 if body.get("watched") else 0
     now = int(time.time())
+    if item_id < 0:
+        fed.set_remote_watched(u["id"], -item_id, w, now)
+        ri = db.row("SELECT * FROM remote_items WHERE id=?", (-item_id,))
+        local_ids = set()
+        for lid in (fed.local_twins_for_remote(ri) if ri else []):
+            local_ids.update(titles.same_title_ids(lid) or [lid])
+        if local_ids:
+            with db.tx() as c:
+                for iid in local_ids:
+                    c.execute("INSERT INTO progress(user_id,item_id,position,watched,updated_at) VALUES(?,?,0,?,?) "
+                              "ON CONFLICT(user_id,item_id) DO UPDATE SET watched=excluded.watched, position=0, "
+                              "updated_at=excluded.updated_at",
+                              (u["id"], iid, w, now))
+        return {"ok": True}
     with db.tx() as c:
         for iid in (titles.same_title_ids(item_id) or [item_id]):     # 1.7: every version and copy
             c.execute("INSERT INTO progress(user_id,item_id,position,watched,updated_at) VALUES(?,?,0,?,?) "
