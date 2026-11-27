@@ -759,7 +759,7 @@ async function boot() {
   } catch (e) { showLogin(); return; }
   stopPairPoll();
   rememberServer(location.origin, "Movinite" + (ME.version ? " · v" + ME.version : ""));
-  hideAuth(); $("#shell").classList.remove("hidden"); bindDetailTopScroll();
+  hideAuth(); $("#shell").classList.remove("hidden");
   $("#whoami").textContent = ME.username; $("#ver").textContent = "v" + ME.version;
   syncTopH();
   MOB.setup();
@@ -971,63 +971,17 @@ new MutationObserver(() => { if (!enhanceRows._raf) enhanceRows._raf = requestAn
   .observe(document.getElementById("view"), { childList: true, subtree: true });
 window.addEventListener("resize", () => $$(".hrow").forEach(hrowUpdate));
 
-/* 2.5.2: phone details header — transparent over the backdrop, then frosted as you scroll. */
-const DETAIL_TOP_Y = 48;
-const DETAIL_THEME_FALLBACK = "#0b0612";
+/* 2.5.2 / 2.5.4: phone details header — transparent over the backdrop and stays that way while you scroll. */
 function clearDetailTop() {
   const h = document.documentElement;
   h.classList.remove("detail-top", "detail-top-scrolled");
   h.style.removeProperty("--detail-tint");
   h.style.removeProperty("--detail-tint-rgb");
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", DETAIL_THEME_FALLBACK);
-}
-function syncDetailTopScroll() {
-  const v = document.getElementById("view");
-  const on = document.documentElement.classList.contains("detail-top");
-  if (!v || !on) return;
-  document.documentElement.classList.toggle("detail-top-scrolled", v.scrollTop > DETAIL_TOP_Y);
-}
-function extractDetailTint(url) {
-  if (!url) return;
-  const img = new Image();
-  img.onload = () => {
-    try {
-      const c = document.createElement("canvas");
-      c.width = 24; c.height = 24;
-      const ctx = c.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return;
-      ctx.drawImage(img, 0, 0, 24, 24);
-      const data = ctx.getImageData(0, 0, 24, 24).data;
-      let r = 0, g = 0, b = 0, n = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        if (data[i + 3] < 128) continue;
-        r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
-      }
-      if (!n) return;
-      r /= n; g /= n; b /= n;
-      const k = 0.36;
-      const rr = Math.round(r * k), gg = Math.round(g * k), bb = Math.round(b * k);
-      document.documentElement.style.setProperty("--detail-tint", "rgba(" + rr + "," + gg + "," + bb + ",.82)");
-      document.documentElement.style.setProperty("--detail-tint-rgb", rr + "," + gg + "," + bb);
-      const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute("content", "rgb(" + rr + "," + gg + "," + bb + ")");
-    } catch (e) { /* tainted canvas or missing pixels: keep the dark fallback */ }
-  };
-  img.src = url;
 }
 function setDetailTop(imgUrl) {
   if (!imgUrl) { clearDetailTop(); return; }
   document.documentElement.classList.add("detail-top");
-  bindDetailTopScroll();
-  syncDetailTopScroll();
-  extractDetailTint(imgUrl);
-}
-function bindDetailTopScroll() {
-  const v = document.getElementById("view");
-  if (!v || bindDetailTopScroll._on) return;
-  bindDetailTopScroll._on = true;
-  v.addEventListener("scroll", syncDetailTopScroll, { passive: true });
+  document.documentElement.classList.remove("detail-top-scrolled");
 }
 
 async function route() {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.4 -- 2026-11-26
+A phone-only visual fix on top of 2.5.3. Schema stays at 15. No new Android app is needed.
+
+- **The phone details top bar stays see-through while you scroll.** On a movie, episode, or show details page, the header (logo, search, server status, avatar) stays transparent over the backdrop at every scroll position. It no longer switches to frosted gray or tinted glass after you scroll. A slightly stronger dark fade and icon shadows keep the controls readable over the page underneath. Other phone pages (home, libraries, and the rest) still use the solid charcoal bar. Desktop and TV are unchanged. The bottom tab bar is unchanged. The Android app's system status bar is still the app's dark color.
+
 ## 2.5.3 -- 2026-11-26
 A TV-home layout fix on top of 2.5.2. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so this is a server/web change only.
 
