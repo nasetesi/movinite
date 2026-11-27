@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.10 -- 2026-11-27
+A poster-art fix on top of 2.5.9, for the phone, the television, and the desktop. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only.
+
+- **Everywhere an episode, show, or season is shown, the 2:3 poster is used when one is available.** 2.5.8 already did this for Continue Watching, My List, Recently added, search results, and other home-style rows. This version extends that to the episode details page and the episode list on a show details page, and uses the same fallbacks everywhere else an episode image appears (including Up Next and the now-playing card): the series poster first, then the season poster, then the episode still as a last resort. If only a still is available, the still stays in a 16:9 box so it is not cropped into a tall frame.
+- **Episode details show the show's poster, not the wide still.** The poster is a centered 2:3 image (about 55–60% of the phone width; on a television it keeps the existing first-screen cast layout). The page backdrop uses the series backdrop when one exists. Movie details poster size is unchanged.
+- **The show details episode list uses the same poster, with SxxExx and the episode name laid out as a clean list** (portrait thumb, episode code, title, duration, and the play button). The list API now includes the series and season art so the client can pick the right image.
+
 ## 2.5.9 -- 2026-11-27
 A television search and slide-out fix on top of 2.5.8. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only. Phone and desktop search are unchanged.
 

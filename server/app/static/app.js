@@ -1029,6 +1029,14 @@ function seriesPoster(i) {
   if (i.poster && i.poster !== i.thumb) return i.poster;
   return i.thumb || i.poster || "";
 }
+function seriesPosterOnly(i) {
+  // Portrait art only — no episode still. Used to decide 2:3 vs 16:9 layout.
+  if (!i) return "";
+  if (i.show_poster) return i.show_poster;
+  if (i.season_poster) return i.season_poster;
+  if (i.poster && i.poster !== i.thumb) return i.poster;
+  return "";
+}
 function cardItem(i, opts) {
   opts = opts || {};
   // Episode rows use a movie-sized portrait card unless the caller asked for a still (landscape).
@@ -1724,8 +1732,10 @@ async function viewShow(libId, show) {
     <div class="tabs">${d.seasons.map(s => `<button data-season="${s.season}" class="${s.season === season.season ? "on" : ""}">${s.season === 0 ? "Specials" : "Season " + s.season}</button>`).join("")}</div>
     <div class="list">${season.episodes.map(e => {
       const pct = e.position && e.duration ? 100 * e.position / e.duration : 0;
-      return `<div class="li" data-href="#/item/${e.id}"><div class="thumb" style="${e.thumb ? `background-image:url('${thumbUrl(e.thumb)}')` : ""}">${pct ? `<div class="bar" style="width:${pct}%"></div>` : ""}</div>
-        <div class="ttl"><div><b>${e.episode != null ? e.episode + ". " : ""}</b>${esc(e.title)}</div><div class="muted" style="font-size:12.5px">${fmtLen(e.duration)} ${e.watched ? `<span class="w">&#10003; watched</span>` : ""}</div></div>
+      const art = seriesPoster(e);
+      const code = epCode(e);
+      return `<div class="li ep" data-href="#/item/${e.id}" tabindex="0"><div class="thumb portrait" style="${art ? `background-image:url('${thumbUrl(art)}')` : ""}">${pct ? `<div class="bar" style="width:${pct}%"></div>` : ""}</div>
+        <div class="ttl"><div class="ep-code">${esc(code || (e.episode != null ? "E" + e.episode : ""))}</div><div><b>${esc(e.title || "Episode")}</b></div><div class="muted" style="font-size:12.5px">${fmtLen(e.duration)} ${e.watched ? `<span class="w">&#10003; watched</span>` : ""}</div></div>
         <button class="iconbtn" data-play="${e.id}" title="Play">&#9654;</button></div>`; }).join("")}</div></div></div>`;
   $("#view").innerHTML = html;
   $("#playnext").onclick = () => playItem(d.next.id);
@@ -2004,8 +2014,10 @@ function bindMoreMenu() {
 async function viewItem(id) {
   const it = await api("/api/items/" + id);
   const pb = it.playback || {};
-  const land = it.kind === "episode" || it.kind === "video";
-  const img = land ? (it.thumb || it.poster) : (it.poster || it.thumb);
+  const epPortrait = it.kind === "episode" ? seriesPosterOnly(it) : "";
+  const land = it.kind === "video" || (it.kind === "episode" && !epPortrait);
+  const img = it.kind === "episode" ? (epPortrait || seriesPoster(it) || it.thumb || it.poster)
+    : (land ? (it.thumb || it.poster) : (it.poster || it.thumb));
   let title = it.title, sub = [];
   if (it.kind === "episode") { title = it.title; sub.push(`<a href="#/show/${it.library_id}/${enc(it.show)}" style="color:var(--acc-text)">${esc(it.show_title || it.show)}</a>`, epCode(it)); if (it.air_date) sub.push(esc(it.air_date)); }
   if (it.media_type === "audio") { if (it.artist) sub.push(esc(it.artist)); if (it.album) sub.push(`<a style="color:var(--acc-text)" href="#/album/${it.library_id}/${enc(it.album_artist || it.artist || "Unknown artist")}/${enc(it.album)}">${esc(it.album)}</a>`); }
@@ -2073,8 +2085,13 @@ async function viewItem(id) {
     </div>
     <div class="modal-actions"><a class="btn ghost" href="/api/items/${it.id}/file?download=1">Download file</a><button class="btn" id="fi-close">Close</button></div>`,
     () => { $("#fi-close").onclick = closeModal; $("#fi-close").focus(); });
-  const bgImg = it.backdrop || (isMovie ? it.poster : null);   // 1.4.4: blurred artwork behind the whole page
-  $("#view").innerHTML = `${bgImg ? `<div class="detail-bg" aria-hidden="true"><div class="dbg-img" style="background-image:url('${thumbUrl(bgImg)}')"></div></div>` : ""}<div class="hero${bgImg ? " soft" : ""}"${heroStyle(it.backdrop)}></div><div class="detail"><div class="poster ${land ? "landscape" : it.media_type === "audio" ? "square" : ""}" style="${img ? `background-image:${it.poster_large && img === it.poster ? `url('${it.poster_large}'),` : ""}url('${thumbUrl(img)}')` : ""}"></div>
+  const bgImg = it.kind === "episode"
+    ? (it.show_backdrop || it.backdrop || epPortrait || img)
+    : (it.backdrop || (isMovie ? it.poster : null));   // 1.4.4: blurred artwork behind the whole page
+  const heroBg = it.kind === "episode" ? (it.show_backdrop || it.backdrop) : it.backdrop;
+  const posterCls = land ? "landscape" : it.media_type === "audio" ? "square" : (epPortrait ? "series" : "");
+  const posterLarge = it.poster_large && img === it.poster && it.kind !== "episode";
+  $("#view").innerHTML = `${bgImg ? `<div class="detail-bg" aria-hidden="true"><div class="dbg-img" style="background-image:url('${thumbUrl(bgImg)}')"></div></div>` : ""}<div class="hero${bgImg ? " soft" : ""}"${heroStyle(heroBg)}></div><div class="detail"><div class="poster ${posterCls}" style="${img ? `background-image:${posterLarge ? `url('${it.poster_large}'),` : ""}url('${thumbUrl(img)}')` : ""}"></div>
     <div class="info"><h1>${esc(title)}</h1><div class="meta">${sub.map(s => `<span>${s}</span>`).join("")}</div>
     ${metaChips(chipsIt, isMovie ? it.library_id : 0)}
     ${it.tagline ? `<div class="tagline">${esc(it.tagline)}</div>` : ""}
@@ -2787,7 +2804,7 @@ function nowCard(n) {
   const title = it.show ? `${it.show} ${epCode(it)}` : it.title;
   const mode = n.mode === "transcode" || (t && t.profile !== "remux" && n.mode !== "direct") ? (t && t.encoder && t.encoder !== "cpu" ? `<span class="hw-badge">GPU</span> Transcode` : "Transcode (CPU)") : n.mode === "remux" ? "Remux" : n.mode === "music" ? "Music" : "Direct play";
   const pct = n.progress != null ? Math.max(0, Math.min(100, n.progress * 100)) : null;
-  return `<div class="np-card"><div class="np-art"${it.poster || it.thumb ? ` style="background-image:url('${thumbUrl(it.poster || it.thumb)}')"` : ""}></div>
+  return `<div class="np-card"><div class="np-art"${(seriesPoster(it) || it.poster || it.thumb) ? ` style="background-image:url('${thumbUrl(seriesPoster(it) || it.poster || it.thumb)}')"` : ""}></div>
     <div class="np-txt"><div class="np-title">${esc(title || "?")}</div><div class="np-user"><span class="gm-av sm">${esc((n.username || "?").slice(0, 1).toUpperCase())}</span>${esc(n.username || "?")}</div>
     <div class="help">${mode}${n.profile && n.profile !== "remux" && n.profile !== "audio" ? " · " + esc(n.profile) : ""}${t && t.paused ? " · buffered ahead" : ""}</div>
     <div class="help">${esc(n.device || "")}${n.ip ? " · " + esc(n.ip) : ""} · ${esc(fmtLen(Math.max(1, Date.now() / 1000 - n.started)))}</div>
@@ -4114,8 +4131,9 @@ const UP = {
     const title = n.kind === "episode" ? ((n.show ? n.show + " · " : "") + (n.episode_code || "") + " " + (n.title || "")).trim() : (n.title || "Next");
     $("#pl-upnext-title").textContent = title;
     const art = $("#pl-upnext-art");
-    const poster = n.thumb || n.poster || n.backdrop;
-    art.style.backgroundImage = poster ? ("url(" + (poster.indexOf("/") === 0 ? poster : thumbUrl(poster)) + ")") : "";
+    const poster = (n.kind === "episode" || (P.it && P.it.kind === "episode") ? (seriesPoster(n) || seriesPoster(P.it)) : null) || n.poster || n.thumb || n.backdrop;
+    art.style.backgroundImage = poster ? ("url(" + (String(poster).indexOf("/") === 0 ? poster : thumbUrl(poster)) + ")") : "";
+    art.classList.toggle("portrait", !!(n.kind === "episode" || (P.it && P.it.kind === "episode") || (poster && n.kind !== "video")));
     box.classList.remove("hidden");
     const tick = () => {
       if (!P || this.cancelled) { this.hide(); return; }

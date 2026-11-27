@@ -45,8 +45,8 @@ check('else if (lib.kind === "tv") html += L.items.length ? `<div class="strip h
       in js, "the Recently added TV row uses portrait cards, not a wide still strip")
 check('if (d.episodes.length) html += `<h3>Episodes</h3><div class="grid">${d.episodes.map(i => cardItem(i)).join("")}</div>`'
       in js, "search episode results use portrait cards")
-check("season.episodes.map(e =>" in js and "e.thumb" in js.split("season.episodes.map(e =>")[1][:500],
-      "show details episode lists still use the still (.thumb)")
+check("season.episodes.map(e =>" in js and "seriesPoster(e)" in js.split("season.episodes.map(e =>")[1][:800],
+      "show details episode lists use the series poster (2.5.10)")
 check("i.show_title || i.show || i.title" in js, "card title is the series name")
 tv = (ROOT / "app" / "static" / "tv-plex.js").read_text()
 check("it.show_backdrop || it.backdrop || it.show_poster || it.poster" in tv,

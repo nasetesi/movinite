@@ -1799,6 +1799,10 @@ def show_detail(library_id: int, show: str, u=Depends(auth.require_user)):
     for e in eps:
         e.pop("title_key", None)
     eps = _with_progress(eps, u["id"])
+    try:
+        tmdb.enrich(eps)
+    except Exception:
+        log.exception("enrich show episodes")
     seasons = {}
     for e in eps:
         seasons.setdefault(e["season"] if e["season"] is not None else 0, []).append(e)
@@ -2362,9 +2366,17 @@ def item_detail(item_id: int, request: Request, disp: int = 0, dec: int = 0, noc
     # neighbours for "next episode" / album autoplay
     nxt = None
     if it["kind"] == "episode":
-        nxt = db.row("SELECT id, title, season, episode FROM items WHERE library_id=? AND show=? AND "
+        nxt = db.row("SELECT " + ITEM_COLS + " FROM items WHERE library_id=? AND show=? AND "
                      "(season > ? OR (season = ? AND episode > ?)) ORDER BY season, episode LIMIT 1",
                      (it["library_id"], it["show"], it["season"] or 0, it["season"] or 0, it["episode"] or 0))
+        if nxt:
+            try:
+                tmdb.enrich([nxt])
+            except Exception:
+                log.exception("enrich next")
+                nxt["show_poster"] = out.get("show_poster")
+                nxt["season_poster"] = out.get("season_poster")
+                nxt["show_backdrop"] = out.get("show_backdrop")
     out["next"] = nxt
     try:
         from . import skipintro
