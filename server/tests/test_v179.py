@@ -157,7 +157,8 @@ def main():
     check("function fetchVtt" in js and "r.status === 202" in js, "client retries 202 subtitle responses")
     check("Opening-clip cache" in js and "prefetch_cache_gb" in js and "prefetch_cache_gb" in srv,
           "Settings → Transcoding has the opening-clip cache size")
-    check("status_code=202" in srv and "sub_enqueue" in srv, "uncached subtitles return 202 and enqueue")
+    check("status_code=202" in srv and ("sub_enqueue" in srv or "ensure_subs_async" in srv),
+          "uncached subtitles return 202 and enqueue (fix/transcode-stuck: one background pass)")
     check("ASSETS=" in srv and "caches.open" in srv and "caches.match" in srv,
           "service worker precaches versioned assets")
     check("u.pathname.startsWith('/api/')" in srv, "service worker never caches API or HLS")

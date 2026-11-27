@@ -538,9 +538,17 @@ def fed_libraries(peer) -> list:
 
 def _item_summary(it) -> dict:
     # keep this small: titles, year, artwork names, tmdb, overview for the hero
+    from .tmdb import series_card_art
     poster = it.get("poster")
     backdrop = it.get("backdrop")
-    return {
+    show_poster = it.get("show_poster")
+    show_backdrop = it.get("show_backdrop")
+    if it.get("kind") == "episode":
+        # The catalog stores the series portrait as poster so even an older
+        # peer shows the right card art; thumb keeps the episode still.
+        poster = series_card_art(it) or poster
+        backdrop = show_backdrop or backdrop
+    out = {
         "id": it["id"],
         "kind": it.get("kind") or "movie",
         "title": it.get("title"),
@@ -558,6 +566,20 @@ def _item_summary(it) -> dict:
         "added_at": it.get("added_at"),
         "updated_at": it.get("added_at"),
     }
+    if it.get("kind") == "episode":
+        out.update({
+            "show": it.get("show"),
+            "season": it.get("season"),
+            "episode": it.get("episode"),
+            "episode_title": it.get("episode_title") or it.get("title"),
+            "thumb": it.get("thumb"),
+            "show_poster": show_poster or poster,
+            "season_poster": it.get("season_poster"),
+            "show_title": it.get("show_title") or it.get("show"),
+            "show_backdrop": show_backdrop or backdrop,
+            "show_overview": it.get("show_overview"),
+        })
+    return out
 
 
 def fed_library_items(peer, library_id: int, since: int = 0, offset: int = 0, limit: int = 200) -> dict:
@@ -655,21 +677,29 @@ def _sync_items(c, peer, rlid, remote_lib_id, since):
         for it in items:
             c.execute(
                 "INSERT INTO remote_items(remote_library_id, remote_item_id, kind, title, year, tmdb_id, sort_title, "
-                "duration, poster, backdrop, overview, runtime, certification, rating, genres, added_at, updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "duration, poster, backdrop, overview, runtime, certification, rating, genres, added_at, updated_at, "
+                "show, season, episode, episode_title, thumb, show_poster, season_poster, show_title, show_backdrop) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(remote_library_id, remote_item_id) DO UPDATE SET "
                 "kind=excluded.kind, title=excluded.title, year=excluded.year, tmdb_id=excluded.tmdb_id, "
                 "sort_title=excluded.sort_title, duration=excluded.duration, poster=excluded.poster, "
                 "backdrop=excluded.backdrop, overview=excluded.overview, runtime=excluded.runtime, "
                 "certification=excluded.certification, rating=excluded.rating, genres=excluded.genres, "
-                "added_at=excluded.added_at, updated_at=excluded.updated_at",
+                "added_at=excluded.added_at, updated_at=excluded.updated_at, "
+                "show=excluded.show, season=excluded.season, episode=excluded.episode, "
+                "episode_title=excluded.episode_title, thumb=excluded.thumb, show_poster=excluded.show_poster, "
+                "season_poster=excluded.season_poster, show_title=excluded.show_title, "
+                "show_backdrop=excluded.show_backdrop",
                 (rlid, int(it["id"]), it.get("kind") or "movie", it.get("title"), it.get("year"), it.get("tmdb_id"),
                  it.get("sort_title") or it.get("title"), it.get("duration"), it.get("poster"), it.get("backdrop"),
                  it.get("overview"), it.get("runtime"), it.get("certification"), it.get("rating"),
                  it.get("genres") if isinstance(it.get("genres"), str) else json.dumps(it.get("genres") or []),
-                 it.get("added_at"), it.get("added_at")))
-            _cache_art(peer, it.get("poster"))
-            _cache_art(peer, it.get("backdrop"))
+                 it.get("added_at"), it.get("added_at"),
+                 it.get("show"), it.get("season"), it.get("episode"), it.get("episode_title"),
+                 it.get("thumb"), it.get("show_poster"), it.get("season_poster"), it.get("show_title"),
+                 it.get("show_backdrop")))
+            for key in ("poster", "backdrop", "thumb", "show_poster", "season_poster", "show_backdrop"):
+                _cache_art(peer, it.get(key))
         total = int((data or {}).get("total") or 0)
         offset += len(items)
         if not items or offset >= total:
@@ -819,7 +849,7 @@ def item_as_local(ri, rl=None) -> dict:
         genres_l = []
     poster = ri.get("poster")
     backdrop = ri.get("backdrop")
-    return {
+    out = {
         "id": -int(ri["id"]),
         "library_id": -int(ri["remote_library_id"]),
         "kind": ri.get("kind") or "movie",
@@ -844,6 +874,21 @@ def item_as_local(ri, rl=None) -> dict:
         "path": None,
         "has_art": bool(poster),
     }
+    if (ri.get("kind") or "") == "episode" or ri.get("show") or ri.get("show_poster"):
+        out.update({
+            "show": ri.get("show"),
+            "season": ri.get("season"),
+            "episode": ri.get("episode"),
+            "episode_title": ri.get("episode_title") or ri.get("title"),
+            "thumb": ri.get("thumb"),
+            "show_poster": ri.get("show_poster") or poster,
+            "season_poster": ri.get("season_poster"),
+            "show_title": ri.get("show_title") or ri.get("show"),
+            "show_backdrop": ri.get("show_backdrop") or backdrop,
+        })
+        if out.get("show_backdrop") and not out.get("backdrop"):
+            out["backdrop"] = out["show_backdrop"]
+    return out
 
 
 def local_item(local_remote_item_id: int, user=None):

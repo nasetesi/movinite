@@ -1021,17 +1021,46 @@ async function route() {
 }
 
 // ---------------------------------------------------------------- cards
+// 2.5.8: episode cards in home-style rows use the series (or season) portrait poster
+function seriesPoster(i) {
+  if (!i) return "";
+  if (i.show_poster) return i.show_poster;
+  if (i.season_poster) return i.season_poster;
+  if (i.poster && i.poster !== i.thumb) return i.poster;
+  return i.thumb || i.poster || "";
+}
+function seriesPosterOnly(i) {
+  // Portrait art only — no episode still. Used to decide 2:3 vs 16:9 layout.
+  if (!i) return "";
+  if (i.show_poster) return i.show_poster;
+  if (i.season_poster) return i.season_poster;
+  if (i.poster && i.poster !== i.thumb) return i.poster;
+  return "";
+}
 function cardItem(i, opts) {
   opts = opts || {};
-  const land = opts.landscape || i.kind === "episode" || i.kind === "video" || (!i.poster && i.media_type === "video" && i.kind !== "movie");
-  const img = land ? (i.thumb || i.poster) : (i.poster || i.thumb);
+  // Episode rows use a movie-sized portrait card unless the caller asked for a still (landscape).
+  const useSeries = i.kind === "episode" && !opts.landscape;
+  const land = !useSeries && (opts.landscape || i.kind === "video" || (!i.poster && i.media_type === "video" && i.kind !== "movie"));
+  const img = useSeries ? (seriesPoster(i) || i.thumb || i.poster) : (land ? (i.thumb || i.poster) : (i.poster || i.thumb));
   const pct = i.position && i.duration ? Math.min(100, 100 * i.position / i.duration) : 0;
   let t = i.title, s = (i.year || "") + (i.edition ? ` <span class="ed" title="${esc(i.edition)}">${esc(i.edition)}</span>` : "");
-  if (i.kind === "episode") { t = opts.showName === false ? i.title : (i.show || i.title); s = epCode(i) + (opts.showName === false ? "" : " · " + esc(i.title)); }
+  if (i.kind === "episode") {
+    t = opts.showName === false ? i.title : (i.show_title || i.show || i.title);
+    const epBit = epCode(i);
+    const epName = (!opts.showName && i.title && i.title !== t) ? " · " + esc(i.title) : "";
+    s = epBit + (opts.showName === false ? "" : epName);
+  }
   if (i.media_type === "audio") { s = i.artist || ""; }
   const cls = land ? "landscape" : (i.media_type === "audio" ? "square" : "");
   const srcName = i.peer_name || i.source_name || "";
-  if (opts.resume && i.duration && i.position) { const left = Math.max(1, Math.round((i.duration - i.position) / 60)); const leftTxt = (i.kind === "episode" ? epCode(i) + " · " : "") + left + " min left"; s = `<span class="d-only">${leftTxt}${srcName ? " · " + esc(srcName) : ""}</span><span class="m-only">${i.kind === "episode" ? epCode(i) : (i.year || left + " min left")}</span>`; }
+  if (opts.resume && i.duration && i.position) {
+    const left = Math.max(1, Math.round((i.duration - i.position) / 60));
+    const epBit = i.kind === "episode" ? epCode(i) : "";
+    const epName = (i.kind === "episode" && i.title && i.title !== t) ? " · " + esc(i.title) : "";
+    const leftTxt = (epBit ? epBit + epName + " · " : "") + left + " min left";
+    s = `<span class="d-only">${leftTxt}${srcName ? " · " + esc(srcName) : ""}</span><span class="m-only">${epBit || (i.year || left + " min left")}</span>`;
+  }
   else if (srcName && i.is_remote) { s = (s ? s + " · " : "") + esc(srcName); }
   // 1.4.3: a poster always opens the details page; the small round button plays (resumes where you stopped)
   const resumeAt = i.position > 30 && !i.watched ? i.position : 0;
@@ -1496,7 +1525,7 @@ async function viewHome(live) {
   // 1.4.1: Continue watching first (only when something is part-watched); click resumes where you stopped
   if (d.continue.length) html += rowHead("Continue watching") + `<div class="strip hs cw">${d.continue.map(i => cardItem(i, { resume: true })).join("")}</div>`;
   if (OFF.on()) {   // 2.0: the Downloads tab took My List's place, so My List's recently watched films get a home row
-    try { const ml = await api("/api/mylist"); if (ml.watched.length) html += rowHead("My List", "#/mylist", { sub: "Recently watched" }) + `<div class="strip hs">${ml.watched.slice(0, 20).map(i => cardItem(i)).join("")}</div>`; } catch (e) { /* row is optional */ }
+    try { const ml = await api("/api/mylist"); if (window.TV && TV.ingest) TV.ingest({ continue: ml.continue || [], libraries: [], watched: ml.watched || [] }); if (ml.watched.length) html += rowHead("My List", "#/mylist", { sub: "Recently watched" }) + `<div class="strip hs">${ml.watched.slice(0, 20).map(i => cardItem(i)).join("")}</div>`; } catch (e) { /* row is optional */ }
   }
   const nMovieLibs = d.libraries.filter(L => L.library.kind === "movies").length;
   for (const L of d.libraries) {
@@ -1512,7 +1541,7 @@ async function viewHome(live) {
     } else html += rowHead(`Recently added in ${esc(lib.name)}`, `#/library/${lib.id}`, { sub: nf(lib.item_count || 0) + " items", extra: (lib.mirrors || []).length ? ` <span class="muted d-only mirror-note" style="font-size:13px;font-weight:400" title="These libraries hold the same shows; each is shown once">&middot; same shows as ${esc(lib.mirrors.join(", "))}</span>` : "" });
     if (L.smart_rows) { /* rows above */ }
     else if (L.albums) html += L.albums.length ? `<div class="strip hs">${L.albums.map(a => cardAlbum(lib.id, a)).join("")}</div>` : `<div class="empty">Nothing here yet</div>`;
-    else if (lib.kind === "tv") html += L.items.length ? `<div class="strip hs wide">${L.items.map(i => cardItem(i, { landscape: true })).join("")}</div>` : `<div class="empty">Nothing here yet</div>`;
+    else if (lib.kind === "tv") html += L.items.length ? `<div class="strip hs">${L.items.map(i => cardItem(i)).join("")}</div>` : `<div class="empty">Nothing here yet</div>`;
     else html += L.items.length ? `<div class="strip hs">${L.items.map(i => cardItem(i)).join("")}</div>` : `<div class="empty">Nothing here yet -- scanning may still be running.</div>`;
     for (const G of (L.genre_rows || [])) {   // 1.4: the library's biggest genres
       if (!G.items.length) continue;
@@ -1703,8 +1732,10 @@ async function viewShow(libId, show) {
     <div class="tabs">${d.seasons.map(s => `<button data-season="${s.season}" class="${s.season === season.season ? "on" : ""}">${s.season === 0 ? "Specials" : "Season " + s.season}</button>`).join("")}</div>
     <div class="list">${season.episodes.map(e => {
       const pct = e.position && e.duration ? 100 * e.position / e.duration : 0;
-      return `<div class="li" data-href="#/item/${e.id}"><div class="thumb" style="${e.thumb ? `background-image:url('${thumbUrl(e.thumb)}')` : ""}">${pct ? `<div class="bar" style="width:${pct}%"></div>` : ""}</div>
-        <div class="ttl"><div><b>${e.episode != null ? e.episode + ". " : ""}</b>${esc(e.title)}</div><div class="muted" style="font-size:12.5px">${fmtLen(e.duration)} ${e.watched ? `<span class="w">&#10003; watched</span>` : ""}</div></div>
+      const art = seriesPoster(e);
+      const code = epCode(e);
+      return `<div class="li ep" data-href="#/item/${e.id}" tabindex="0"><div class="thumb portrait" style="${art ? `background-image:url('${thumbUrl(art)}')` : ""}">${pct ? `<div class="bar" style="width:${pct}%"></div>` : ""}</div>
+        <div class="ttl"><div class="ep-code">${esc(code || (e.episode != null ? "E" + e.episode : ""))}</div><div><b>${esc(e.title || "Episode")}</b></div><div class="muted" style="font-size:12.5px">${fmtLen(e.duration)} ${e.watched ? `<span class="w">&#10003; watched</span>` : ""}</div></div>
         <button class="iconbtn" data-play="${e.id}" title="Play">&#9654;</button></div>`; }).join("")}</div></div></div>`;
   $("#view").innerHTML = html;
   $("#playnext").onclick = () => playItem(d.next.id);
@@ -1983,8 +2014,10 @@ function bindMoreMenu() {
 async function viewItem(id) {
   const it = await api("/api/items/" + id);
   const pb = it.playback || {};
-  const land = it.kind === "episode" || it.kind === "video";
-  const img = land ? (it.thumb || it.poster) : (it.poster || it.thumb);
+  const epPortrait = it.kind === "episode" ? seriesPosterOnly(it) : "";
+  const land = it.kind === "video" || (it.kind === "episode" && !epPortrait);
+  const img = it.kind === "episode" ? (epPortrait || seriesPoster(it) || it.thumb || it.poster)
+    : (land ? (it.thumb || it.poster) : (it.poster || it.thumb));
   let title = it.title, sub = [];
   if (it.kind === "episode") { title = it.title; sub.push(`<a href="#/show/${it.library_id}/${enc(it.show)}" style="color:var(--acc-text)">${esc(it.show_title || it.show)}</a>`, epCode(it)); if (it.air_date) sub.push(esc(it.air_date)); }
   if (it.media_type === "audio") { if (it.artist) sub.push(esc(it.artist)); if (it.album) sub.push(`<a style="color:var(--acc-text)" href="#/album/${it.library_id}/${enc(it.album_artist || it.artist || "Unknown artist")}/${enc(it.album)}">${esc(it.album)}</a>`); }
@@ -2052,8 +2085,13 @@ async function viewItem(id) {
     </div>
     <div class="modal-actions"><a class="btn ghost" href="/api/items/${it.id}/file?download=1">Download file</a><button class="btn" id="fi-close">Close</button></div>`,
     () => { $("#fi-close").onclick = closeModal; $("#fi-close").focus(); });
-  const bgImg = it.backdrop || (isMovie ? it.poster : null);   // 1.4.4: blurred artwork behind the whole page
-  $("#view").innerHTML = `${bgImg ? `<div class="detail-bg" aria-hidden="true"><div class="dbg-img" style="background-image:url('${thumbUrl(bgImg)}')"></div></div>` : ""}<div class="hero${bgImg ? " soft" : ""}"${heroStyle(it.backdrop)}></div><div class="detail"><div class="poster ${land ? "landscape" : it.media_type === "audio" ? "square" : ""}" style="${img ? `background-image:${it.poster_large && img === it.poster ? `url('${it.poster_large}'),` : ""}url('${thumbUrl(img)}')` : ""}"></div>
+  const bgImg = it.kind === "episode"
+    ? (it.show_backdrop || it.backdrop || epPortrait || img)
+    : (it.backdrop || (isMovie ? it.poster : null));   // 1.4.4: blurred artwork behind the whole page
+  const heroBg = it.kind === "episode" ? (it.show_backdrop || it.backdrop) : it.backdrop;
+  const posterCls = land ? "landscape" : it.media_type === "audio" ? "square" : (epPortrait ? "series" : "");
+  const posterLarge = it.poster_large && img === it.poster && it.kind !== "episode";
+  $("#view").innerHTML = `${bgImg ? `<div class="detail-bg" aria-hidden="true"><div class="dbg-img" style="background-image:url('${thumbUrl(bgImg)}')"></div></div>` : ""}<div class="hero${bgImg ? " soft" : ""}"${heroStyle(heroBg)}></div><div class="detail"><div class="poster ${posterCls}" style="${img ? `background-image:${posterLarge ? `url('${it.poster_large}'),` : ""}url('${thumbUrl(img)}')` : ""}"></div>
     <div class="info"><h1>${esc(title)}</h1><div class="meta">${sub.map(s => `<span>${s}</span>`).join("")}</div>
     ${metaChips(chipsIt, isMovie ? it.library_id : 0)}
     ${it.tagline ? `<div class="tagline">${esc(it.tagline)}</div>` : ""}
@@ -2147,7 +2185,7 @@ async function viewSearch(q) {
   let html = `<h2>Results for "${esc(q)}"</h2>`;
   if (d.items.length) html += `<h3>Movies &amp; videos</h3><div class="grid">${d.items.map(i => cardItem(i)).join("")}</div>`;
   if (d.shows.length) html += `<h3>Shows</h3><div class="grid">${d.shows.map(s => cardShow(s.library_id, s)).join("")}</div>`;
-  if (d.episodes.length) html += `<h3>Episodes</h3><div class="grid wide">${d.episodes.map(i => cardItem(i, { landscape: true })).join("")}</div>`;
+  if (d.episodes.length) html += `<h3>Episodes</h3><div class="grid">${d.episodes.map(i => cardItem(i)).join("")}</div>`;
   if (d.albums.length) html += `<h3>Albums</h3><div class="grid">${d.albums.map(a => cardAlbum(a.library_id, a)).join("")}</div>`;
   if (d.tracks.length) html += `<h3>Tracks</h3>${trackList(d.tracks, true)}`;
   if (!d.items.length && !d.shows.length && !d.episodes.length && !d.albums.length && !d.tracks.length) html += `<div class="empty">Nothing found.</div>`;
@@ -2169,6 +2207,7 @@ async function viewLibraries() {
 // 1.5.1: the My List tab -- your films in progress and the ones you watched last
 async function viewMyList() {
   const d = await api("/api/mylist");
+  if (window.TV && TV.ingest) TV.ingest({ continue: d.continue || [], libraries: [], watched: d.watched || [] });
   let html = `<h2 class="pg-h">My List</h2>`;
   if (d.continue.length) html += rowHead("Continue watching", "", { sub: `${d.continue.length} in progress` }) + `<div class="strip hs cw">${d.continue.map(i => cardItem(i, { resume: true })).join("")}</div>`;
   if (d.watched.length) html += rowHead("Watched", "", { sub: "Most recent first" }) + `<div class="grid">${d.watched.map(i => cardItem(i)).join("")}</div>`;
@@ -2765,7 +2804,7 @@ function nowCard(n) {
   const title = it.show ? `${it.show} ${epCode(it)}` : it.title;
   const mode = n.mode === "transcode" || (t && t.profile !== "remux" && n.mode !== "direct") ? (t && t.encoder && t.encoder !== "cpu" ? `<span class="hw-badge">GPU</span> Transcode` : "Transcode (CPU)") : n.mode === "remux" ? "Remux" : n.mode === "music" ? "Music" : "Direct play";
   const pct = n.progress != null ? Math.max(0, Math.min(100, n.progress * 100)) : null;
-  return `<div class="np-card"><div class="np-art"${it.poster || it.thumb ? ` style="background-image:url('${thumbUrl(it.poster || it.thumb)}')"` : ""}></div>
+  return `<div class="np-card"><div class="np-art"${(seriesPoster(it) || it.poster || it.thumb) ? ` style="background-image:url('${thumbUrl(seriesPoster(it) || it.poster || it.thumb)}')"` : ""}></div>
     <div class="np-txt"><div class="np-title">${esc(title || "?")}</div><div class="np-user"><span class="gm-av sm">${esc((n.username || "?").slice(0, 1).toUpperCase())}</span>${esc(n.username || "?")}</div>
     <div class="help">${mode}${n.profile && n.profile !== "remux" && n.profile !== "audio" ? " · " + esc(n.profile) : ""}${t && t.paused ? " · buffered ahead" : ""}</div>
     <div class="help">${esc(n.device || "")}${n.ip ? " · " + esc(n.ip) : ""} · ${esc(fmtLen(Math.max(1, Date.now() / 1000 - n.started)))}</div>
@@ -4092,8 +4131,9 @@ const UP = {
     const title = n.kind === "episode" ? ((n.show ? n.show + " · " : "") + (n.episode_code || "") + " " + (n.title || "")).trim() : (n.title || "Next");
     $("#pl-upnext-title").textContent = title;
     const art = $("#pl-upnext-art");
-    const poster = n.thumb || n.poster || n.backdrop;
-    art.style.backgroundImage = poster ? ("url(" + (poster.indexOf("/") === 0 ? poster : thumbUrl(poster)) + ")") : "";
+    const poster = (n.kind === "episode" || (P.it && P.it.kind === "episode") ? (seriesPoster(n) || seriesPoster(P.it)) : null) || n.poster || n.thumb || n.backdrop;
+    art.style.backgroundImage = poster ? ("url(" + (String(poster).indexOf("/") === 0 ? poster : thumbUrl(poster)) + ")") : "";
+    art.classList.toggle("portrait", !!(n.kind === "episode" || (P.it && P.it.kind === "episode") || (poster && n.kind !== "video")));
     box.classList.remove("hidden");
     const tick = () => {
       if (!P || this.cancelled) { this.hide(); return; }
@@ -4470,10 +4510,12 @@ function paintCues() {
   el.classList.remove("hidden");
 }
 async function fetchVtt(id, key) {
-  // 1.7.9: 202 means the server is extracting in the background — retry instead of blocking the first encode
-  for (let i = 0; i < 24; i++) {
+  // 1.7.9: 202 means the server is extracting in the background — retry instead of blocking the first encode.
+  // fix/transcode-stuck: one pass over a big 4K remux on the share can take ~3 minutes, so keep
+  // retrying for up to ~6 minutes (delay capped at 5 s) instead of giving up after ~1 minute.
+  for (let i = 0; i < 90; i++) {
     const r = await fetch(`/api/items/${id}/subs/${key}.vtt`, { credentials: "same-origin" });
-    if (r.status === 202) { await new Promise(res => setTimeout(res, 400 + i * 200)); continue; }
+    if (r.status === 202) { await new Promise(res => setTimeout(res, Math.min(5000, 400 + i * 200))); continue; }
     if (!r.ok) throw new Error("sub " + r.status);
     return r.text();
   }
@@ -5885,8 +5927,18 @@ const TV = {
     const strip = el.closest(".strip, .hs, .cast-strip");
     if (strip && typeof strip.scrollLeft === "number") {
       const sr = strip.getBoundingClientRect(), er = el.getBoundingClientRect();
-      if (er.left < sr.left + 16) strip.scrollLeft += er.left - sr.left - 16;
-      else if (er.right > sr.right - 16) strip.scrollLeft += er.right - sr.right + 16;
+      let leftPad = 16;
+      const rail = document.getElementById("tv-rail");
+      if (document.documentElement.classList.contains("tv-plex") && rail) {
+        const art = el.querySelector && el.querySelector(".art");
+        const box = art ? art.getBoundingClientRect() : er;
+        const minLeft = rail.getBoundingClientRect().right + 8;
+        if (box.left < minLeft) strip.scrollLeft += box.left - minLeft;
+        else if (box.right > sr.right - 16) strip.scrollLeft += box.right - sr.right + 16;
+      } else {
+        if (er.left < sr.left + leftPad) strip.scrollLeft += er.left - sr.left - leftPad;
+        else if (er.right > sr.right - 16) strip.scrollLeft += er.right - sr.right + 16;
+      }
     }
   },
   playerOn() {
@@ -6235,6 +6287,10 @@ const TV = {
 };
 window.TV = TV;
 window.__msTvBack = () => TV.back();
+window.cardItem = cardItem;
+window.cardShow = cardShow;
+window.cardAlbum = cardAlbum;
+window.api = api;
 TV.prepare();
 
 boot();

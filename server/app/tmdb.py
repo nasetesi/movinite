@@ -521,12 +521,25 @@ def fetch_details(kind, tmdb_id, force=False):
     poster = download_image(d.get("poster_path"), "w500")
     backdrop = download_image(d.get("backdrop_path"), "w1280")
     genres = json.dumps([g.get("name") for g in d.get("genres") or [] if g.get("name")])
-    extra = json.dumps({
+    extra_d = {
         "studios": [x.get("name") for x in d.get("production_companies") or [] if x.get("name")][:5],
         "countries": [x.get("iso_3166_1") for x in d.get("production_countries") or [] if x.get("iso_3166_1")],
         "collection": (d.get("belongs_to_collection") or {}).get("name"),
         "original_language": d.get("original_language"),
-    })
+    }
+    # 2.5.8: cache season posters (used as a fallback when a show has no series poster)
+    if kind == "tv":
+        season_posters = {}
+        for s in d.get("seasons") or []:
+            sn, path = s.get("season_number"), s.get("poster_path")
+            if sn is None or not path:
+                continue
+            name = download_image(path, "w500")
+            if name:
+                season_posters[str(sn)] = name
+        if season_posters:
+            extra_d["season_posters"] = season_posters
+    extra = json.dumps(extra_d)
     with db.tx() as c:
         c.execute("INSERT OR REPLACE INTO metadata(kind,tmdb_id,title,original_title,year,overview,tagline,genres,rating,"
                   "vote_count,runtime,poster,backdrop,fetched_at,release_date,imdb_id,poster_path,backdrop_path,extra) "
@@ -1045,12 +1058,25 @@ def enrich(items):
             it["show_tmdb_id"] = tv_id
             if sm:
                 it["show_title"] = sm["title"]
-                if sm["poster"] and not _local_poster(it):
-                    it["poster"] = sm["poster"]
-                    it["has_art"] = True
-                it["backdrop"] = sm["backdrop"]
+                if sm.get("poster"):
+                    it["show_poster"] = sm["poster"]
+                    # Keep a distinct local poster (rare) on the item; otherwise use the series poster.
+                    if not _local_poster(it):
+                        it["poster"] = sm["poster"]
+                        it["has_art"] = True
+                if sm.get("backdrop"):
+                    it["show_backdrop"] = sm["backdrop"]
+                    it["backdrop"] = sm["backdrop"]
                 it["genres"] = json.loads(sm["genres"] or "[]")
                 it["show_overview"] = sm["overview"]
+                try:
+                    extra = json.loads(sm["extra"] or "{}") if sm.get("extra") else {}
+                except Exception:
+                    extra = {}
+                posters = extra.get("season_posters") or {}
+                sn = it.get("season")
+                if sn is not None and posters.get(str(sn)):
+                    it["season_poster"] = posters[str(sn)]
             if it.get("season") is not None and it.get("episode") is not None:
                 e = db.row("SELECT * FROM tmdb_episodes WHERE tv_id=? AND season=? AND episode=?",
                            (tv_id, it["season"], it["episode"]))
@@ -1064,7 +1090,44 @@ def enrich(items):
                     if e["still"]:
                         it["thumb"] = e["still"]
             it["tmdb"] = True
+    _fill_local_show_art(items)
     return items
+
+
+def series_card_art(it):
+    """Portrait art for an episode card in a home-style row: series poster, then season poster, then the still."""
+    if not it:
+        return None
+    if it.get("kind") != "episode":
+        return it.get("poster") or it.get("thumb")
+    if it.get("show_poster"):
+        return it["show_poster"]
+    if it.get("season_poster"):
+        return it["season_poster"]
+    if it.get("poster") and it.get("poster") != it.get("thumb"):
+        return it["poster"]
+    return it.get("thumb") or it.get("poster")
+
+
+def _fill_local_show_art(items):
+    """If TMDB has no series poster, use a local show poster already on disk (poster <> thumb)."""
+    need = [it for it in items if it.get("kind") == "episode" and it.get("show")
+            and it.get("library_id") and not it.get("show_poster")]
+    if not need:
+        return
+    found = {}
+    for lib_id, show in {(it["library_id"], it["show"]) for it in need}:
+        r = db.row("SELECT poster FROM items WHERE library_id=? AND show=? AND poster IS NOT NULL "
+                   "AND poster<>'' AND poster<>thumb LIMIT 1", (lib_id, show))
+        if r and r["poster"]:
+            found[(lib_id, show)] = r["poster"]
+    for it in need:
+        p = found.get((it["library_id"], it["show"]))
+        if p:
+            it["show_poster"] = p
+            if not _local_poster(it):
+                it["poster"] = p
+                it["has_art"] = True
 
 
 def _overlay_common(it, m):

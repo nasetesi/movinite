@@ -237,23 +237,20 @@ def _tick():
 
 
 def _drain_urgent_subs():
+    """fix/transcode-stuck: urgent subtitle requests now start one background pass per item
+    (ensure_subs_async). Nothing waits here any more; this only hands queued items over."""
     with _lock:
         pending = list(_urgent_subs)
-    keep = []
-    for item, key in pending:
-        if busy() and not first_segment_ready(item.get("id")):
-            # the opening encode is still on the NAS; wait
-            keep.append((item, key))
+        _urgent_subs[:] = []
+    seen = set()
+    for item, _key in pending:
+        if item.get("id") in seen:
             continue
+        seen.add(item.get("id"))
         try:
-            extract_sub(item, key)
+            ensure_subs_async(item)
         except Exception:
-            log.exception("urgent subtitle %s %s", item.get("id"), key)
-    with _lock:
-        _urgent_subs[:] = [p for p in _urgent_subs if p in keep or (p[0].get("id"), p[1]) in
-                           {(i.get("id"), k) for i, k in keep}]
-        # rewrite from keep
-        _urgent_subs[:] = keep
+            log.exception("urgent subtitle %s", item.get("id"))
 
 
 # ---------------------------------------------------------------------------
@@ -285,9 +282,7 @@ def sub_enqueue(item, key, urgent=False):
                   "subtitle_cache.mtime=excluded.mtime THEN subtitle_cache.status ELSE 'pending' END",
                   (item["id"], key, item.get("mtime"), "pending", int(time.time())))
     if urgent:
-        with _lock:
-            if (item.get("id"), key) not in {(i.get("id"), k) for i, k in _urgent_subs}:
-                _urgent_subs.append((item, key))
+        ensure_subs_async(item)
         kick()
 
 
@@ -305,7 +300,12 @@ def sub_cmd(item, key):
     return None
 
 
-def extract_sub(item, key):
+def extract_sub(item, key, timeout=None):
+    """Extract one subtitle key. Embedded streams use the one-pass helper (one read of the
+    file); sidecar files are small and converted on their own."""
+    if key.startswith("s") and key[1:].isdigit():
+        done = extract_item_subs(item, [key], timeout=timeout or SUB_PASS_TIMEOUT_S, yieldable=True)
+        return key in done
     cmd = sub_cmd(item, key)
     if not cmd:
         _sub_status(item, key, "retry")
@@ -318,7 +318,7 @@ def extract_sub(item, key):
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         _register("subtitles", p)
         try:
-            out, err = p.communicate(timeout=180)
+            out, err = p.communicate(timeout=timeout or SUB_SIDECAR_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             _stop_proc(p)
             _sub_status(item, key, "retry")
@@ -355,6 +355,198 @@ def _sub_status(item, key, status):
                    status, int(time.time())))
 
 
+# ---------------------------------------------------------------------------
+# fix/transcode-stuck: one-pass, non-blocking subtitle extraction
+#
+# Pulling a text subtitle out of an MKV means reading the whole file. A 4.6 GB 4K remux
+# on the CIFS share takes ~187 s, longer than the old 180 s per-key timeout, so some titles
+# never cached. The Android TV player also asks for every text track when it starts and
+# will not start the video until each request has answered; the old endpoint ran one
+# full-file ffmpeg per track inside the request (44 at once for one title), so the TV sat
+# on "Transcode 1080p" for minutes. Now one ffmpeg writes every track in a single read,
+# in the background, and the endpoint answers at once.
+# ---------------------------------------------------------------------------
+SUB_PASS_TIMEOUT_S = 1800         # one read of a large remux over the share
+SUB_SIDECAR_TIMEOUT_S = 20        # .srt/.ass next to the video: small
+SUB_FIRST_SEG_WAIT_S = 12         # let the opening encode get its first segment out first
+SUB_FAILED_COOLDOWN_S = 900       # a pass that failed recently is not re-run on every play
+EMPTY_VTT = b"WEBVTT\n\n"
+_inflight = {}                    # item_id -> Thread running a one-pass extraction
+
+
+def text_sub_keys(item):
+    """Every text subtitle key for an item (sidecars e#, embedded s#), no cap."""
+    keys = []
+    try:
+        for i, _s in enumerate(json.loads(item.get("external_subs") or "[]")):
+            keys.append("e%d" % i)
+    except (TypeError, ValueError):
+        pass
+    try:
+        for s in json.loads(item.get("subtitle_streams") or "[]"):
+            if s.get("text") and s.get("index") is not None:
+                keys.append("s%d" % int(s["index"]))
+    except (TypeError, ValueError):
+        pass
+    return keys
+
+
+def missing_sub_keys(item, keys=None):
+    return [k for k in (keys if keys is not None else text_sub_keys(item)) if not sub_get(item, k)]
+
+
+def one_pass_cmd(item, keys, outdir):
+    """One ffmpeg, one read of the file, one WebVTT output per embedded stream."""
+    cmd = [config.FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", item["path"]]
+    outs = {}
+    for key in keys:
+        if not (key.startswith("s") and key[1:].isdigit()):
+            continue
+        tmp = Path(outdir) / ("%s.vtt.tmp" % key)
+        cmd += ["-map", "0:%d" % int(key[1:]), "-c:s", "webvtt", "-f", "webvtt", str(tmp)]
+        outs[key] = tmp
+    return (cmd if outs else None), outs
+
+
+def _store_sub(item, key, tmp):
+    dest = sub_path(item["id"], key)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    data = b""
+    try:
+        data = Path(tmp).read_bytes()
+    except OSError:
+        pass
+    if not data.lstrip(b"\xef\xbb\xbf").startswith(b"WEBVTT"):
+        data = EMPTY_VTT + data
+    Path(tmp).write_bytes(data)
+    Path(tmp).replace(dest)
+    rel = str(dest.relative_to(config.DATA_DIR))
+    with db.tx() as c:
+        c.execute("INSERT OR REPLACE INTO subtitle_cache(item_id, key, mtime, status, path, checked_at, attempts) "
+                  "VALUES(?,?,?,?,?,?,0)",
+                  (item["id"], key, item.get("mtime"), "ready", rel, int(time.time())))
+
+
+def extract_item_subs(item, keys=None, timeout=SUB_PASS_TIMEOUT_S, yieldable=True):
+    """Extract the given (default: all missing) text subtitle keys of one item.
+
+    Embedded tracks share a single ffmpeg pass. yieldable=True (background idle work)
+    registers the process so yield_to_playback can stop it when someone presses play;
+    a pass a player is waiting on runs unregistered so playback start does not kill it.
+    Returns the set of keys now cached."""
+    keys = missing_sub_keys(item, keys)
+    done = set()
+    for key in [k for k in keys if k.startswith("e")]:
+        if extract_sub(item, key, timeout=SUB_SIDECAR_TIMEOUT_S):
+            done.add(key)
+    emb = [k for k in keys if k.startswith("s")]
+    if not emb:
+        return done
+    outdir = config.SUBS_DIR / str(item["id"])
+    outdir.mkdir(parents=True, exist_ok=True)
+    cmd, outs = one_pass_cmd(item, emb, outdir)
+    if not cmd:
+        return done
+    p = None
+    t0 = time.time()
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+        if yieldable:
+            _register("subtitles", p)
+        try:
+            _out, err = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _stop_proc(p)
+            for k in emb:
+                _sub_status(item, k, "retry")
+            log.warning("subtitles item %s: one pass timed out after %ds (%d tracks)", item["id"], timeout, len(emb))
+            return done
+        if p.returncode != 0:
+            for k in emb:
+                _sub_status(item, k, "retry")
+            log.warning("subtitles item %s: one pass failed rc=%s: %s", item["id"], p.returncode,
+                        (err or b"").decode("utf-8", "replace").strip()[-300:])
+            return done
+        for k, tmp in outs.items():
+            try:
+                _store_sub(item, k, tmp)
+                done.add(k)
+            except OSError:
+                _sub_status(item, k, "retry")
+        log.info("cached subtitles item %s: %d tracks in one pass (%.0fs)", item["id"], len(done), time.time() - t0)
+        return done
+    except OSError:
+        for k in emb:
+            _sub_status(item, k, "retry")
+        return done
+    finally:
+        if yieldable:
+            _clear(p)
+        for tmp in outs.values():
+            try:
+                Path(tmp).unlink()
+            except OSError:
+                pass
+
+
+def subs_inflight(item_id):
+    with _lock:
+        t = _inflight.get(item_id)
+        return bool(t is not None and t.is_alive())
+
+
+def _recent_failure(item, keys):
+    now = int(time.time())
+    for k in keys:
+        r = db.row("SELECT status, checked_at, attempts FROM subtitle_cache WHERE item_id=? AND key=?", (item["id"], k))
+        if not r or r.get("status") != "retry":
+            return False
+        if now - int(r.get("checked_at") or 0) >= SUB_FAILED_COOLDOWN_S:
+            return False
+    return bool(keys)
+
+
+def ensure_subs_async(item, wait_first_seg=SUB_FIRST_SEG_WAIT_S):
+    """Start (once per item) a background pass that caches every missing text track.
+    Returns True when a new pass was started."""
+    keys = missing_sub_keys(item)
+    if not keys or _recent_failure(item, keys):
+        return False
+    iid = item["id"]
+    with _lock:
+        t = _inflight.get(iid)
+        if t is not None and t.is_alive():
+            return False
+
+        def run():
+            try:
+                deadline = time.time() + wait_first_seg
+                while time.time() < deadline and busy() and not first_segment_ready(iid):
+                    time.sleep(0.25)
+                extract_item_subs(item, keys, timeout=SUB_PASS_TIMEOUT_S, yieldable=False)
+            except Exception:
+                log.exception("subtitle pass item %s", iid)
+            finally:
+                with _lock:
+                    if _inflight.get(iid) is threading.current_thread():
+                        _inflight.pop(iid, None)
+
+        t = threading.Thread(target=run, name="subs-%s" % iid, daemon=True)
+        _inflight[iid] = t
+    t.start()
+    return True
+
+
+def wait_sub(item, key, timeout):
+    """Wait up to `timeout` seconds for a cached VTT (used so a fast pass can still answer)."""
+    deadline = time.time() + max(0.0, timeout)
+    while True:
+        hit = sub_get(item, key)
+        if hit or time.time() >= deadline:
+            return hit
+        time.sleep(0.1)
+
+
 def _keys_for(item):
     keys = []
     try:
@@ -372,25 +564,20 @@ def _keys_for(item):
 
 
 def _do_one_subtitle():
-    # newest videos first, then anything marked pending/retry whose backoff has passed
+    # newest videos first; one pass per item caches every missing text track
     now = int(time.time())
     rows = db.rows(
-        "SELECT i.id, i.path, i.mtime, i.external_subs, i.subtitle_streams, sc.key, sc.status, sc.checked_at, sc.attempts "
-        "FROM items i LEFT JOIN subtitle_cache sc ON sc.item_id=i.id "
+        "SELECT i.id, i.path, i.mtime, i.external_subs, i.subtitle_streams "
+        "FROM items i "
         "WHERE i.media_type='video' AND i.probed=1 "
         "AND (i.subtitle_streams LIKE '%\"text\": true%' OR i.subtitle_streams LIKE '%\"text\":true%' "
         "     OR (i.external_subs IS NOT NULL AND i.external_subs != '' AND i.external_subs != '[]')) "
         "ORDER BY i.added_at DESC LIMIT 80")
-    for row in rows:
-        item = row
-        keys = _keys_for(item)
-        if not keys:
+    for item in rows:
+        if subs_inflight(item["id"]):
             continue
-        # If this row is already a specific key, only consider that one; else pick first missing
-        want = [row["key"]] if row.get("key") else keys
-        for key in (want if row.get("key") else keys):
-            if key not in keys:
-                continue
+        keys = []
+        for key in text_sub_keys(item):
             cached = db.row("SELECT status, mtime, checked_at, attempts FROM subtitle_cache WHERE item_id=? AND key=?",
                             (item["id"], key))
             if cached and cached.get("status") == "ready" and cached.get("mtime") == item.get("mtime"):
@@ -399,7 +586,9 @@ def _do_one_subtitle():
                 delay = min(21600, SUB_RETRY_S * max(1, int(cached.get("attempts") or 1)))
                 if cached.get("checked_at") and now - int(cached["checked_at"]) < delay:
                     continue
-            return extract_sub(item, key)
+            keys.append(key)
+        if keys:
+            return bool(extract_item_subs(item, keys, timeout=SUB_PASS_TIMEOUT_S, yieldable=True)) or True
     return False
 
 

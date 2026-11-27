@@ -104,6 +104,10 @@ h3{font-size:16px;margin:24px 0 10px}
 .li .dur{color:var(--muted);flex:none;font-variant-numeric:tabular-nums}
 .li .thumb{width:160px;aspect-ratio:16/9;border-radius:6px;background:var(--panel2) center/cover;flex:none;position:relative;overflow:hidden}
 .li .thumb .bar{position:absolute;left:0;bottom:0;height:3px;background:var(--acc)}
+.li.ep{align-items:center;gap:16px;padding:12px 8px}
+.li.ep .thumb.portrait{width:86px;aspect-ratio:2/3;border-radius:8px;background:var(--panel2) center/cover no-repeat}
+.li.ep .ep-code{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--muted);margin-bottom:2px}
+.li.ep .ttl b{font-size:15.5px;font-weight:700;letter-spacing:-.01em}
 .li.playing{color:var(--acc-text)}
 .li .w{color:var(--ok);font-size:12px}
 /* settings */
@@ -371,6 +375,8 @@ td .btn{margin:0 4px 4px 0}
   .ab-meta{width:120px}
   .form{grid-template-columns:1fr}
   .li .thumb{width:110px}
+  .li.ep .thumb.portrait{width:72px}
+  .detail .poster.series:not(.thumb){width:min(58vw,260px);margin:0 auto;aspect-ratio:2/3}
 }
 .art-split{margin-top:26px;border-top:1px solid var(--line,#2a2f3a);padding-top:14px}
 /* 1.3 */
@@ -618,11 +624,12 @@ body.selecting #lib-body .card .qplay{display:none}
 .detail-bg~.detail .overview{color:#e4e6ea}
 .detail-bg~.detail .meta,.detail-bg~.detail .tagline,.detail-bg~.dsec .muted,.detail-bg~.dsec .person .pc,.detail-bg~.detail .credits-line .muted{color:#b4b9c3}
 /* 1.4.4: bigger poster on the details page (cached TMDB w500 image, so it stays sharp) */
-.detail .poster:not(.landscape):not(.square){width:clamp(240px,23vw,340px);box-shadow:0 14px 40px rgba(0,0,0,.55)}
+.detail .poster:not(.landscape):not(.square):not(.series):not(.thumb){width:clamp(240px,23vw,340px);box-shadow:0 14px 40px rgba(0,0,0,.55)}
 .detail .poster.square{width:clamp(220px,22vw,320px)}
+.detail .poster.series:not(.thumb){width:clamp(200px,18vw,280px);aspect-ratio:2/3;box-shadow:0 14px 40px rgba(0,0,0,.55)}
 .detail{gap:34px}
 @media (max-width:820px){
-  .detail .poster:not(.landscape):not(.square),.detail .poster.square{width:min(64vw,270px);margin:0 auto}
+  .detail .poster:not(.landscape):not(.square):not(.series):not(.thumb),.detail .poster.square{width:min(64vw,270px);margin:0 auto}
   .detail{gap:22px}
 }
 /* 1.4.5: details page -- "..." menu instead of File & playback / Admin card; bigger Similar movies posters */
@@ -642,7 +649,7 @@ body.selecting #lib-body .card .qplay{display:none}
 .strip.sim .card .t{font-size:15px}
 @media (max-width:820px){.strip.sim{grid-auto-columns:min(40vw,170px);gap:14px}.more-menu{position:fixed;left:12px;right:12px;top:auto;bottom:12px;max-width:none;z-index:45;padding:8px}.more-menu .mi{padding:12px}}
 /* 1.4.6: bigger details page -- 550 px poster on big screens, larger description, bigger cast photos, 330 px similar posters */
-.detail .poster:not(.landscape):not(.square){width:clamp(240px,34.4vw,550px)}
+.detail .poster:not(.landscape):not(.square):not(.series):not(.thumb){width:clamp(240px,34.4vw,550px)}
 .detail .poster.square{width:clamp(220px,28vw,450px)}
 .detail .info{min-width:300px}
 .detail h1{font-size:clamp(28px,2.2vw,38px)}
@@ -656,9 +663,10 @@ body.selecting #lib-body .card .qplay{display:none}
 .cast-strip .person .pc{font-size:14px}
 .strip.sim{grid-auto-columns:clamp(190px,20.6vw,330px);gap:22px}
 .strip.sim .card .t{font-size:16px}
-@media (min-width:821px) and (max-width:1000px){.detail .poster:not(.landscape):not(.square){width:30vw}}
+@media (min-width:821px) and (max-width:1000px){.detail .poster:not(.landscape):not(.square):not(.series):not(.thumb){width:30vw}}
 @media (max-width:820px){
-  .detail .poster:not(.landscape):not(.square),.detail .poster.square{width:min(70vw,300px)}
+  .detail .poster:not(.landscape):not(.square):not(.series):not(.thumb),.detail .poster.square{width:min(70vw,300px)}
+  .detail .poster.series:not(.thumb){width:min(58vw,260px);margin:0 auto}
   .detail .overview{font-size:17px}
   .detail .tagline{font-size:15.5px}
   .detail .credits-line{font-size:15px}
@@ -989,7 +997,7 @@ html.pl-pseudo-fs #player.fit-fill video{object-fit:cover}
 @media (max-width:820px){
   .m-only{display:inline}
   .d-only{display:none!important}
-  .top{position:absolute;left:0;right:0;top:0;z-index:25;gap:6px;padding:calc(8px + env(safe-area-inset-top)) 14px 8px;border-bottom:1px solid var(--line);background:var(--panel);box-shadow:0 8px 24px rgba(0,0,0,.28)}
+  .top{position:absolute;left:0;right:0;top:0;z-index:25;gap:6px;padding:calc(8px + env(safe-area-inset-top)) 14px 8px;border-bottom:1px solid transparent;background:transparent;box-shadow:none}
   .top .menu,#menubtn,.top #search,.top .snd-btn{display:none!important}
   .top-brand{margin-right:auto}
   .top-brand img{height:30px}
@@ -1718,6 +1726,7 @@ html.tv-mode #acct-page-logout:focus,html.tv-mode #acct-page-logout:focus-visibl
   -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.12);
   box-shadow:0 10px 30px rgba(0,0,0,.4);color:#fff}
 .pl-upnext-art{width:112px;min-width:112px;height:63px;border-radius:8px;background:#111 center/cover no-repeat}
+.pl-upnext-art.portrait{width:72px;min-width:72px;height:108px}
 .pl-upnext-k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#ccc}
 .pl-upnext-title{font-weight:700;margin:2px 0 4px;line-height:1.3}
 .pl-upnext-sub{font-size:13px;color:#ccc;margin-bottom:10px}
@@ -1748,27 +1757,33 @@ html.tv-mode .pl-skip:focus,html.tv-mode .pl-skip.tv-focused{outline:3px solid #
 .card .art .badge.off{background:rgba(20,12,28,.82);color:#fff;font-weight:700;letter-spacing:.02em}
 
 
-/* 2.5.2 / 2.5.4: on phones, a movie/show details page lets the backdrop show through the top bar.
-   A dark scrim keeps the icons readable. 2.5.4: the bar stays transparent while you scroll
-   (no frosted or gray glass). */
+/* 2.5.7: on every phone screen (Home, Libraries, Search, Downloads, Settings,
+   lists, and movie/show details) the top bar stays see-through over the page
+   (#0F1115, or a details backdrop). A soft top fade and icon shadows keep the
+   controls readable. The bar never switches to frosted or gray glass.
+   2.5.2 / 2.5.4 first applied this on details pages only. */
 @media (max-width:820px){
-  html.detail-top:not(.tv-mode) .top{
+  html:not(.tv-mode) .top{
     background:transparent;border-bottom-color:transparent;box-shadow:none
   }
-  html.detail-top:not(.tv-mode) .top::after{
+  html:not(.tv-mode) .top::after{
     content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
-    background:linear-gradient(180deg,rgba(0,0,0,.62) 0%,rgba(0,0,0,.28) 55%,rgba(0,0,0,.06) 100%)
+    background:linear-gradient(180deg,rgba(0,0,0,.55) 0%,rgba(0,0,0,.22) 60%,rgba(0,0,0,.04) 100%)
   }
-  html.detail-top:not(.tv-mode) .top > *{position:relative;z-index:1}
-  html.detail-top:not(.tv-mode) .top .top-brand img,
-  html.detail-top:not(.tv-mode) .top .m-ico,
-  html.detail-top:not(.tv-mode) .top .ss-pill,
-  html.detail-top:not(.tv-mode) .top .avatar{
+  html:not(.tv-mode) .top > *{position:relative;z-index:1}
+  html:not(.tv-mode) .top .top-brand img,
+  html:not(.tv-mode) .top .m-ico,
+  html:not(.tv-mode) .top .ss-pill,
+  html:not(.tv-mode) .top .avatar{
     filter:drop-shadow(0 1px 3px rgba(0,0,0,.8))
   }
-  html.detail-top:not(.tv-mode) .top .ss-pill b,
-  html.detail-top:not(.tv-mode) .top .ss-pill .ss-k{
+  html:not(.tv-mode) .top .ss-pill b,
+  html:not(.tv-mode) .top .ss-pill .ss-k{
     text-shadow:0 1px 4px rgba(0,0,0,.85)
+  }
+  /* Details pages keep a slightly stronger fade over the artwork. */
+  html.detail-top:not(.tv-mode) .top::after{
+    background:linear-gradient(180deg,rgba(0,0,0,.62) 0%,rgba(0,0,0,.28) 55%,rgba(0,0,0,.06) 100%)
   }
   /* Show pages keep the sharp hero on desktop; on a phone the blur fills the screen, including under the header. */
   html.detail-top:not(.tv-mode) .detail-bg ~ .hero{display:none}

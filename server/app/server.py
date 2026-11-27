@@ -1799,6 +1799,10 @@ def show_detail(library_id: int, show: str, u=Depends(auth.require_user)):
     for e in eps:
         e.pop("title_key", None)
     eps = _with_progress(eps, u["id"])
+    try:
+        tmdb.enrich(eps)
+    except Exception:
+        log.exception("enrich show episodes")
     seasons = {}
     for e in eps:
         seasons.setdefault(e["season"] if e["season"] is not None else 0, []).append(e)
@@ -2362,9 +2366,17 @@ def item_detail(item_id: int, request: Request, disp: int = 0, dec: int = 0, noc
     # neighbours for "next episode" / album autoplay
     nxt = None
     if it["kind"] == "episode":
-        nxt = db.row("SELECT id, title, season, episode FROM items WHERE library_id=? AND show=? AND "
+        nxt = db.row("SELECT " + ITEM_COLS + " FROM items WHERE library_id=? AND show=? AND "
                      "(season > ? OR (season = ? AND episode > ?)) ORDER BY season, episode LIMIT 1",
                      (it["library_id"], it["show"], it["season"] or 0, it["season"] or 0, it["episode"] or 0))
+        if nxt:
+            try:
+                tmdb.enrich([nxt])
+            except Exception:
+                log.exception("enrich next")
+                nxt["show_poster"] = out.get("show_poster")
+                nxt["season_poster"] = out.get("season_poster")
+                nxt["show_backdrop"] = out.get("show_backdrop")
     out["next"] = nxt
     try:
         from . import skipintro
@@ -2832,10 +2844,20 @@ def stop_stream(item_id: int, player: str = "", u=Depends(auth.require_user)):
     return {"ok": True}
 
 
+SUB_REQUEST_WAIT_S = 2.0      # fix/transcode-stuck: a request never holds a worker longer than this
+
+
 @app.get("/api/items/{item_id}/subs/{key}.vtt")
 def subtitles(item_id: int, key: str, u=Depends(auth.require_user)):
-    """1.7.9: serve a cached VTT when we have one. Otherwise enqueue a low-priority extract
-    and return 202 so this request never races the first video encode on the NAS."""
+    """Serve a cached VTT when we have one. Otherwise answer at once.
+
+    fix/transcode-stuck: this used to run a full-file ffmpeg inside the request whenever the
+    opening segment was out. The Android TV player requests every text track up front and
+    does not start the video until all of them answer, so a 4K remux with 44 tracks kept the
+    TV on "Transcode 1080p" for minutes (and tied up the worker threads). Now embedded
+    tracks are cached by one background pass per title, and an uncached track gets a valid,
+    empty WebVTT with 202 straight away: the web player retries on 202, the native player
+    starts the video and picks the subtitles up next time."""
     it = _get_item(item_id)
     if not re.match(r"^[es]\d+$", key):
         raise HTTPException(404)
@@ -2847,17 +2869,19 @@ def subtitles(item_id: int, key: str, u=Depends(auth.require_user)):
     if hit:
         return Response(hit.read_bytes(), media_type="text/vtt",
                         headers={"Cache-Control": "private, max-age=86400"})
-    # Extract now only when it will not race a just-started video encode on the same NAS.
-    if (not preload.busy()) or preload.first_segment_ready(it["id"]):
-        preload.extract_sub(it, key)
+    if key.startswith("e"):
+        # a sidecar file next to the video is small: convert it now (bounded)
+        preload.extract_sub(it, key, timeout=preload.SUB_SIDECAR_TIMEOUT_S)
         hit = preload.sub_get(it, key)
-        if hit:
-            return Response(hit.read_bytes(), media_type="text/vtt",
-                            headers={"Cache-Control": "private, max-age=86400"})
-        raise HTTPException(500, "Could not convert subtitles")
-    preload.sub_enqueue(it, key, urgent=True)
-    return Response(b"", status_code=202, media_type="text/vtt",
-                    headers={"Retry-After": "1", "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    else:
+        preload.ensure_subs_async(it)
+        hit = preload.wait_sub(it, key, SUB_REQUEST_WAIT_S)
+    if hit:
+        return Response(hit.read_bytes(), media_type="text/vtt",
+                        headers={"Cache-Control": "private, max-age=86400"})
+    return Response(preload.EMPTY_VTT, status_code=202, media_type="text/vtt",
+                    headers={"Retry-After": "3", "X-Subtitles": "pending",
+                             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 # ---------------------------------------------------------------------------

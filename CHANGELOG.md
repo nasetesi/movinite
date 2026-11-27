@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.5.10 -- 2026-11-27
+A poster-art fix on top of 2.5.9, for the phone, the television, and the desktop. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only.
+
+- **Everywhere an episode, show, or season is shown, the 2:3 poster is used when one is available.** 2.5.8 already did this for Continue Watching, My List, Recently added, search results, and other home-style rows. This version extends that to the episode details page and the episode list on a show details page, and uses the same fallbacks everywhere else an episode image appears (including Up Next and the now-playing card): the series poster first, then the season poster, then the episode still as a last resort. If only a still is available, the still stays in a 16:9 box so it is not cropped into a tall frame.
+- **Episode details show the show's poster, not the wide still.** The poster is a centered 2:3 image (about 55–60% of the phone width; on a television it keeps the existing first-screen cast layout). The page backdrop uses the series backdrop when one exists. Movie details poster size is unchanged.
+- **The show details episode list uses the same poster, with SxxExx and the episode name laid out as a clean list** (portrait thumb, episode code, title, duration, and the play button). The list API now includes the series and season art so the client can pick the right image.
+- **Fixed: on the Android TV, some 4K movies with many subtitle tracks stayed on "Transcode 1080p".** Subtitles now load in the background in one pass, and playback starts right away. No new Android app needed.
+
+## 2.5.9 -- 2026-11-27
+A television search and slide-out fix on top of 2.5.8. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only. Phone and desktop search are unchanged.
+
+- **TV Search works with a dark page and an on-screen keyboard.** Opening Search used to show a solid blue screen with a faint, unfocused input and no way to type except Back. Search now stays on the dark #0F1115 theme with the slim rail still visible, autofocuses a D-pad keyboard (A–Z, 0–9, space, backspace, clear) with a white focus, and updates live results as poster rows (movies, shows, episodes using the series poster, and music). Up from the results returns to the keyboard; Left from the first key or the first result goes to the rail; Back goes home.
+- **You can move past Search in the slide-out menu.** Pausing on a menu row no longer auto-opens it, which had jumped focus back to Home as soon as you pressed Down from Search and made Libraries and Settings unreachable. Up and Down now walk every item (Profile, Home, Search, My List, each library, Settings) while the menu stays open. Right or Back closes it and returns focus to where you were. Opening with Left focuses the matching item (Home opens on Home, Search on Search, and so on) without a brief focus loss.
+- **The slide-out and the slim rail show the same items, and the open menu is wider.** The rail is Profile at the top, with Home, Search, My List, Libraries, and Settings centered below, matching the slide-out order. Because the menu is tucked away when closed, it now uses about 28% of the screen (~538px at 1080) with larger type and taller rows so library names like "Northshore Feature Films" are no longer cut off. The page behind it stays dimmed.
+
+
+## 2.5.8 -- 2026-11-27
+A card-art fix on top of 2.5.7, for the phone, the television, and the desktop. Schema stays at 15 (new optional columns on the shared-title cache only). No new Android app is needed.
+
+- **TV episode cards in home-style rows use the show's poster, not the episode still.** Continue Watching, My List, Recently watched, Recently added, search results, and other rows showed a wide 16:9 still ("the clip") for an episode, next to tall movie posters. Those cards now use the parent series' 2:3 poster, in the same size as a movie. The card title is the series name; the subtitle is SxxExx, plus the episode name when it fits. The progress bar and the watched check are unchanged. If the series has no poster, the season poster is used, then the episode still (still in a tall card). Shared (remote) episodes use the same art once both servers are on this version. Episode lists on a show details page still use the stills.
+- **On a television, focusing an episode in a row uses the series backdrop in the hero,** with the series title (and the episode code in the facts line). The show details page is unchanged.
+
+
+## 2.5.7 -- 2026-11-26
+A typography and layout fix on top of 2.5.6, for the television and for phones. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so these are server/web changes only. Desktop is unchanged.
+
+- **The first TV home poster is no longer cut off by the left rail, and the rail is slimmer.** In every home row, the first poster's left edge (and its white focus border) used to sit under the solid rail. Rows now start after the rail with a safe gap, and focusing a poster scrolls the strip so the scaled card and its border stay fully visible. The collapsed rail is narrower (about 3.5–4% of the screen) with slimmer icons. The profile icon stays pinned at the top and can be focused with the remote; the Search, Home and Libraries icons are vertically centered in the remaining space. The slide-out menu is a little narrower too.
+- **TV focus uses a single white style, not a double border.** Action buttons (Resume, Play from start, Mark watched, Download), slide-out items, and rail icons no longer draw a thick white outline plus a purple or white outer ring. Focused buttons fill white with dark text; posters and rail icons use one solid white border. The leftover "N of the top-billed" count above Cast on a movie details page is hidden on TV.
+- **The see-through phone top bar is on every screen, not just movie pages.** Home, Libraries, Search, Downloads, Settings, and lists use the same transparent header as the details pages from 2.5.4 (a soft top fade and icon shadows over the #0F1115 page, never a gray or frosted bar). Content scrolls under the bar. The bottom tab bar is unchanged. The Android app's system status bar is still the app's dark color — matching that area would need a new app build, and is not part of this update.
+
+
 ## 2.5.6 -- 2026-11-26
 A typography and first-load fix for the television, on top of 2.5.5. Schema stays at 15. No new Android app is needed — browsing on the television uses the WebView, so this is a server/web change only. Phone and desktop are unchanged.
 
