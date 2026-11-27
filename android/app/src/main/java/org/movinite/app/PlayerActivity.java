@@ -15,6 +15,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Rational;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.GestureDetector;
+import android.view.ScaleGestureDetector;
+import android.view.ViewGroup;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -106,6 +110,11 @@ public class PlayerActivity extends Activity {
     private LinearLayout menuList;
 
     private final Runnable hideChrome = () -> { if (chromeOn && !seeking && !menuOpen()) setChrome(false); };
+    private GestureDetector gestures;
+    private ScaleGestureDetector pincher;
+    private boolean pinchHandled;
+    private boolean fillCrop;
+
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             syncChrome();
@@ -242,6 +251,88 @@ public class PlayerActivity extends Activity {
         });
         seek.setOnFocusChangeListener((v, has) -> { if (has) showChrome(); });
         setChrome(true);
+        bindTouch();
+        View close = findViewById(R.id.btn_close);
+        if (close != null) close.setOnClickListener(v -> finish());
+        View fit = findViewById(R.id.btn_fit);
+        if (fit != null) fit.setOnClickListener(v -> toggleFitFill());
+    }
+
+    /** 2.4.4: tap empty video to show/hide controls; double-tap sides seek ±10s; pinch toggles fit/fill. */
+    private void bindTouch() {
+        View root = findViewById(R.id.root);
+        gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onDown(MotionEvent e) { return true; }
+            @Override public boolean onSingleTapConfirmed(MotionEvent e) {
+                if (hitInteractive(e)) return false;
+                if (menuOpen()) { hideMenu(); return true; }
+                if (chromeOn) setChrome(false);
+                else showChrome();
+                return true;
+            }
+            @Override public boolean onDoubleTap(MotionEvent e) {
+                if (hitInteractive(e)) return false;
+                int w = surface != null ? surface.getWidth() : 0;
+                int a = NativePlay.doubleTapAction(e.getX(), w);
+                if (a == NativePlay.TAP_BACK) seekBy(-10_000);
+                else if (a == NativePlay.TAP_FWD) seekBy(10_000);
+                else {
+                    if (chromeOn) setChrome(false); else showChrome();
+                }
+                return true;
+            }
+        });
+        pincher = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override public void onScaleEnd(ScaleGestureDetector d) {
+                if (d.getScaleFactor() > 1.08f && !fillCrop) toggleFitFill();
+                else if (d.getScaleFactor() < 0.92f && fillCrop) toggleFitFill();
+                pinchHandled = true;
+            }
+        });
+        if (root != null) {
+            root.setClickable(true);
+        }
+    }
+
+    private boolean hitInteractive(MotionEvent e) {
+        View root = findViewById(R.id.root);
+        if (root == null) return false;
+        View v = hit(root, e.getRawX(), e.getRawY());
+        while (v != null) {
+            int id = v.getId();
+            if (v instanceof Button || v instanceof SeekBar) return true;
+            if (id == R.id.menu || id == R.id.upnext || id == R.id.skip_row) return true;
+            if (!(v.getParent() instanceof View)) break;
+            v = (View) v.getParent();
+        }
+        return false;
+    }
+
+    private static View hit(View v, float rawX, float rawY) {
+        int[] loc = new int[2];
+        v.getLocationOnScreen(loc);
+        if (rawX < loc[0] || rawY < loc[1] || rawX >= loc[0] + v.getWidth() || rawY >= loc[1] + v.getHeight())
+            return null;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = g.getChildCount() - 1; i >= 0; i--) {
+                View child = g.getChildAt(i);
+                if (child.getVisibility() != View.VISIBLE) continue;
+                View found = hit(child, rawX, rawY);
+                if (found != null) return found;
+            }
+        }
+        return v;
+    }
+
+    private void toggleFitFill() {
+        fillCrop = !fillCrop;
+        if (surface != null)
+            surface.setResizeMode(fillCrop ? androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                : androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        View fit = findViewById(R.id.btn_fit);
+        if (fit instanceof Button) ((Button) fit).setText(fillCrop ? "Fit" : "Fill");
+        showChrome();
     }
 
     private void buildPlayer() {
@@ -775,7 +866,16 @@ public class PlayerActivity extends Activity {
     }
 
     @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (pincher != null) pincher.onTouchEvent(ev);
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) pinchHandled = false;
+        if (gestures != null && !pinchHandled) gestures.onTouchEvent(ev);
+        return super.dispatchTouchEvent(ev);
+    }
+
+    @Override
     public boolean onKeyDown(int key, KeyEvent e) {
+
         if (key == KeyEvent.KEYCODE_BACK) {
             if (menuOpen()) { hideMenu(); return true; }
             if (upNext.getVisibility() == View.VISIBLE) { cancelUpNext(); return true; }

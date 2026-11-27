@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.4 -- 2026-11-26
+A phone-app-only update on top of 2.4.3 (schema stays 14; no server change and no database upgrade).
+
+- **On phones, Play uses the in-page web player again**, the same tap-to-show controls as before 2.4. After 2.4.3 fixed the "Source error," tapping the picture in the native player did nothing: that player was built for a TV remote (the on-screen chrome was toggled only by D-pad keys, and there was no touch handler). The 2.4.4 app (versionCode 12) keeps the native Media3 player on Android TV / leanback devices, and on phones and other non-television devices `playNative` returns `ok=false` so the existing in-page player takes over. Installed server 2.4.3 already honors that, so no server install is needed.
+- **If the native player is opened anyway, taps work too.** A single tap on empty video shows or hides the controls (they still auto-hide after about four seconds while playing), the buttons and seek bar stay tappable, a double-tap on the left or right third seeks ±10 seconds, pinch or the Fill/Fit button toggles crop, and Close exits. TV D-pad behavior is unchanged.
+
 ## 2.4.3 -- 2026-11-26
 A playback fix on top of 2.4.2 (schema stays 14; no database upgrade). The native Android player also gets a small update (versionCode 11).
 

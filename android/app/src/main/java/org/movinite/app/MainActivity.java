@@ -379,10 +379,14 @@ public class MainActivity extends Activity {
         /** 2.4: real MediaCodec / AudioCapabilities / display HDR modes, for Direct Play decisions. */
         @android.webkit.JavascriptInterface
         public String decoderCaps() { return Caps.detect(MainActivity.this).toString(); }
-        /** 2.4: hand Play over to the native ExoPlayer. Session cookie stays in the WebView cookie store. */
+        /** 2.4: hand Play over to the native ExoPlayer on TV. Session cookie stays in the WebView cookie store.
+         *  2.4.4: on phones and other non-television devices return ok=false so the web app uses the
+         *  in-page player — the same tap-to-show controls as before 2.4. */
         @android.webkit.JavascriptInterface
         public String playNative(String json) {
             try {
+                if (!NativePlay.useNativePlayer(isTelevision()))
+                    return "{\"ok\":false,\"reason\":\"web-on-phone\"}";
                 final String payload = json == null ? "{}" : json;
                 runOnUiThread(() -> PlayerActivity.startFromJs(MainActivity.this, payload));
                 return "{\"ok\":true}";
