@@ -971,12 +971,26 @@ new MutationObserver(() => { if (!enhanceRows._raf) enhanceRows._raf = requestAn
   .observe(document.getElementById("view"), { childList: true, subtree: true });
 window.addEventListener("resize", () => $$(".hrow").forEach(hrowUpdate));
 
+/* 2.5.2 / 2.5.4: phone details header — transparent over the backdrop and stays that way while you scroll. */
+function clearDetailTop() {
+  const h = document.documentElement;
+  h.classList.remove("detail-top", "detail-top-scrolled");
+  h.style.removeProperty("--detail-tint");
+  h.style.removeProperty("--detail-tint-rgb");
+}
+function setDetailTop(imgUrl) {
+  if (!imgUrl) { clearDetailTop(); return; }
+  document.documentElement.classList.add("detail-top");
+  document.documentElement.classList.remove("detail-top-scrolled");
+}
+
 async function route() {
   if (!ME) return;
   const h = location.hash.replace(/^#\/?/, "");
   const parts = h.split("/").map(decodeURIComponent);
   const v = $("#view");
   v.dataset.view = parts[0] || "home";   // 1.4.9: lets CSS style the settings pages for phones
+  clearDetailTop();
   clearInterval(route._poll); route._live = null; route._token = (route._token || 0) + 1;
   try {
     switch (parts[0]) {
@@ -1677,7 +1691,8 @@ async function viewShow(libId, show) {
   const season = d.seasons.find(s => s.season === cur) || d.seasons[0];
   const total = d.seasons.reduce((a, s) => a + s.episodes.length, 0);
   const tm = d.tmdb || {};
-  let html = `<div class="hero"${heroStyle(tm.backdrop)}></div><div class="detail"><div class="poster" style="${d.poster ? `background-image:url('${thumbUrl(d.poster)}')` : ""}"></div><div class="info">
+  const showBg = tm.backdrop || d.poster;
+  let html = `${showBg ? `<div class="detail-bg detail-bg-phone" aria-hidden="true"><div class="dbg-img" style="background-image:url('${thumbUrl(showBg)}')"></div></div>` : ""}<div class="hero"${heroStyle(tm.backdrop)}></div><div class="detail"><div class="poster" style="${d.poster ? `background-image:url('${thumbUrl(d.poster)}')` : ""}"></div><div class="info">
     <h1>${esc(tm.title || d.show)}</h1><div class="meta">${d.year ? `<span>${d.year}</span>` : ""}<span>${d.seasons.length} season${d.seasons.length > 1 ? "s" : ""}</span><span>${total} episodes</span></div>
     ${metaChips(tm)}${tm.overview ? `<p class="overview">${esc(tm.overview)}</p>` : ""}
     <div class="actions"><button class="btn" id="playnext">&#9654; ${d.next.position ? "Resume" : "Play"} ${epCode(d.next)}</button>
@@ -1703,6 +1718,7 @@ async function viewShow(libId, show) {
     try { const libs = await api("/api/libraries"); const l = libs.find(x => x.id === +libId); if (l) artworkDialog(l, { show }); }
     catch (e) { toast(e.message, true); }
   };
+  setDetailTop(showBg ? thumbUrl(showBg) : null);
 }
 
 async function viewAlbum(libId, artist, album) {
@@ -2099,6 +2115,7 @@ async function viewItem(id) {
     });
   };
   if ($("#addtag2")) $("#addtag2").onclick = tagDlg;
+  setDetailTop(bgImg ? thumbUrl(bgImg) : null);
 }
 
 // 1.4.3: an actor / director and the movies in your library they are in
