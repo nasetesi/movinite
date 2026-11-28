@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.6 -- 2026-11-27
+An Android TV-only app update on top of 2.4.4 (versionCode 14). The native ExoPlayer is unchanged from 2.4.4 — this is not the shelved 2.4.5 player redesign. The phone UI is unchanged. Schema is unchanged (already 15 on 2.6.8 servers).
+
+- **The TV menu has four entries: Home, Search, Libraries and Settings.** My List, the account avatar, Activity, Downloads, Invites, Server status, Poster Sounds and the admin Settings pages are hidden on television. Libraries still opens the library list, which playback needs. The phone app is not affected.
+- **Settings shows the signed-in user, the server (name and address) and the app version (version name and build), with Change server and Sign out.** Change server opens the existing server picker and keeps the session if the address is the same server, or clears it if the host changes. Sign out asks for confirmation, ends the session, and returns to the TV sign-in screen. Back from Settings returns to Home. The remote can move between the two buttons; nothing is left unreachable.
+
 ## 2.6.8 -- 2026-11-27
 A fix on top of 2.6.7 so **remux delivery works for HEVC titles**. Schema stays at 15. No new client is needed; the Roku channel re-enables remux with a one-line change (`RemuxEnabled()` in `roku/source/utils.brs`), and the native Android TV player benefits with no APK change.
 

@@ -48,6 +48,6 @@ public class CapsTest {
 
     @Test
     public void versionMatchesRelease() {
-        assertEquals("2.4.4", BuildConfigInfo.VERSION);
+        assertEquals("2.4.6", BuildConfigInfo.VERSION);
     }
 }

@@ -176,6 +176,11 @@ public class SetupActivity extends Activity {
     }
 
     private void save(String base) {
+        String prev = Prefs.serverUrl(this);
+        // Keep the session if this is the same server; clear it when the host/port changes.
+        if (prev != null && !Prefs.sameOrigin(prev, android.net.Uri.parse(base))) {
+            Session.clear(prev);
+        }
         Prefs.setServerUrl(this, base);
         Intent i = new Intent(this, MainActivity.class);
         i.setAction(MainActivity.ACTION_OPEN);

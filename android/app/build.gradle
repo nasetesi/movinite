@@ -15,8 +15,8 @@ android {
         applicationId (project.findProperty('applicationIdOverride') ?: (System.getenv('APPLICATION_ID') ?: 'org.movinite.app'))
         minSdk 24
         targetSdk 34
-        versionCode 12
-        versionName '2.4.4'
+        versionCode 14
+        versionName '2.4.6'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     signingConfigs {
