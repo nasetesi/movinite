@@ -1,122 +1,136 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- 2.4.7: pin the actions in a footer. 1080p Android TVs often report density 320
+     (only 540dp tall). 2.4.6 used 72dp paddings and 72dp buttons in one unscrollable
+     column, so both actions were clipped below the fold and Sign out never appeared. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/tv_settings_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg"
-    android:paddingLeft="96dp"
-    android:paddingRight="96dp"
-    android:paddingTop="72dp"
-    android:paddingBottom="72dp">
+    android:orientation="vertical"
+    android:paddingLeft="48dp"
+    android:paddingRight="48dp"
+    android:paddingTop="32dp"
+    android:paddingBottom="24dp">
 
-    <LinearLayout
-        android:layout_width="720dp"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_vertical"
-        android:orientation="vertical">
-
-        <TextView
-            android:id="@+id/title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/tv_settings_title"
-            android:textColor="@color/text"
-            android:textSize="42sp"
-            android:textStyle="bold" />
+    <ScrollView
+        android:id="@+id/info_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:scrollbars="none"
+        android:overScrollMode="ifContentScrolls">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="36dp"
-            android:background="@drawable/tv_settings_card"
             android:orientation="vertical"
-            android:paddingLeft="36dp"
-            android:paddingRight="36dp"
-            android:paddingTop="28dp"
-            android:paddingBottom="28dp">
+            android:gravity="center_vertical">
 
             <TextView
+                android:id="@+id/title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/tv_settings_user"
-                android:textAllCaps="true"
-                android:textColor="@color/muted"
-                android:textSize="14sp"
-                android:letterSpacing="0.08" />
-            <TextView
-                android:id="@+id/user_value"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:text="@string/tv_settings_title"
                 android:textColor="@color/text"
-                android:textSize="26sp"
+                android:textSize="32sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:text="@string/tv_settings_server"
-                android:textAllCaps="true"
-                android:textColor="@color/muted"
-                android:textSize="14sp"
-                android:letterSpacing="0.08" />
-            <TextView
-                android:id="@+id/server_value"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:textColor="@color/text"
-                android:textSize="26sp"
-                android:textStyle="bold" />
+                android:layout_marginTop="20dp"
+                android:background="@drawable/tv_settings_card"
+                android:orientation="vertical"
+                android:paddingLeft="28dp"
+                android:paddingRight="28dp"
+                android:paddingTop="20dp"
+                android:paddingBottom="20dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:text="@string/tv_settings_version"
-                android:textAllCaps="true"
-                android:textColor="@color/muted"
-                android:textSize="14sp"
-                android:letterSpacing="0.08" />
-            <TextView
-                android:id="@+id/version_value"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:textColor="@color/text"
-                android:textSize="26sp"
-                android:textStyle="bold" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tv_settings_user"
+                    android:textAllCaps="true"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp"
+                    android:letterSpacing="0.08" />
+                <TextView
+                    android:id="@+id/user_value"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="@color/text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="@string/tv_settings_server"
+                    android:textAllCaps="true"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp"
+                    android:letterSpacing="0.08" />
+                <TextView
+                    android:id="@+id/server_value"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="@color/text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="@string/tv_settings_version"
+                    android:textAllCaps="true"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp"
+                    android:letterSpacing="0.08" />
+                <TextView
+                    android:id="@+id/version_value"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="@color/text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
         </LinearLayout>
+    </ScrollView>
 
-        <Button
-            android:id="@+id/change_server"
-            android:layout_width="match_parent"
-            android:layout_height="72dp"
-            android:layout_marginTop="36dp"
-            android:background="@drawable/tv_btn_primary"
-            android:focusable="true"
-            android:focusableInTouchMode="true"
-            android:nextFocusDown="@id/sign_out"
-            android:text="@string/tv_change_server"
-            android:textAllCaps="false"
-            android:textColor="@color/text"
-            android:textSize="22sp"
-            android:textStyle="bold" />
+    <Button
+        android:id="@+id/change_server"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="20dp"
+        android:background="@drawable/tv_btn_primary"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:nextFocusDown="@id/sign_out"
+        android:text="@string/tv_change_server"
+        android:textAllCaps="false"
+        android:textColor="@color/text"
+        android:textSize="20sp"
+        android:textStyle="bold" />
 
-        <Button
-            android:id="@+id/sign_out"
-            android:layout_width="match_parent"
-            android:layout_height="72dp"
-            android:layout_marginTop="16dp"
-            android:background="@drawable/tv_btn_ghost"
-            android:focusable="true"
-            android:focusableInTouchMode="true"
-            android:nextFocusUp="@id/change_server"
-            android:text="@string/tv_sign_out"
-            android:textAllCaps="false"
-            android:textColor="@color/text"
-            android:textSize="22sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-</FrameLayout>
+    <Button
+        android:id="@+id/sign_out"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/tv_btn_ghost"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:nextFocusUp="@id/change_server"
+        android:text="@string/tv_sign_out"
+        android:textAllCaps="false"
+        android:textColor="@color/text"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+</LinearLayout>

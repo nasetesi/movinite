@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.7 -- 2026-11-27
+A follow-up to the Android TV Settings screen in 2.4.6 (versionCode 15). The phone UI and the native player are unchanged.
+
+- **Sign out and Change server stay on screen.** 2.4.6 laid the Settings page out as one tall unscrollable column with 72dp paddings and 72dp buttons. A 1080p Android TV often reports density 320, so the screen is only 540dp tall (720p at that density is 360dp) and both actions were clipped below the fold — Sign out never appeared, and neither button was in the focus tree. The actions are now pinned in a footer so they stay visible and D-pad focusable, and the user/server/version details can scroll if needed.
+
 ## 2.4.6 -- 2026-11-27
 An Android TV-only app update on top of 2.4.4 (versionCode 14). The native ExoPlayer is unchanged from 2.4.4 — this is not the shelved 2.4.5 player redesign. The phone UI is unchanged. Schema is unchanged (already 15 on 2.6.8 servers).
 

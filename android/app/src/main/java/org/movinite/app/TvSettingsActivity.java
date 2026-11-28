@@ -14,7 +14,7 @@ import android.widget.TextView;
 import org.json.JSONObject;
 
 /**
- * Android TV Settings (2.4.6): signed-in user, server name + host, app version,
+ * Android TV Settings (2.4.7): signed-in user, server name + host, app version,
  * plus Change server and Sign out. Phones do not open this screen.
  */
 public class TvSettingsActivity extends Activity {
@@ -124,7 +124,7 @@ public class TvSettingsActivity extends Activity {
             if (Build.VERSION.SDK_INT >= 28) return (int) p.getLongVersionCode();
             return p.versionCode;
         } catch (Exception e) {
-            return 14;
+            return 15;
         }
     }
 }
