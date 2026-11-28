@@ -52,13 +52,13 @@ for bad in ("tukuia.com", "Waimea", "Sunset", "nasetesi", "naseaho", "192.168.11
 print("preload yields for Direct Play")
 check("def note_direct_play" in pl, "preload.note_direct_play exists")
 check("DIRECT_BUSY_S" in pl, "direct-play busy window is named")
-check("preload.yield_to_playback()" in srv and "preload.note_direct_play()" in srv,
+check("preload.yield_to_playback(" in srv and "preload.note_direct_play()" in srv,
       "direct_file yields and notes Direct Play")
-check(srv.find("def direct_file") < srv.find("preload.yield_to_playback()") or
+check(srv.find("def direct_file") < srv.find("preload.yield_to_playback(") or
       "def direct_file" in srv, "direct_file is present")
 # yield happens in the direct_file body, before opening the file
 df = srv.split("def direct_file", 1)[1].split("\n@", 1)[0]
-check("yield_to_playback()" in df and "note_direct_play()" in df,
+check("yield_to_playback(" in df and "note_direct_play()" in df,
       "yield and note are inside direct_file")
 check("note_direct_play()" in srv.split("def _range_response", 1)[1].split("def direct_file", 1)[0],
       "range reads refresh note_direct_play")
@@ -78,8 +78,9 @@ check("function armStartWatch" in appjs and "function clearStartWatch" in appjs,
       "arm/clear start watch helpers")
 check('fallback("no picture yet")' in appjs, "timeout falls back with no picture yet")
 check("armStartWatch();" in appjs, "startStream arms the watch")
-check("function hideWait() { clearStartWatch();" in appjs or "clearStartWatch(); const box" in appjs,
-      "hideWait clears the start watch")
+# 2.6.5: hideWait only clears the watch once videoWidth > 0; still must call it.
+hwfn = appjs.split("function hideWait", 1)[1].split("function ", 1)[0]
+check("clearStartWatch()" in hwfn, "hideWait talks to the start watch")
 check("function teardownVideo" in appjs and "clearStartWatch();" in appjs,
       "teardown clears the start watch")
 

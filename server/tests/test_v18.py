@@ -115,7 +115,7 @@ def main():
     print("yield on play")
     check("def yield_to_playback" in pl and "def jobs" in pl and "def run_cmd" in pl, "preload exposes yield/jobs/run_cmd")
     check("subprocess.Popen" in pl and 'start_new_session=True' in pl, "subtitle extract is a killable Popen")
-    check("preload.yield_to_playback()" in tc, "Session.start and kickoff yield to playback")
+    check("preload.yield_to_playback(" in tc, "Session.start and kickoff yield to playback")
     check("if busy():" in pl and "time.time() - t0 > 8" not in pl, "prefetch abandons as soon as a viewer arrives")
 
     p = subprocess.Popen(["sleep", "30"], start_new_session=True)

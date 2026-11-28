@@ -158,11 +158,14 @@ def jobs():
     return {"running": 1 if running else 0, "kind": kind}
 
 
-def yield_to_playback():
+def yield_to_playback(item_id=None, keep_sid=None):
     """1.8: stop an in-flight subtitle/prefetch/remux job the moment a stream starts.
 
     extract_sub used to run ffmpeg to completion even after someone pressed play,
     which kept the NAS busy and delayed the first picture (about 4.6s in the 1.7.9 install).
+
+    2.6.5: also pause a runaway transcode of the same file (or any looping
+    session with no output) so it cannot starve a new Direct Play or transcode.
     """
     with _lock:
         p = _job.get("proc")
@@ -176,6 +179,11 @@ def yield_to_playback():
         offline.yield_now()       # 2.0: pause a download transcode too (it carries on when streaming is idle)
     except Exception:
         pass
+    try:
+        from . import transcode
+        transcode.yield_runaway(item_id=item_id, keep_sid=keep_sid)
+    except Exception:
+        log.exception("yield_runaway")
     kick()
 
 

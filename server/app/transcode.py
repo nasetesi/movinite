@@ -32,6 +32,11 @@ HW_STALL_S = 20          # 1.5.2: a GPU run that makes no segment in this long f
 HW_RETRY_MAX = 1          # 1.7.7: one extra hardware launch after an unexpected VAAPI/NVENC exit
 HW_RETRY_BACKOFF_S = 1.5  # wait before that retry so we never tight-loop
 LOG_TAIL_N = 50           # ffmpeg stderr lines to copy into the journal on a non-zero exit
+# 2.6.5: stop a teardown/restart loop when a GPU run produces no output and the
+# CPU fallback (or a later retry of the same file) is killed and relaunched.
+EMPTY_RESTART_MAX = 3
+EMPTY_RESTART_WINDOW_S = 60.0
+EMPTY_RESTART_COOLDOWN_S = 45.0
 
 PROFILES = {
     # name: (max height, video kbps, audio kbps)
@@ -115,12 +120,22 @@ def profile_rank(base):
         return -1
 
 
+# 2.6.5: a report below this is treated as a client bug, not a 360p screen.
+# 360p's box is 640; 88 (a Roku channel bug: disp=88 dec=88) is far below any real panel.
+MIN_PLAUSIBLE_PX = 480
+# When the client sent a size but every value was bogus, cap at 1080p instead of 360p.
+BOGUS_DISPLAY_CAP = "1080p"
+
+
 def device_cap_base(disp_px=0, dec_px=0):
     """Highest profile whose box longer side fits the tightest of the display and decoder limits.
 
     disp_px / dec_px are 0 or missing when unknown (no cap from that source).
     A few pixels of slack cover odd sizes like 1918.
+    2.6.5: values below MIN_PLAUSIBLE_PX are ignored. If the client reported
+    only bogus sizes, return BOGUS_DISPLAY_CAP (1080p) rather than 360p.
     """
+    reported = False
     limit = 0
     for v in (disp_px, dec_px):
         try:
@@ -128,9 +143,12 @@ def device_cap_base(disp_px=0, dec_px=0):
         except (TypeError, ValueError):
             v = 0
         if v > 0:
+            reported = True
+            if v < MIN_PLAUSIBLE_PX:
+                continue
             limit = v if limit <= 0 else min(limit, v)
     if limit <= 0:
-        return None
+        return BOGUS_DISPLAY_CAP if reported else None
     cap = "360p"
     for p in QUALITY_LADDER:
         if PROFILE_LONG[p] <= limit + 16:
@@ -559,6 +577,9 @@ class Session:
         rc = self._reap(planned=False)
         if self.failed or getattr(self, "destroyed", False):
             return
+        # 2.6.5: a CPU fallback that is rate-limited must not be killed and relaunched.
+        if restart_blocked(self):
+            return
         died_empty = (self.started_at and self.profile != "remux" and not self._ready(self.start_seg))
         unexpected = (self.started_at and not self._planned_stop
                       and (died_empty or (rc not in (None, 0) and rc is not True)))
@@ -681,12 +702,20 @@ class Session:
         return cmd
 
     def start(self, seg):
+        # 2.6.5: do not kill a running encode only to find we are backing off.
+        if getattr(self, "destroyed", False):
+            return
+        if restart_blocked(self):
+            remain = max(0.0, restart_blocked_until(self) - time.time())
+            log.warning("transcode %s: backing off restart for %.0fs (too many empty starts)",
+                        self.sid, remain)
+            return
         self.stop()
         if getattr(self, "destroyed", False):
             return
         try:
             from . import preload
-            preload.yield_to_playback()
+            preload.yield_to_playback(item_id=self.item.get("id"), keep_sid=self.sid)
         except Exception:
             pass
         if self.profile == "remux":
@@ -699,12 +728,19 @@ class Session:
         self.started_at = time.time()
         cmd = self._cmd(seg)
         log.info("transcode %s start seg %d [%s/%s]: %s", self.sid, seg, self.encoder, self.stage, " ".join(cmd))
-        errf = open(self.dir / "ffmpeg.log", "ab")
+        # 2.6.5: destroy() may have removed the session dir between stop() and here.
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            errf = open(self.dir / "ffmpeg.log", "ab")
+        except OSError as e:
+            log.warning("transcode %s: cannot open ffmpeg.log (%s)", self.sid, e)
+            return
         self._planned_stop = False
         self.last_rc = None
         self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf, start_new_session=True)
         errf.close()
         self.paused = False
+        note_empty_start(self)
 
     def stop(self):
         p = self.proc
@@ -818,10 +854,15 @@ class Session:
             if not self.running():
                 if self._ready(n):
                     return self.seg_path(n)
+                if self.failed or getattr(self, "destroyed", False) or restart_blocked(self):
+                    return None
                 with self.lock:
                     if not self.running() and not self._ready(n) and not self.failed and not getattr(self, "destroyed", False):
                         self._handle_not_running(n)
-                deadline = max(deadline, time.time() + timeout)
+                # 2.6.5: only extend the wait when a new process actually started.
+                # A backoff/no-op must not loop forever by pushing the deadline out.
+                if self.running():
+                    deadline = max(deadline, time.time() + timeout)
                 continue
             if (self.stage != "cpu" and self.profile != "remux" and time.time() - self.started_at > HW_STALL_S
                     and not self._ready(self.start_seg)):
@@ -950,6 +991,122 @@ def max_transcodes():
     return config.MAX_TRANSCODES
 
 
+# 2.6.5: empty-start bookkeeping survives destroy/recreate (same session id)
+# so a client that closes and re-requests cannot tight-loop ffmpeg on one file.
+_sid_empty_starts = {}
+_sid_backoff_until = {}
+_restart_guard_lock = threading.Lock()
+
+
+def _trim_times(times, now, window):
+    return [t for t in (times or []) if now - t < window]
+
+
+def restart_blocked_until(session):
+    """Epoch seconds until this session (or its sid) may start ffmpeg again."""
+    now_sid = getattr(session, "sid", "") or ""
+    sess_until = getattr(session, "_backoff_until", 0) or 0
+    with _restart_guard_lock:
+        sid_until = _sid_backoff_until.get(now_sid, 0) or 0
+    return max(sess_until, sid_until)
+
+
+def restart_blocked(session, now=None):
+    now = time.time() if now is None else now
+    return restart_blocked_until(session) > now
+
+
+def note_empty_start(session, now=None):
+    """Record a start that has no segment yet. After EMPTY_RESTART_MAX in
+    EMPTY_RESTART_WINDOW_S, further starts for this session id back off."""
+    now = time.time() if now is None else now
+    try:
+        has_out = session._ready(session.start_seg) or session.highest_done() >= session.start_seg
+    except OSError:
+        has_out = False
+    if has_out:
+        return
+    sid = getattr(session, "sid", "") or ""
+    rec = _trim_times(getattr(session, "_empty_starts", []) or [], now, EMPTY_RESTART_WINDOW_S)
+    rec.append(now)
+    session._empty_starts = rec
+    with _restart_guard_lock:
+        times = _trim_times(_sid_empty_starts.get(sid, []), now, EMPTY_RESTART_WINDOW_S)
+        times.append(now)
+        _sid_empty_starts[sid] = times
+        if len(times) >= EMPTY_RESTART_MAX or len(rec) >= EMPTY_RESTART_MAX:
+            until = now + EMPTY_RESTART_COOLDOWN_S
+            _sid_backoff_until[sid] = until
+            session._backoff_until = until
+            log.warning("transcode %s: rate-limiting restarts until +%.0fs (%d empty starts in %.0fs)",
+                        sid, EMPTY_RESTART_COOLDOWN_S, len(times), EMPTY_RESTART_WINDOW_S)
+
+
+def clear_restart_guard(sid=None):
+    """Tests (and a successful later playback) can reset the sid counters."""
+    with _restart_guard_lock:
+        if sid is None:
+            _sid_empty_starts.clear()
+            _sid_backoff_until.clear()
+        else:
+            _sid_empty_starts.pop(sid, None)
+            _sid_backoff_until.pop(sid, None)
+
+
+def is_runaway(session, now=None, item_id=None):
+    """True when a session has produced no output and is stalled or looping.
+
+    A first attempt that has been running for less than HW_STALL_S is not
+    runaway: it may still be warming up. Same-file yield uses this to pause
+    the looping transcode without touching a healthy new stream.
+    """
+    now = time.time() if now is None else now
+    if getattr(session, "destroyed", False) or session.failed:
+        return False
+    if item_id is not None and session.item.get("id") != item_id:
+        return False
+    try:
+        has_out = session.highest_done() >= 0 or session._ready(session.start_seg)
+    except OSError:
+        has_out = False
+    if has_out:
+        return False
+    looping = len(getattr(session, "_empty_starts", []) or []) >= 2 or restart_blocked(session, now)
+    stalled = bool(session.started_at and (now - session.started_at) > HW_STALL_S)
+    return looping or stalled
+
+
+def yield_runaway(item_id=None, keep_sid=None):
+    """Stop transcodes that are looping with no output so a new stream can use the disk.
+
+    When item_id is set, only sessions for that file are considered. The
+    current session (keep_sid) is left alone so a new playback is not stopped.
+    """
+    now = time.time()
+    with _slock:
+        sessions = list(_sessions.values())
+    stopped = 0
+    for s in sessions:
+        if keep_sid and s.sid == keep_sid:
+            continue
+        if item_id is not None and s.item.get("id") != item_id:
+            continue
+        if not is_runaway(s, now=now):
+            continue
+        log.warning("transcode %s: yielding runaway session (no output) for item %s",
+                    s.sid, s.item.get("id"))
+        try:
+            s.stop()
+        except Exception:
+            log.exception("transcode %s: failed to stop runaway session", s.sid)
+        until = now + EMPTY_RESTART_COOLDOWN_S
+        s._backoff_until = max(getattr(s, "_backoff_until", 0) or 0, until)
+        with _restart_guard_lock:
+            _sid_backoff_until[s.sid] = max(_sid_backoff_until.get(s.sid, 0) or 0, until)
+        stopped += 1
+    return stopped
+
+
 def get_session(item, profile, audio_idx, user_id, player_id="", surr=0, burn=0, acopy=0):
     pid = normalize_player(player_id)
     surr = 6 if int(surr or 0) >= 6 else 0
@@ -992,7 +1149,7 @@ def kickoff(session, start_seg=0):
         return
     try:
         from . import preload
-        preload.yield_to_playback()
+        preload.yield_to_playback(item_id=session.item.get("id"), keep_sid=session.sid)
     except Exception:
         pass
     start_seg = max(0, min(int(start_seg or 0), max(0, session.nseg - 1)))

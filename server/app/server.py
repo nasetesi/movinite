@@ -2697,7 +2697,7 @@ def direct_file(item_id: int, request: Request, download: int = 0, u=Depends(aut
     # sit on "Waiting for the first picture…" while ffprobe still held the NAS.
     try:
         from . import preload
-        preload.yield_to_playback()
+        preload.yield_to_playback(item_id=item_id)
         preload.note_direct_play()
     except Exception:
         pass

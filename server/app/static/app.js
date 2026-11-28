@@ -4046,7 +4046,11 @@ function canDirect(it) {
     return t ? "yes" : "try";
   }
   if (pb.direct_maybe) {
-    if (it.vcodec === "hevc" && !clientCaps().hevc_el && !clientCaps().hevc_mse) return "no";
+    // 2.6.5: "probably" canPlayType for HEVC / 4K is too optimistic on the phone
+    // web player and leaves the user stuck on Direct Play. Send these to transcode.
+    const isHevc = it.vcodec === "hevc" || it.vcodec === "h265";
+    const longSide = Math.max(it.width || 0, it.height || 0);
+    if (isHevc || longSide >= 2100) return "no";
     if (it.acodec === "ac3" && !video.canPlayType('audio/mp4; codecs="ac-3"')) return "no";
     if (it.acodec === "eac3" && !video.canPlayType('audio/mp4; codecs="ec-3"')) return "no";
     return "try";
@@ -4370,7 +4374,7 @@ function showWait(title) {
   const h = $("#pl-wait-t"); if (h) h.textContent = title || "Starting…";
   box.classList.remove("hidden");
 }
-function hideWait() { clearStartWatch(); const box = $("#pl-wait"); if (box) box.classList.add("hidden"); }
+function hideWait() { if (video && video.videoWidth > 0) clearStartWatch(); const box = $("#pl-wait"); if (box) box.classList.add("hidden"); }
 function modeLabel(m) {
   const cap = P && P.cappedTo ? ` · Auto-capped to ${qualName(P.cappedTo)}` : "";
   return (m === "direct" ? "Direct play" : m === "remux" ? "Remux (original video)" : `Transcoding ${qualName(m)}`)
@@ -4403,7 +4407,9 @@ function armStartWatch() {
   if (!P || (P.mode !== "direct" && P.mode !== "remux")) return;
   P.startWatch = setTimeout(function () {
     if (!P || (P.mode !== "direct" && P.mode !== "remux")) return;
-    if (video.readyState >= 2 || video.videoWidth > 0) { clearStartWatch(); return; }
+    // 2.6.5: canplay / readyState can fire with no picture. Only a real
+    // videoWidth clears the 12s watchdog; otherwise fall back.
+    if (video.videoWidth > 0) { clearStartWatch(); return; }
     fallback("no picture yet");
   }, DIRECT_START_MS);
 }

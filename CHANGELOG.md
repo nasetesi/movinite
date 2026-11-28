@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.6.5 -- 2026-11-27
+A fix on top of 2.6.4 so Direct Play and transcode are not starved by a looping transcode, and so the phone web player does not get stuck on Direct Play for HEVC and 4K. Schema stays at 15. No new Android app is needed (the in-page player is served by this package). The Roku channel itself is unchanged in this release.
+
+- **Bogus client display sizes no longer cap a title at 360p.** A Roku channel bug sent `disp=88 dec=88`, and the server treated 88 pixels as a real screen, so a 4K file was transcoded to 360p and stalled. Values below 480 pixels are ignored. If the client reported only a bogus size, the cap is 1080p. A missing size is still no cap. The channel bug itself is not fixed here (`roku/` is unchanged).
+- **A transcode that produces no output no longer tears down and restarts in a tight loop.** After a VAAPI stall the session still falls back to CPU and stays there. Empty starts of the same session are rate-limited (three in 60 seconds, then a 45-second backoff). The wait loop no longer extends its deadline forever when a restart is skipped. Opening a new stream, including Direct Play of the same file, pauses a runaway transcode that still has no output, so it cannot keep the share busy.
+- **Destroying a session no longer raises `FileNotFoundError` on `ffmpeg.log`.** If the session directory is already gone, `start()` logs a warning and returns instead of crashing.
+- **The phone web player treats `direct_maybe` for HEVC or 4K as a transcode, not Direct Play.** The 12-second no-picture watchdog now clears only once `videoWidth > 0`, not on `canplay` or `readyState` alone, so a silent first-byte event cannot cancel the fallback.
+
+## 2.6.4 -- 2026-11-27
+A quick fix on top of 2.6.3 so the Roku app (and other non-browser clients) can finish sign-in. Schema stays at 15. No new Android app is needed. The Roku channel 0.1.4 reads this new JSON field and still accepts the cookie if a later server already set it.
+
+- **Password sign-in and phone-code approval now return the session token in the JSON body, as well as the `ms_session` cookie.** In 2.0–2.6.3 `/api/login` and an approved `/api/pair/poll` only set the httponly cookie and (for poll) removed `token` from the JSON. The web player is unaffected because it uses the cookie. Roku's `roUrlTransfer` often does not expose `Set-Cookie` in response headers, so the channel could sign in successfully and then show "Signed in, but no session cookie was returned," and a phone approval of the TV code never completed on the TV. The cookie is still set, so browsers and the Android app are unchanged.
+
 ## 2.6.3 -- 2026-11-27
 A quick fix on top of 2.6.2 plus a sideloadable Roku channel. Schema stays at 15. The Android app is unchanged; the new Roku app is sideloaded and is not a store release.
 
