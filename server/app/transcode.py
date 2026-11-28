@@ -28,6 +28,9 @@ AHEAD_RESUME_S = 72.0
 AHEAD_PAUSE = AHEAD_PAUSE_S   # name kept; value is seconds (was a 6s-segment count)
 AHEAD_RESUME = AHEAD_RESUME_S
 RESTART_AHEAD_S = 60.0    # restart ffmpeg only if the request is this far past the produced tip
+# 2.6.7: the HLS playlist is a VOD from segment 0, so a client mid-watch can
+# still request start=0 or seg0. Restarting there wipes the playhead encode.
+BACKWARD_SLACK = 10       # segments (~20s). Requests this far behind the playhead are stray.
 HW_STALL_S = 20          # 1.5.2: a GPU run that makes no segment in this long falls back
 HW_RETRY_MAX = 1          # 1.7.7: one extra hardware launch after an unexpected VAAPI/NVENC exit
 HW_RETRY_BACKOFF_S = 1.5  # wait before that retry so we never tight-loop
@@ -705,6 +708,14 @@ class Session:
         # 2.6.5: do not kill a running encode only to find we are backing off.
         if getattr(self, "destroyed", False):
             return
+        # 2.6.7: do not tear down a live mid-watch encode to honor start=0 / seg0.
+        # If ffmpeg already exited, restart at the playhead, not at the opening.
+        if self._should_ignore_backward(seg):
+            if self.running() or (self.proc is not None and self.proc.poll() is None):
+                log.info("transcode %s: ignoring backward start at %d (start %d last_req %d)",
+                         self.sid, max(0, int(seg or 0)), self.start_seg, self.last_req)
+                return
+            seg = self._clamp_start(seg)
         if restart_blocked(self):
             remain = max(0.0, restart_blocked_until(self) - time.time())
             log.warning("transcode %s: backing off restart for %.0fs (too many empty starts)",
@@ -782,6 +793,31 @@ class Session:
             self._journal_ffmpeg(rc)
         return rc
 
+    def _should_ignore_backward(self, seg):
+        """True when `seg` would rewind a mid-watch session to an earlier start.
+
+        The generated HLS playlist always lists segments from 0, so ExoPlayer
+        (and other VOD clients) can request seg0 or a playlist with start=0
+        while the viewer is an hour in. Restarting there kills the playhead
+        encode and the player falls over.
+        """
+        seg = max(0, int(seg or 0))
+        # Compare to start_seg, not last_req: a playlist reload with the
+        # original start=2021 must not look like a rewind just because the
+        # player has since requested later segments.
+        return seg + BACKWARD_SLACK < int(self.start_seg or 0)
+
+    def _clamp_start(self, seg):
+        """Keep a late playhead when a playlist reload arrives with start=0."""
+        seg = max(0, min(int(seg or 0), max(0, self.nseg - 1)))
+        if self._should_ignore_backward(seg):
+            keep = max(int(self.start_seg or 0), int(self.last_req or 0))
+            keep = max(0, min(keep, max(0, self.nseg - 1)))
+            log.info("transcode %s: keeping start at %d instead of %d (last_req %d)",
+                     self.sid, keep, seg, self.last_req)
+            return keep
+        return seg
+
     def running(self):
         return self.proc is not None and self.proc.poll() is None
 
@@ -805,6 +841,15 @@ class Session:
         if not cand:
             return -1
         n = min(cand)
+        # 2.6.7: leftovers from a previous run (segs 2021+ after a restart at 0)
+        # must not count as this run's output, or housekeep pauses the new
+        # encode as "ahead" before seg 0 is written.
+        if n > self.start_seg:
+            prune_floor = self.start_seg
+            if self.last_req:
+                prune_floor = max(self.start_seg, self.last_req - 40)
+            if n > prune_floor:
+                return -1
         hi = -1
         while (self.dir / ("seg%d.%s" % (n, self.ext))).exists():
             hi = n
@@ -832,6 +877,16 @@ class Session:
 
     def get_segment(self, n, timeout=60):
         self.last_access = time.time()
+        # 2.6.7: a stray seg0 from the VOD playlist must not move last_req
+        # back to 0 or restart ffmpeg at the opening.
+        if self._should_ignore_backward(n):
+            if self._ready(n):
+                return self.seg_path(n)
+            if self.running() or (self.proc is not None and self.proc.poll() is None):
+                log.info("transcode %s: ignoring backward segment %d (start %d last_req %d)",
+                         self.sid, n, self.start_seg, self.last_req)
+                return None
+            n = self._clamp_start(n)
         self.last_req = n
         with self.lock:
             if self._ready(n):
@@ -841,8 +896,12 @@ class Session:
             hi = self.highest_done()
             if not self.running():
                 # Do not relaunch the same failing GPU stage in a loop (that flipped the badge).
-                self._handle_not_running(n)
-            elif n < self.start_seg or (n - max(hi, self.start_seg)) * SEG > RESTART_AHEAD_S:
+                # 2.6.7: if ffmpeg died mid-watch, restart at the playhead, not at a stray 0.
+                self._handle_not_running(self._clamp_start(n))
+            elif n < self.start_seg:
+                # A live encode already started later; do not rewind for seg0.
+                pass
+            elif (n - max(hi, self.start_seg)) * SEG > RESTART_AHEAD_S:
                 self.start(n)
             self._resume_if_needed()
         deadline = time.time() + timeout
@@ -884,7 +943,7 @@ class Session:
             if done:
                 return max(done, key=lambda f: f.stat().st_mtime)
             if not self.running() and not self.failed and not getattr(self, "destroyed", False):
-                self._handle_not_running(max(0, min(hint, self.nseg - 1)))
+                self._handle_not_running(self._clamp_start(max(0, min(hint, self.nseg - 1))))
             first = self.start_seg
         if not self.get_segment(first, timeout):
             return None
@@ -1153,6 +1212,8 @@ def kickoff(session, start_seg=0):
     except Exception:
         pass
     start_seg = max(0, min(int(start_seg or 0), max(0, session.nseg - 1)))
+    # 2.6.7: a playlist reload often arrives without start= (defaults to 0).
+    start_seg = session._clamp_start(start_seg)
     try:
         from . import preload
         preload.apply_to_session(session, start_seg)

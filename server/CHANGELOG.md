@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.7 -- 2026-11-27
+A fix on top of 2.6.6 so a mid-watch transcode is not torn down and restarted from the opening. Schema stays at 15. No new Android app is needed (the native Android TV player, the in-page player, and the Roku channel all benefit from the server change).
+
+- **A stray start-at-zero request no longer rewinds a transcode that is already running later in the title.** The HLS playlist is a VOD list from segment 0, so a client such as the Android TV ExoPlayer can ask for `start=0` or segment 0 while you are an hour in. The server used to stop ffmpeg and start again at the opening, which wiped the playhead segments and made the player exit. A live or paused encode now keeps its place. If ffmpeg has already exited, it restarts at the playhead, not at the opening.
+- **Leftover later segments from the previous run no longer look like a huge buffer ahead of a restart at 0.** That false “ahead” figure was pausing the new encode before the first segment was written, so hardware fallback could sit on “no output after 20s.” `highest_done()` now ignores those leftovers.
+
 ## 2.6.6 -- 2026-11-27
 A small player change on top of 2.6.5: the first-load wait no longer shows a “Buffering…” line. Schema stays at 15. No new Android app is needed (the in-page player, including the phone WebView and a TV web session, is served by this package). The Roku channel and the native Android TV ExoPlayer are unchanged.
 
