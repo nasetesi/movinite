@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.6 -- 2026-11-27
+A small player change on top of 2.6.5: the first-load wait no longer shows a “Buffering…” line. Schema stays at 15. No new Android app is needed (the in-page player, including the phone WebView and a TV web session, is served by this package). The Roku channel and the native Android TV ExoPlayer are unchanged.
+
+- **A centered circular progress ring in the Movinite purple accent replaces the first-load “Buffering…” message.** Mid-play rebuffers use the same ring, without that word. The ring is determinate when the player has a real readiness signal: seconds already buffered versus a 2-second start threshold, HLS fragments loaded versus the one segment needed to start, or the server’s new `/api/items/{id}/play-start` count of transcode/remux segments ready for this viewer. If none of those are known yet, the ring spins and no percentage is invented. The 12-second no-picture fallback is unchanged, and the overlay hides only once `videoWidth > 0`.
+
 ## 2.6.5 -- 2026-11-27
 A fix on top of 2.6.4 so Direct Play and transcode are not starved by a looping transcode, and so the phone web player does not get stuck on Direct Play for HEVC and 4K. Schema stays at 15. No new Android app is needed (the in-page player is served by this package). The Roku channel itself is unchanged in this release.
 

@@ -2758,6 +2758,12 @@ def _embed_session(request):
     return None
 
 
+@app.get("/api/items/{item_id}/play-start")
+def play_start_progress(item_id: int, player: str = "", u=Depends(auth.require_user)):
+    """2.6.6: how many transcode/remux segments are ready for this viewer (first picture)."""
+    return transcode.start_progress(item_id, u["id"], player)
+
+
 @app.get("/api/items/{item_id}/hls/{profile}/index.m3u8")
 def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, start: int = 0,
                  player: str = "", caps: str = "", hevc: str = "", hevc_mse: str = "",

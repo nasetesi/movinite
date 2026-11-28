@@ -1218,6 +1218,46 @@ def list_sessions():
              "fallback": s.fallbacks[-1]["reason"] if s.fallbacks else None} for s in list(_sessions.values())]
 
 
+# 2.6.6: how far a viewer's transcode/remux is toward the first picture (honest, not estimated).
+START_SEGS_NEEDED = 1
+
+
+def start_progress(item_id, user_id, player_id=""):
+    """Segments ready at the current run versus the one segment needed to start.
+
+    Returns ready=0 and running=False when this user has no session yet. Does
+    not create or start a session.
+    """
+    pid = normalize_player(player_id)
+    ready = 0
+    running = False
+    failed = None
+    found = False
+    with _slock:
+        sessions = list(_sessions.values())
+    for s in sessions:
+        if s.item.get("id") != item_id:
+            continue
+        if getattr(s, "user_id", None) != user_id:
+            continue
+        if pid and getattr(s, "player_id", "") and getattr(s, "player_id", "") != pid:
+            continue
+        found = True
+        try:
+            hi = s.highest_done()
+        except OSError:
+            hi = -1
+        start = getattr(s, "start_seg", 0) or 0
+        n = 0 if hi < start else (hi - start + 1)
+        if n > ready:
+            ready = n
+        running = running or s.running()
+        if s.failed:
+            failed = s.failed
+    return {"ready": ready, "need": START_SEGS_NEEDED, "running": running,
+            "found": found, "failed": failed}
+
+
 def janitor_loop(stop_flag):
     # wipe leftovers from a previous run
     for d in config.TRANSCODE_DIR.glob("*"):
