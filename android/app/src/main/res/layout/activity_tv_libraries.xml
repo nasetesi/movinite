@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2.4.8: same scaffold as Settings. The list scrolls; the title stays put.
+     Rows are 68dp and laid out in a 2-column grid in code so they stay
+     readable on a 540dp-tall 1080p/320dpi TV. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tv_libraries_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:orientation="vertical"
+    android:paddingLeft="@dimen/tv_overscan_h"
+    android:paddingRight="@dimen/tv_overscan_h"
+    android:paddingTop="@dimen/tv_overscan_top"
+    android:paddingBottom="@dimen/tv_overscan_bottom">
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/tv_libraries_title"
+        android:textColor="@color/text"
+        android:textSize="@dimen/tv_title_size"
+        android:textStyle="bold" />
+
+    <ScrollView
+        android:id="@+id/lib_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="@dimen/tv_section_gap"
+        android:fillViewport="true"
+        android:focusable="false"
+        android:focusableInTouchMode="false"
+        android:descendantFocusability="afterDescendants"
+        android:scrollbars="none"
+        android:overScrollMode="ifContentScrolls">
+
+        <LinearLayout
+            android:id="@+id/lib_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+</LinearLayout>

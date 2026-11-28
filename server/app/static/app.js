@@ -4046,7 +4046,11 @@ function canDirect(it) {
     return t ? "yes" : "try";
   }
   if (pb.direct_maybe) {
-    if (it.vcodec === "hevc" && !clientCaps().hevc_el && !clientCaps().hevc_mse) return "no";
+    // 2.6.5: "probably" canPlayType for HEVC / 4K is too optimistic on the phone
+    // web player and leaves the user stuck on Direct Play. Send these to transcode.
+    const isHevc = it.vcodec === "hevc" || it.vcodec === "h265";
+    const longSide = Math.max(it.width || 0, it.height || 0);
+    if (isHevc || longSide >= 2100) return "no";
     if (it.acodec === "ac3" && !video.canPlayType('audio/mp4; codecs="ac-3"')) return "no";
     if (it.acodec === "eac3" && !video.canPlayType('audio/mp4; codecs="ec-3"')) return "no";
     return "try";
@@ -4365,12 +4369,92 @@ function setStatus(t) {
   const el = $("#pl-status"); if (el) el.textContent = t || "";
   const s = $("#pl-wait-s"); if (s) s.textContent = t || "";
 }
+
+// 2.6.6: circular start / rebuffer ring. A number is used only when we have a
+// real readiness signal (buffered seconds, HLS fragments, or the server's
+// first-segment progress). Otherwise the ring spins and we do not invent a %.
+const START_BUFFER_S = 2;
+const START_SEGS_NEED = 1;
+const RING_C = 2 * Math.PI * 26;
+let loadProgTimer = 0;
+
+function setRingProgress(frac) {
+  const ring = $("#pl-ring");
+  const fill = $("#pl-ring-fill");
+  if (!ring || !fill) return;
+  const known = frac != null && isFinite(frac) && frac >= 0;
+  if (!known) {
+    ring.classList.add("indeterminate");
+    ring.removeAttribute("aria-valuenow");
+    fill.style.strokeDashoffset = "";
+    return;
+  }
+  const p = Math.max(0, Math.min(1, frac));
+  ring.classList.remove("indeterminate");
+  ring.setAttribute("aria-valuenow", String(Math.round(p * 100)));
+  fill.style.strokeDashoffset = String(RING_C * (1 - p));
+}
+function bufferedAheadS() {
+  try {
+    const t = video.currentTime || 0;
+    const b = video.buffered;
+    for (let i = 0; i < b.length; i++) {
+      if (b.start(i) <= t + 0.25 && b.end(i) > t) return b.end(i) - t;
+    }
+  } catch (e) {}
+  return 0;
+}
+function loadProgressFrac() {
+  if (video && video.videoWidth > 0 && video.readyState >= 2) return 1;
+  const parts = [];
+  const ahead = bufferedAheadS();
+  if (ahead > 0) parts.push(Math.min(1, ahead / START_BUFFER_S));
+  if (P && P._fragsLoaded > 0) parts.push(Math.min(0.95, P._fragsLoaded / (P._fragsNeeded || START_SEGS_NEED)));
+  if (P && P._startKnown) parts.push(Math.min(0.95, (P._startReady || 0) / (P._startNeed || START_SEGS_NEED)));
+  if (!parts.length) return null;
+  return Math.max.apply(null, parts);
+}
+function tickLoadProgress() {
+  const box = $("#pl-wait");
+  if (!box || box.classList.contains("hidden")) return;
+  if (video && video.videoWidth > 0) { hideWait(); return; }
+  setRingProgress(loadProgressFrac());
+}
+function pollStartProgress() {
+  if (!P || P.mode === "direct" || !P.it) return;
+  api("/api/items/" + P.it.id + "/play-start?player=" + encodeURIComponent(playerId())).then(j => {
+    if (!P || !j) return;
+    P._startReady = +j.ready || 0;
+    P._startNeed = +j.need || START_SEGS_NEED;
+    P._startKnown = true;
+    tickLoadProgress();
+  }).catch(() => {});
+}
+function startLoadProgress() {
+  stopLoadProgress();
+  setRingProgress(loadProgressFrac());
+  loadProgTimer = setInterval(function () {
+    tickLoadProgress();
+    if (P && P.mode !== "direct" && !P._startKnown) pollStartProgress();
+    else if (P && P.mode !== "direct" && (P._startReady || 0) < (P._startNeed || START_SEGS_NEED)) pollStartProgress();
+  }, 250);
+  if (P && P.mode !== "direct") pollStartProgress();
+}
+function stopLoadProgress() {
+  if (loadProgTimer) { clearInterval(loadProgTimer); loadProgTimer = 0; }
+}
 function showWait(title) {
   const box = $("#pl-wait"); if (!box) return;
-  const h = $("#pl-wait-t"); if (h) h.textContent = title || "Starting…";
+  const h = $("#pl-wait-t"); if (h && title != null) h.textContent = title === "" ? "" : (title || "Starting…");
   box.classList.remove("hidden");
+  startLoadProgress();
 }
-function hideWait() { clearStartWatch(); const box = $("#pl-wait"); if (box) box.classList.add("hidden"); }
+function hideWait(force) {
+  if (!force && !(video && video.videoWidth > 0)) return;
+  if (video && video.videoWidth > 0) clearStartWatch();
+  const box = $("#pl-wait"); if (box) box.classList.add("hidden");
+  stopLoadProgress();
+}
 function modeLabel(m) {
   const cap = P && P.cappedTo ? ` · Auto-capped to ${qualName(P.cappedTo)}` : "";
   return (m === "direct" ? "Direct play" : m === "remux" ? "Remux (original video)" : `Transcoding ${qualName(m)}`)
@@ -4403,7 +4487,9 @@ function armStartWatch() {
   if (!P || (P.mode !== "direct" && P.mode !== "remux")) return;
   P.startWatch = setTimeout(function () {
     if (!P || (P.mode !== "direct" && P.mode !== "remux")) return;
-    if (video.readyState >= 2 || video.videoWidth > 0) { clearStartWatch(); return; }
+    // 2.6.5: canplay / readyState can fire with no picture. Only a real
+    // videoWidth clears the 12s watchdog; otherwise fall back.
+    if (video.videoWidth > 0) { clearStartWatch(); return; }
     fallback("no picture yet");
   }, DIRECT_START_MS);
 }
@@ -4413,6 +4499,11 @@ function startStream(mode, at) {
   const it = P.it;
   teardownVideo(false);
   P.mode = mode;
+  P._fragsLoaded = 0;
+  P._fragsNeeded = START_SEGS_NEED;
+  P._startReady = 0;
+  P._startNeed = START_SEGS_NEED;
+  P._startKnown = false;
   $("#pl-quality").value = mode;
   const subKey = $("#pl-subs").value;
   if (mode === "direct") {
@@ -4445,6 +4536,8 @@ function startStream(mode, at) {
       const reUp = () => { if (P && $("#pl-subs").value) addSubTrack($("#pl-subs").value, { keep: true }); };
       hls.on(Hls.Events.MEDIA_ATTACHED, reUp);
       hls.on(Hls.Events.MANIFEST_PARSED, reUp);
+      hls.on(Hls.Events.FRAG_LOADED, () => { if (P) { P._fragsLoaded = (P._fragsLoaded || 0) + 1; tickLoadProgress(); } });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => tickLoadProgress());
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = url;  // Safari native HLS
       video.addEventListener("loadedmetadata", function onMeta() { video.removeEventListener("loadedmetadata", onMeta); if (at) video.currentTime = at; });
@@ -4482,12 +4575,17 @@ video.addEventListener("error", () => {
   else if (P && P.mode === "remux" && !hls) fallback("remux failed");
   else if (P) setStatus("Playback error");
 });
-["playing", "canplay", "loadeddata"].forEach(ev => video.addEventListener(ev, () => { hideWait(); }));
+["playing", "canplay", "loadeddata", "progress"].forEach(ev => video.addEventListener(ev, () => {
+  tickLoadProgress();
+  if (video.videoWidth > 0) hideWait();
+}));
 video.addEventListener("waiting", () => {
   if (!P || video.seeking) return;
-  if (video.currentTime > 0.2) showWait("Buffering…");
-  else showWait($("#pl-wait-t") && $("#pl-wait-t").textContent ? $("#pl-wait-t").textContent : "Starting…");
-  setStatus("Waiting for the first picture…");
+  if (video.currentTime > 0.2) showWait("");   // mid-play: ring only, no "Buffering…"
+  else {
+    showWait($("#pl-wait-t") && $("#pl-wait-t").textContent ? $("#pl-wait-t").textContent : "Starting…");
+    setStatus("Waiting for the first picture…");
+  }
 });
 video.addEventListener("playing", () => { if (P) setStatus(modeLabel(P.mode)); });
 
@@ -4634,7 +4732,7 @@ function teardownVideo(stopServer) {
   clearStartWatch();
   if (hls) { hls.destroy(); hls = null; }
   video.removeAttribute("src"); $$("track", video).forEach(t => t.remove()); video.load();
-  hideWait();
+  hideWait(true);
   try { if (typeof SK !== "undefined") SK.hide(); } catch (e) {}
   if (stopServer && P) api(`/api/items/${P.it.id}/stop?player=${encodeURIComponent(playerId())}`, { method: "POST" }).catch(() => {});
 }

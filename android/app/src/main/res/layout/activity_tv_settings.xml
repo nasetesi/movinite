@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2.4.8: same TV page scaffold as Libraries (overscan, title, card, focus).
+     2.4.7: pin the actions in a footer. 1080p Android TVs often report density 320
+     (only 540dp tall). Do not put the buttons in an unscrollable tall column. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tv_settings_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:orientation="vertical"
+    android:paddingLeft="@dimen/tv_overscan_h"
+    android:paddingRight="@dimen/tv_overscan_h"
+    android:paddingTop="@dimen/tv_overscan_top"
+    android:paddingBottom="@dimen/tv_overscan_bottom">
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/tv_settings_title"
+        android:textColor="@color/text"
+        android:textSize="@dimen/tv_title_size"
+        android:textStyle="bold" />
+
+    <ScrollView
+        android:id="@+id/info_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="@dimen/tv_section_gap"
+        android:fillViewport="true"
+        android:scrollbars="none"
+        android:overScrollMode="ifContentScrolls">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/tv_card"
+            android:orientation="vertical"
+            android:paddingLeft="@dimen/tv_card_pad"
+            android:paddingRight="@dimen/tv_card_pad"
+            android:paddingTop="20dp"
+            android:paddingBottom="20dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/tv_settings_user"
+                android:textAllCaps="true"
+                android:textColor="@color/muted"
+                android:textSize="@dimen/tv_label_size"
+                android:letterSpacing="0.08" />
+            <TextView
+                android:id="@+id/user_value"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/text"
+                android:textSize="@dimen/tv_value_size"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/tv_settings_server"
+                android:textAllCaps="true"
+                android:textColor="@color/muted"
+                android:textSize="@dimen/tv_label_size"
+                android:letterSpacing="0.08" />
+            <TextView
+                android:id="@+id/server_value"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/text"
+                android:textSize="@dimen/tv_value_size"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/tv_settings_version"
+                android:textAllCaps="true"
+                android:textColor="@color/muted"
+                android:textSize="@dimen/tv_label_size"
+                android:letterSpacing="0.08" />
+            <TextView
+                android:id="@+id/version_value"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/text"
+                android:textSize="@dimen/tv_value_size"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </ScrollView>
+
+    <Button
+        android:id="@+id/change_server"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/tv_btn_height"
+        android:layout_marginTop="@dimen/tv_section_gap"
+        android:background="@drawable/tv_btn_primary"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:nextFocusDown="@id/sign_out"
+        android:text="@string/tv_change_server"
+        android:textAllCaps="false"
+        android:textColor="@color/text"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <Button
+        android:id="@+id/sign_out"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/tv_btn_height"
+        android:layout_marginTop="@dimen/tv_row_gap"
+        android:background="@drawable/tv_btn_ghost"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:nextFocusUp="@id/change_server"
+        android:text="@string/tv_sign_out"
+        android:textAllCaps="false"
+        android:textColor="@color/text"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+</LinearLayout>

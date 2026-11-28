@@ -28,10 +28,18 @@ AHEAD_RESUME_S = 72.0
 AHEAD_PAUSE = AHEAD_PAUSE_S   # name kept; value is seconds (was a 6s-segment count)
 AHEAD_RESUME = AHEAD_RESUME_S
 RESTART_AHEAD_S = 60.0    # restart ffmpeg only if the request is this far past the produced tip
+# 2.6.7: the HLS playlist is a VOD from segment 0, so a client mid-watch can
+# still request start=0 or seg0. Restarting there wipes the playhead encode.
+BACKWARD_SLACK = 10       # segments (~20s). Requests this far behind the playhead are stray.
 HW_STALL_S = 20          # 1.5.2: a GPU run that makes no segment in this long falls back
 HW_RETRY_MAX = 1          # 1.7.7: one extra hardware launch after an unexpected VAAPI/NVENC exit
 HW_RETRY_BACKOFF_S = 1.5  # wait before that retry so we never tight-loop
 LOG_TAIL_N = 50           # ffmpeg stderr lines to copy into the journal on a non-zero exit
+# 2.6.5: stop a teardown/restart loop when a GPU run produces no output and the
+# CPU fallback (or a later retry of the same file) is killed and relaunched.
+EMPTY_RESTART_MAX = 3
+EMPTY_RESTART_WINDOW_S = 60.0
+EMPTY_RESTART_COOLDOWN_S = 45.0
 
 PROFILES = {
     # name: (max height, video kbps, audio kbps)
@@ -115,12 +123,22 @@ def profile_rank(base):
         return -1
 
 
+# 2.6.5: a report below this is treated as a client bug, not a 360p screen.
+# 360p's box is 640; 88 (a Roku channel bug: disp=88 dec=88) is far below any real panel.
+MIN_PLAUSIBLE_PX = 480
+# When the client sent a size but every value was bogus, cap at 1080p instead of 360p.
+BOGUS_DISPLAY_CAP = "1080p"
+
+
 def device_cap_base(disp_px=0, dec_px=0):
     """Highest profile whose box longer side fits the tightest of the display and decoder limits.
 
     disp_px / dec_px are 0 or missing when unknown (no cap from that source).
     A few pixels of slack cover odd sizes like 1918.
+    2.6.5: values below MIN_PLAUSIBLE_PX are ignored. If the client reported
+    only bogus sizes, return BOGUS_DISPLAY_CAP (1080p) rather than 360p.
     """
+    reported = False
     limit = 0
     for v in (disp_px, dec_px):
         try:
@@ -128,9 +146,12 @@ def device_cap_base(disp_px=0, dec_px=0):
         except (TypeError, ValueError):
             v = 0
         if v > 0:
+            reported = True
+            if v < MIN_PLAUSIBLE_PX:
+                continue
             limit = v if limit <= 0 else min(limit, v)
     if limit <= 0:
-        return None
+        return BOGUS_DISPLAY_CAP if reported else None
     cap = "360p"
     for p in QUALITY_LADDER:
         if PROFILE_LONG[p] <= limit + 16:
@@ -207,7 +228,8 @@ def client_caps_from_params(params):
         "hdr10": _flag(g("hdr10")) or _flag(g("hdr")),
         "hlg": _flag(g("hlg")),
         "dv": _flag(g("dv")) or _flag(g("dolby_vision")),
-        "mkv": _flag(g("mkv")) or True,  # Media3 plays Matroska over HTTP
+        # 2.6.3: default True (Android ExoPlayer) but honor an explicit mkv=0 (Roku cannot Direct Play Matroska).
+        "mkv": _flag(g("mkv")) if g("mkv") not in (None, "") else True,
         "surr": int(g("surr") or 0) >= 6 or _flag(g("ac3")) or _flag(g("eac3")) or _flag(g("dts")) or _flag(g("truehd")),
         "maxh": maxh,
         "acopy": _flag(g("acopy")) or _flag(g("ac3")) or _flag(g("eac3")) or _flag(g("dts")) or _flag(g("truehd")),
@@ -408,8 +430,12 @@ class Session:
         # overlay -> hwupload), so the "full" stage is kept for every VAAPI server.
         if self.burn and self.hw[0] == "nvenc":
             self.stages = [x for x in self.stages if x != "full"] or ["enc", "cpu"]
-        if self.hevc:
+        # Remux is stream copy, not a CPU HEVC encode, so it must keep a stage
+        # (otherwise stages becomes [] and Session.start() IndexErrors on self.stage).
+        if self.hevc and self.profile != "remux":
             self.stages = [x for x in self.stages if x != "cpu"]   # no CPU HEVC: the player steps down instead
+        if not self.stages:
+            self.stages = ["cpu"]
         self.stage_i = 0
         # 2.6.1: DV 8.1 / 7 and true mistagged HDR need a software tonemap.
         # A GPU-decode hop then software map was only ~1.0x; CPU decode + 1080
@@ -423,9 +449,11 @@ class Session:
                 self.stage_i = self.stages.index("enc")
         self.fallbacks = []
         self.started_at = 0
-        if bounds:
+        if bounds and not self.hevc:
             self.nseg = len(bounds)
         else:
+            # An HEVC remux is cut by the hls muxer at -hls_time SEG, not at `bounds`,
+            # so its segment count is the duration-based one even though bounds exist.
             self.nseg = max(1, math.ceil((item.get("duration") or SEG) / SEG))
 
     # --- ffmpeg -----------------------------------------------------------
@@ -512,7 +540,10 @@ class Session:
 
     @property
     def stage(self):
-        return self.stages[self.stage_i]
+        if not self.stages:
+            return "cpu"
+        i = min(max(0, self.stage_i), len(self.stages) - 1)
+        return self.stages[i]
 
     @property
     def encoder(self):
@@ -557,6 +588,9 @@ class Session:
         """ffmpeg is not running and segment n is not ready: seek, one hardware retry, or sticky fallback."""
         rc = self._reap(planned=False)
         if self.failed or getattr(self, "destroyed", False):
+            return
+        # 2.6.5: a CPU fallback that is rate-limited must not be killed and relaunched.
+        if restart_blocked(self):
             return
         died_empty = (self.started_at and self.profile != "remux" and not self._ready(self.start_seg))
         unexpected = (self.started_at and not self._planned_stop
@@ -680,12 +714,28 @@ class Session:
         return cmd
 
     def start(self, seg):
+        # 2.6.5: do not kill a running encode only to find we are backing off.
+        if getattr(self, "destroyed", False):
+            return
+        # 2.6.7: do not tear down a live mid-watch encode to honor start=0 / seg0.
+        # If ffmpeg already exited, restart at the playhead, not at the opening.
+        if self._should_ignore_backward(seg):
+            if self.running() or (self.proc is not None and self.proc.poll() is None):
+                log.info("transcode %s: ignoring backward start at %d (start %d last_req %d)",
+                         self.sid, max(0, int(seg or 0)), self.start_seg, self.last_req)
+                return
+            seg = self._clamp_start(seg)
+        if restart_blocked(self):
+            remain = max(0.0, restart_blocked_until(self) - time.time())
+            log.warning("transcode %s: backing off restart for %.0fs (too many empty starts)",
+                        self.sid, remain)
+            return
         self.stop()
         if getattr(self, "destroyed", False):
             return
         try:
             from . import preload
-            preload.yield_to_playback()
+            preload.yield_to_playback(item_id=self.item.get("id"), keep_sid=self.sid)
         except Exception:
             pass
         if self.profile == "remux":
@@ -698,12 +748,19 @@ class Session:
         self.started_at = time.time()
         cmd = self._cmd(seg)
         log.info("transcode %s start seg %d [%s/%s]: %s", self.sid, seg, self.encoder, self.stage, " ".join(cmd))
-        errf = open(self.dir / "ffmpeg.log", "ab")
+        # 2.6.5: destroy() may have removed the session dir between stop() and here.
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            errf = open(self.dir / "ffmpeg.log", "ab")
+        except OSError as e:
+            log.warning("transcode %s: cannot open ffmpeg.log (%s)", self.sid, e)
+            return
         self._planned_stop = False
         self.last_rc = None
         self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf, start_new_session=True)
         errf.close()
         self.paused = False
+        note_empty_start(self)
 
     def stop(self):
         p = self.proc
@@ -745,6 +802,31 @@ class Session:
             self._journal_ffmpeg(rc)
         return rc
 
+    def _should_ignore_backward(self, seg):
+        """True when `seg` would rewind a mid-watch session to an earlier start.
+
+        The generated HLS playlist always lists segments from 0, so ExoPlayer
+        (and other VOD clients) can request seg0 or a playlist with start=0
+        while the viewer is an hour in. Restarting there kills the playhead
+        encode and the player falls over.
+        """
+        seg = max(0, int(seg or 0))
+        # Compare to start_seg, not last_req: a playlist reload with the
+        # original start=2021 must not look like a rewind just because the
+        # player has since requested later segments.
+        return seg + BACKWARD_SLACK < int(self.start_seg or 0)
+
+    def _clamp_start(self, seg):
+        """Keep a late playhead when a playlist reload arrives with start=0."""
+        seg = max(0, min(int(seg or 0), max(0, self.nseg - 1)))
+        if self._should_ignore_backward(seg):
+            keep = max(int(self.start_seg or 0), int(self.last_req or 0))
+            keep = max(0, min(keep, max(0, self.nseg - 1)))
+            log.info("transcode %s: keeping start at %d instead of %d (last_req %d)",
+                     self.sid, keep, seg, self.last_req)
+            return keep
+        return seg
+
     def running(self):
         return self.proc is not None and self.proc.poll() is None
 
@@ -768,6 +850,15 @@ class Session:
         if not cand:
             return -1
         n = min(cand)
+        # 2.6.7: leftovers from a previous run (segs 2021+ after a restart at 0)
+        # must not count as this run's output, or housekeep pauses the new
+        # encode as "ahead" before seg 0 is written.
+        if n > self.start_seg:
+            prune_floor = self.start_seg
+            if self.last_req:
+                prune_floor = max(self.start_seg, self.last_req - 40)
+            if n > prune_floor:
+                return -1
         hi = -1
         while (self.dir / ("seg%d.%s" % (n, self.ext))).exists():
             hi = n
@@ -795,6 +886,16 @@ class Session:
 
     def get_segment(self, n, timeout=60):
         self.last_access = time.time()
+        # 2.6.7: a stray seg0 from the VOD playlist must not move last_req
+        # back to 0 or restart ffmpeg at the opening.
+        if self._should_ignore_backward(n):
+            if self._ready(n):
+                return self.seg_path(n)
+            if self.running() or (self.proc is not None and self.proc.poll() is None):
+                log.info("transcode %s: ignoring backward segment %d (start %d last_req %d)",
+                         self.sid, n, self.start_seg, self.last_req)
+                return None
+            n = self._clamp_start(n)
         self.last_req = n
         with self.lock:
             if self._ready(n):
@@ -804,8 +905,12 @@ class Session:
             hi = self.highest_done()
             if not self.running():
                 # Do not relaunch the same failing GPU stage in a loop (that flipped the badge).
-                self._handle_not_running(n)
-            elif n < self.start_seg or (n - max(hi, self.start_seg)) * SEG > RESTART_AHEAD_S:
+                # 2.6.7: if ffmpeg died mid-watch, restart at the playhead, not at a stray 0.
+                self._handle_not_running(self._clamp_start(n))
+            elif n < self.start_seg:
+                # A live encode already started later; do not rewind for seg0.
+                pass
+            elif (n - max(hi, self.start_seg)) * SEG > RESTART_AHEAD_S:
                 self.start(n)
             self._resume_if_needed()
         deadline = time.time() + timeout
@@ -817,10 +922,15 @@ class Session:
             if not self.running():
                 if self._ready(n):
                     return self.seg_path(n)
+                if self.failed or getattr(self, "destroyed", False) or restart_blocked(self):
+                    return None
                 with self.lock:
                     if not self.running() and not self._ready(n) and not self.failed and not getattr(self, "destroyed", False):
                         self._handle_not_running(n)
-                deadline = max(deadline, time.time() + timeout)
+                # 2.6.5: only extend the wait when a new process actually started.
+                # A backoff/no-op must not loop forever by pushing the deadline out.
+                if self.running():
+                    deadline = max(deadline, time.time() + timeout)
                 continue
             if (self.stage != "cpu" and self.profile != "remux" and time.time() - self.started_at > HW_STALL_S
                     and not self._ready(self.start_seg)):
@@ -842,7 +952,7 @@ class Session:
             if done:
                 return max(done, key=lambda f: f.stat().st_mtime)
             if not self.running() and not self.failed and not getattr(self, "destroyed", False):
-                self._handle_not_running(max(0, min(hint, self.nseg - 1)))
+                self._handle_not_running(self._clamp_start(max(0, min(hint, self.nseg - 1))))
             first = self.start_seg
         if not self.get_segment(first, timeout):
             return None
@@ -949,6 +1059,122 @@ def max_transcodes():
     return config.MAX_TRANSCODES
 
 
+# 2.6.5: empty-start bookkeeping survives destroy/recreate (same session id)
+# so a client that closes and re-requests cannot tight-loop ffmpeg on one file.
+_sid_empty_starts = {}
+_sid_backoff_until = {}
+_restart_guard_lock = threading.Lock()
+
+
+def _trim_times(times, now, window):
+    return [t for t in (times or []) if now - t < window]
+
+
+def restart_blocked_until(session):
+    """Epoch seconds until this session (or its sid) may start ffmpeg again."""
+    now_sid = getattr(session, "sid", "") or ""
+    sess_until = getattr(session, "_backoff_until", 0) or 0
+    with _restart_guard_lock:
+        sid_until = _sid_backoff_until.get(now_sid, 0) or 0
+    return max(sess_until, sid_until)
+
+
+def restart_blocked(session, now=None):
+    now = time.time() if now is None else now
+    return restart_blocked_until(session) > now
+
+
+def note_empty_start(session, now=None):
+    """Record a start that has no segment yet. After EMPTY_RESTART_MAX in
+    EMPTY_RESTART_WINDOW_S, further starts for this session id back off."""
+    now = time.time() if now is None else now
+    try:
+        has_out = session._ready(session.start_seg) or session.highest_done() >= session.start_seg
+    except OSError:
+        has_out = False
+    if has_out:
+        return
+    sid = getattr(session, "sid", "") or ""
+    rec = _trim_times(getattr(session, "_empty_starts", []) or [], now, EMPTY_RESTART_WINDOW_S)
+    rec.append(now)
+    session._empty_starts = rec
+    with _restart_guard_lock:
+        times = _trim_times(_sid_empty_starts.get(sid, []), now, EMPTY_RESTART_WINDOW_S)
+        times.append(now)
+        _sid_empty_starts[sid] = times
+        if len(times) >= EMPTY_RESTART_MAX or len(rec) >= EMPTY_RESTART_MAX:
+            until = now + EMPTY_RESTART_COOLDOWN_S
+            _sid_backoff_until[sid] = until
+            session._backoff_until = until
+            log.warning("transcode %s: rate-limiting restarts until +%.0fs (%d empty starts in %.0fs)",
+                        sid, EMPTY_RESTART_COOLDOWN_S, len(times), EMPTY_RESTART_WINDOW_S)
+
+
+def clear_restart_guard(sid=None):
+    """Tests (and a successful later playback) can reset the sid counters."""
+    with _restart_guard_lock:
+        if sid is None:
+            _sid_empty_starts.clear()
+            _sid_backoff_until.clear()
+        else:
+            _sid_empty_starts.pop(sid, None)
+            _sid_backoff_until.pop(sid, None)
+
+
+def is_runaway(session, now=None, item_id=None):
+    """True when a session has produced no output and is stalled or looping.
+
+    A first attempt that has been running for less than HW_STALL_S is not
+    runaway: it may still be warming up. Same-file yield uses this to pause
+    the looping transcode without touching a healthy new stream.
+    """
+    now = time.time() if now is None else now
+    if getattr(session, "destroyed", False) or session.failed:
+        return False
+    if item_id is not None and session.item.get("id") != item_id:
+        return False
+    try:
+        has_out = session.highest_done() >= 0 or session._ready(session.start_seg)
+    except OSError:
+        has_out = False
+    if has_out:
+        return False
+    looping = len(getattr(session, "_empty_starts", []) or []) >= 2 or restart_blocked(session, now)
+    stalled = bool(session.started_at and (now - session.started_at) > HW_STALL_S)
+    return looping or stalled
+
+
+def yield_runaway(item_id=None, keep_sid=None):
+    """Stop transcodes that are looping with no output so a new stream can use the disk.
+
+    When item_id is set, only sessions for that file are considered. The
+    current session (keep_sid) is left alone so a new playback is not stopped.
+    """
+    now = time.time()
+    with _slock:
+        sessions = list(_sessions.values())
+    stopped = 0
+    for s in sessions:
+        if keep_sid and s.sid == keep_sid:
+            continue
+        if item_id is not None and s.item.get("id") != item_id:
+            continue
+        if not is_runaway(s, now=now):
+            continue
+        log.warning("transcode %s: yielding runaway session (no output) for item %s",
+                    s.sid, s.item.get("id"))
+        try:
+            s.stop()
+        except Exception:
+            log.exception("transcode %s: failed to stop runaway session", s.sid)
+        until = now + EMPTY_RESTART_COOLDOWN_S
+        s._backoff_until = max(getattr(s, "_backoff_until", 0) or 0, until)
+        with _restart_guard_lock:
+            _sid_backoff_until[s.sid] = max(_sid_backoff_until.get(s.sid, 0) or 0, until)
+        stopped += 1
+    return stopped
+
+
 def get_session(item, profile, audio_idx, user_id, player_id="", surr=0, burn=0, acopy=0):
     pid = normalize_player(player_id)
     surr = 6 if int(surr or 0) >= 6 else 0
@@ -991,10 +1217,12 @@ def kickoff(session, start_seg=0):
         return
     try:
         from . import preload
-        preload.yield_to_playback()
+        preload.yield_to_playback(item_id=session.item.get("id"), keep_sid=session.sid)
     except Exception:
         pass
     start_seg = max(0, min(int(start_seg or 0), max(0, session.nseg - 1)))
+    # 2.6.7: a playlist reload often arrives without start= (defaults to 0).
+    start_seg = session._clamp_start(start_seg)
     try:
         from . import preload
         preload.apply_to_session(session, start_seg)
@@ -1026,23 +1254,36 @@ def note_client(player_id, user, request=None, caps=""):
              normalize_player(player_id) or "-", uname, caps or "-", ua[:400])
 
 
-def playlist(item, query="", bounds=None, fmp4_init=None):
+def playlist(item, query="", bounds=None, fmp4_init=None, start=0):
+    """Build a VOD HLS playlist.
+
+    `start` is the first segment the current ffmpeg run will produce. A mid-watch
+    resume starts ffmpeg at that index, so the playlist must not list earlier
+    segments: ExoPlayer always requests the first URI in a VOD list, and serving
+    a 500 for the advertised seg0 (2.6.7 ignored it and returned None) is what
+    failed a 1080p resume at 1:34 on 2026-11-27.
+    """
     dur = item.get("duration") or SEG
+    start = max(0, int(start or 0))
     if bounds:
         durs = [(bounds[i + 1] if i + 1 < len(bounds) else dur) - bounds[i] for i in range(len(bounds))]
+        start = min(start, max(0, len(durs) - 1))
         lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:%d" % math.ceil(max(durs) + 0.5),
-                 "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS"]
+                 "#EXT-X-MEDIA-SEQUENCE:%d" % start, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS"]
         for i, d in enumerate(durs):
+            if i < start:
+                continue
             lines.append("#EXTINF:%.3f," % max(d, 0.001))
             lines.append("seg%d.ts%s" % (i, query))
         lines.append("#EXT-X-ENDLIST")
         return "\n".join(lines) + "\n"
     n = max(1, math.ceil(dur / SEG))
+    start = min(start, max(0, n - 1))
     lines = ["#EXTM3U", "#EXT-X-VERSION:%d" % (7 if fmp4_init else 3), "#EXT-X-TARGETDURATION:%d" % math.ceil(SEG),
-             "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS"]
+             "#EXT-X-MEDIA-SEQUENCE:%d" % start, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS"]
     if fmp4_init:
         lines.append('#EXT-X-MAP:URI="%s"' % fmp4_init)
-    for i in range(n):
+    for i in range(start, n):
         d = min(SEG, dur - i * SEG)
         if d <= 0.05:
             break
@@ -1052,12 +1293,63 @@ def playlist(item, query="", bounds=None, fmp4_init=None):
     return "\n".join(lines) + "\n"
 
 
+def segment_missing_status(session, n):
+    """HTTP status when get_segment returned None.
+
+    A mid-watch run that ignores a stray seg0 is not a transcode failure; 404
+    tells the client the URI is not in this run. A real encode failure stays 500.
+    """
+    if session is not None and not session.failed and session._should_ignore_backward(n):
+        return 404
+    return 500
+
+
 def list_sessions():
     return [{"sid": s.sid, "item_id": s.item["id"], "title": s.item.get("title"), "profile": s.profile,
              "running": s.running(), "paused": s.paused, "start_seg": s.start_seg, "last_req": s.last_req,
              "idle_s": int(time.time() - s.last_access), "encoder": s.encoder, "stage": s.stage if s.profile != "remux" else "copy",
              "hw_device": s.hw[1] if s.encoder != "cpu" else None,
              "fallback": s.fallbacks[-1]["reason"] if s.fallbacks else None} for s in list(_sessions.values())]
+
+
+# 2.6.6: how far a viewer's transcode/remux is toward the first picture (honest, not estimated).
+START_SEGS_NEEDED = 1
+
+
+def start_progress(item_id, user_id, player_id=""):
+    """Segments ready at the current run versus the one segment needed to start.
+
+    Returns ready=0 and running=False when this user has no session yet. Does
+    not create or start a session.
+    """
+    pid = normalize_player(player_id)
+    ready = 0
+    running = False
+    failed = None
+    found = False
+    with _slock:
+        sessions = list(_sessions.values())
+    for s in sessions:
+        if s.item.get("id") != item_id:
+            continue
+        if getattr(s, "user_id", None) != user_id:
+            continue
+        if pid and getattr(s, "player_id", "") and getattr(s, "player_id", "") != pid:
+            continue
+        found = True
+        try:
+            hi = s.highest_done()
+        except OSError:
+            hi = -1
+        start = getattr(s, "start_seg", 0) or 0
+        n = 0 if hi < start else (hi - start + 1)
+        if n > ready:
+            ready = n
+        running = running or s.running()
+        if s.failed:
+            failed = s.failed
+    return {"ready": ready, "need": START_SEGS_NEEDED, "running": running,
+            "found": found, "failed": failed}
 
 
 def janitor_loop(stop_flag):

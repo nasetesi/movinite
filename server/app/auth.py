@@ -80,7 +80,14 @@ def _device_name(ua):
     ua = ua or ""
     tv = "AndroidTV" in ua or "Android TV" in ua or "BRAVIA" in ua or "AFTMM" in ua or "AFTSSS" in ua
     app = "MediaServerAndroid" in ua or "MoviniteAndroid" in ua or ("; wv)" in ua and "Android" in ua)
-    if tv and app:
+    roku_app = "Movinite-Roku" in ua or "MoviniteRoku" in ua
+    if roku_app:
+        os_ = "Movinite app (Roku)"
+    elif "Roku" in ua and "Movinite" in ua:
+        os_ = "Movinite app (Roku)"
+    elif "Roku" in ua:
+        os_ = "Roku"
+    elif tv and app:
         os_ = "Movinite app (TV)"
     elif tv:
         os_ = "Android TV"
@@ -192,9 +199,40 @@ def user_from_token(tok, ip=None, ua=None):
     return u
 
 
+def session_token_from_request(request):
+    """Session token from the cookie, an Authorization bearer, X-Movinite-Session, or ms_session.
+
+    2.6.3: Roku Video and Poster nodes often cannot keep a cookie jar the way a
+    browser does, so the native channel also sends the token as a header or
+    (for HLS child segments and artwork) a query parameter.
+    """
+    if request is None:
+        return None
+    cookies = getattr(request, "cookies", None) or {}
+    tok = cookies.get(COOKIE) if hasattr(cookies, "get") else None
+    if tok:
+        return tok
+    headers = getattr(request, "headers", None) or {}
+    get = headers.get if hasattr(headers, "get") else lambda *a, **k: None
+    authz = (get("authorization") or get("Authorization") or "").strip()
+    if authz.lower().startswith("bearer "):
+        t = authz[7:].strip()
+        if t:
+            return t
+    hdr = (get("x-movinite-session") or get("X-Movinite-Session") or
+           get("x-ms-session") or get("X-Ms-Session") or "").strip()
+    if hdr:
+        return hdr
+    q = getattr(request, "query_params", None) or {}
+    qget = q.get if hasattr(q, "get") else (q.get if isinstance(q, dict) else lambda *a, **k: None)
+    qt = (qget("ms_session") or "").strip()
+    return qt or None
+
+
 def user_from_request(request: Request):
     from . import netutil
-    return user_from_token(request.cookies.get(COOKIE), netutil.client_ip(request), request.headers.get("user-agent"))
+    return user_from_token(session_token_from_request(request),
+                           netutil.client_ip(request), request.headers.get("user-agent"))
 
 
 def require_user(request: Request):

@@ -5,4 +5,15 @@
     <string name="reload">Reload</string>
     <string name="setup_help_first">If your server is on this network it may appear in the list above — tap it to fill the address. Or type the address you open Movinite with in a browser, for example https://movies.example.com, or a home-network address such as http://192.0.2.10:8099 (plain http is only allowed for the server you enter here). Tap Test to check it, then Connect and sign in.\n\nYou can change the server later with the gear icon at the top right of the sign-in screen.</string>
     <string name="setup_help">Servers found on this network are listed above; tap one to fill the address. You can also type it, for example https://movies.example.com, or a home-network address such as http://192.0.2.10:8099 (plain http is only allowed for the server entered here). You will be asked to sign in to the new server.\n\nOpen this screen again with the gear icon at the top right of the sign-in screen (or long-press the logo, or long-press the app icon and choose Server settings).</string>
+    <string name="tv_settings_title">Settings</string>
+    <string name="tv_settings_user">User</string>
+    <string name="tv_settings_server">Server</string>
+    <string name="tv_settings_version">App version</string>
+    <string name="tv_change_server">Change server</string>
+    <string name="tv_sign_out">Sign out</string>
+    <string name="tv_sign_out_confirm_title">Sign out?</string>
+    <string name="tv_sign_out_confirm">You will need to sign in again to watch on this TV.</string>
+    <string name="tv_sign_out_cancel">Cancel</string>
+    <string name="tv_libraries_title">Libraries</string>
+    <string name="tv_libraries_empty">No libraries yet.</string>
 </resources>

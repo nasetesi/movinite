@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shared Android TV page tokens (2.4.8). 1080p TVs often report density 320
+     (540dp tall). Horizontal 48dp is 5% of 1920px at that density (overscan). -->
+<resources>
+    <dimen name="tv_overscan_h">48dp</dimen>
+    <dimen name="tv_overscan_top">32dp</dimen>
+    <dimen name="tv_overscan_bottom">24dp</dimen>
+    <dimen name="tv_title_size">32sp</dimen>
+    <dimen name="tv_label_size">13sp</dimen>
+    <dimen name="tv_value_size">22sp</dimen>
+    <dimen name="tv_row_text">20sp</dimen>
+    <dimen name="tv_row_sub">15sp</dimen>
+    <dimen name="tv_row_height">68dp</dimen>
+    <dimen name="tv_btn_height">56dp</dimen>
+    <dimen name="tv_card_radius">20dp</dimen>
+    <dimen name="tv_btn_radius">16dp</dimen>
+    <dimen name="tv_row_gap">12dp</dimen>
+    <dimen name="tv_section_gap">20dp</dimen>
+    <dimen name="tv_card_pad">28dp</dimen>
+    <dimen name="tv_focus_stroke">3dp</dimen>
+</resources>

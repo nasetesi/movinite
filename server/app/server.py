@@ -164,9 +164,14 @@ def login(request: Request, response: Response, body: dict = Body(...)):
     if u.get("disabled_at"):
         useractivity.record("login_failed", user=u, ip=ip, device=auth._device_name(ua), detail={"reason": "disabled"})
         raise HTTPException(403, "This account is turned off. Ask the server admin.")
-    _set_cookie(request, response, auth.new_session(u["id"], ip, ua))
+    tok = auth.new_session(u["id"], ip, ua)
+    _set_cookie(request, response, tok)
     useractivity.record("login", user=u, ip=ip, device=auth._device_name(ua))
-    return {"ok": True, "must_change_pw": bool(u["must_change_pw"])}
+    # 2.6.4: also return the session in the JSON body. Browser clients keep using
+    # the httponly cookie; Roku (and other apps) cannot reliably read Set-Cookie
+    # from roUrlTransfer, so they need the token here.
+    return {"ok": True, "must_change_pw": bool(u["must_change_pw"]),
+            "token": tok, "username": u.get("username") or tried}
 
 
 @app.post("/api/pair/start")
@@ -177,7 +182,9 @@ def pair_start(request: Request, body: dict = Body(default={})):
 
 def _pair_poll_result(request, response, token):
     r = pair.poll(request, token or "")
-    tok = r.pop("token", None)
+    # 2.6.4: keep token in the JSON as well as the cookie. 2.6.3 popped it
+    # so only Set-Cookie carried the session, which Roku clients often cannot read.
+    tok = r.get("token")
     if tok:
         _set_cookie(request, response, tok)
     return r
@@ -210,7 +217,7 @@ def pair_deny(request: Request, body: dict = Body(...), u=Depends(auth.require_u
 
 @app.post("/api/logout")
 def logout(request: Request, response: Response):
-    tok = request.cookies.get(auth.COOKIE)
+    tok = auth.session_token_from_request(request)
     if tok:
         u = auth.user_from_token(tok)
         if u:
@@ -2690,7 +2697,7 @@ def direct_file(item_id: int, request: Request, download: int = 0, u=Depends(aut
     # sit on "Waiting for the first picture…" while ffprobe still held the NAS.
     try:
         from . import preload
-        preload.yield_to_playback()
+        preload.yield_to_playback(item_id=item_id)
         preload.note_direct_play()
     except Exception:
         pass
@@ -2713,7 +2720,7 @@ def _profile_ok(profile):
         raise HTTPException(409, "2K and 4K need hardware transcoding")
 
 
-def _player_query(audio, player, start=None, surr=0, burn=0, acopy=0):
+def _player_query(audio, player, start=None, surr=0, burn=0, acopy=0, session=None):
     q = "?audio=%d" % audio
     if player:
         q += "&player=%s" % transcode.normalize_player(player)
@@ -2725,7 +2732,36 @@ def _player_query(audio, player, start=None, surr=0, burn=0, acopy=0):
         q += "&burn=%d" % int(burn)
     if int(acopy or 0):
         q += "&acopy=1"
+    if session:
+        from urllib.parse import quote
+        q += "&ms_session=%s" % quote(str(session), safe="")
     return q
+
+
+def _embed_session(request):
+    """Bake the session into HLS child URLs only when a Roku (or similar) asked for it.
+
+    The token is the same cookie value already issued at sign-in. Web players keep
+    using cookies only, so their playlists stay free of a session query string.
+    """
+    if request is None:
+        return None
+    q = getattr(request, "query_params", None)
+    get = q.get if q is not None and hasattr(q, "get") else lambda *a, **k: ""
+    flag = str(get("embed_session") or "")
+    ua = ""
+    headers = getattr(request, "headers", None) or {}
+    if hasattr(headers, "get"):
+        ua = headers.get("user-agent") or ""
+    if flag.lower() in ("1", "true", "yes", "on") or "Movinite-Roku" in ua or "MoviniteRoku" in ua or get("ms_session"):
+        return auth.session_token_from_request(request)
+    return None
+
+
+@app.get("/api/items/{item_id}/play-start")
+def play_start_progress(item_id: int, player: str = "", u=Depends(auth.require_user)):
+    """2.6.6: how many transcode/remux segments are ready for this viewer (first picture)."""
+    return transcode.start_progress(item_id, u["id"], player)
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/index.m3u8")
@@ -2770,15 +2806,28 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
         if int(burn or 0) > 0:
             raise HTTPException(409, "Image subtitles need a transcode; remux cannot burn them in")
     need_init = transcode.split_profile(profile)[1] == "hevc" or (profile == "remux" and transcode.remux_codec(it) == "hevc")
-    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn, acopy)) if need_init else None
+    if need_init:
+        # An HEVC remux is muxed by ffmpeg's hls muxer into init%d.mp4 + seg%d.m4s at
+        # -hls_time SEG - the same layout as an HEVC transcode. `bounds` describes the
+        # MPEG-TS cut points used for an H.264 remux, and feeding it to playlist() took
+        # the bounded branch, which hardcodes seg%d.ts and drops fmp4_init entirely: the
+        # playlist advertised .ts names with no #EXT-X-MAP, so the player was handed
+        # fMP4 fragments with no init segment and never produced a picture.
+        bounds = None
+    sess = _embed_session(request)
+    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn, acopy, session=sess)) if need_init else None
     # 1.7.9: start ffmpeg as soon as the playlist is requested, so the first segment overlaps the player's next RTT
+    play_start = max(0, start)
     if profile != "audio":
         try:
             s = transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr, burn=burn, acopy=acopy)
-            transcode.kickoff(s, max(0, start))
+            transcode.kickoff(s, play_start)
+            # A playlist reload often arrives with start=0; kickoff keeps the
+            # playhead, and the playlist must list from that run's first segment.
+            play_start = max(0, int(getattr(s, "start_seg", play_start) or 0))
         except ValueError:
             pass
-    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn, acopy=acopy), bounds, init), media_type="application/vnd.apple.mpegurl",
+    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn, acopy=acopy, session=sess), bounds, init, start=play_start), media_type="application/vnd.apple.mpegurl",
                              headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -2826,6 +2875,9 @@ def _hls_segment_response(item_id, profile, n, audio, u, player="", disp=0, dec=
         raise HTTPException(404)
     p = s.get_segment(n)
     if not p:
+        status = transcode.segment_missing_status(s, n)
+        if status == 404:
+            raise HTTPException(404, "Segment is before the current transcode start")
         raise HTTPException(500, "Transcode failed; see %s" % (s.dir / "ffmpeg.log"))
     try:
         data = p.read_bytes()

@@ -58,6 +58,12 @@ public class MainActivity extends Activity {
     static final String ACTION_SETTINGS = "org.movinite.app.SERVER_SETTINGS";
     static final String ACTION_RELOAD = "org.movinite.app.RELOAD";
     static final String ACTION_DOWNLOADS = "org.movinite.app.DOWNLOADS";
+    static final String ACTION_SIGN_OUT = "org.movinite.app.SIGN_OUT";
+    static final String ACTION_LIBRARIES = "org.movinite.app.TV_LIBRARIES";
+    static final String ACTION_OPEN_LIBRARY = "org.movinite.app.OPEN_LIBRARY";
+    static final String EXTRA_TV_USER = "tv_user";
+    static final String EXTRA_TV_SERVER = "tv_server";
+    static final String EXTRA_LIBRARY_ID = "library_id";
     private static final int REQ_STORAGE = 7;
     static final int REQ_NATIVE_PLAY = 243;
 
@@ -190,16 +196,57 @@ public class MainActivity extends Activity {
 
     private void openSettings() { startActivity(new Intent(this, SetupActivity.class)); }
 
+    /** 2.4.6: native TV Settings. Sends the WebView to Home first so Back from Settings lands on Home. */
+    void openTvSettings() {
+        if (web != null) web.evaluateJavascript("location.hash='#/home'", null);
+        Intent i = new Intent(this, TvSettingsActivity.class);
+        if (signedInAs != null) i.putExtra(EXTRA_TV_USER, signedInAs);
+        if (server != null) i.putExtra(EXTRA_TV_SERVER, server);
+        startActivity(i);
+    }
+
+    /** 2.4.8: native TV Libraries, same scaffold as Settings. */
+    void openTvLibraries() {
+        if (web != null) web.evaluateJavascript("location.hash='#/home'", null);
+        startActivity(new Intent(this, TvLibrariesActivity.class));
+    }
+
+    void openLibrary(int id) {
+        if (web != null) web.evaluateJavascript("location.hash='#/library/" + id + "'", null);
+    }
+
+    private String tvSimpleJs() {
+        try (java.io.InputStream in = getAssets().open("tv_simple.js")) {
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+            return bo.toString("UTF-8");
+        } catch (Exception e) {
+            return "(function(){})()";
+        }
+    }
+
     @Override
     protected void onNewIntent(Intent i) { super.onNewIntent(i); setIntent(i); handleIntent(i); }
 
     private void handleIntent(Intent i) {
         if (i == null || web == null) return;
         String a = i.getAction();
-        if (ACTION_SETTINGS.equals(a)) { i.setAction(Intent.ACTION_MAIN); openSettings(); }
+        if (ACTION_SETTINGS.equals(a)) { i.setAction(Intent.ACTION_MAIN); if (isTelevision()) openTvSettings(); else openSettings(); }
+        else if (ACTION_LIBRARIES.equals(a)) { i.setAction(Intent.ACTION_MAIN); if (isTelevision()) openTvLibraries(); }
+        else if (ACTION_OPEN_LIBRARY.equals(a)) {
+            i.setAction(Intent.ACTION_MAIN);
+            int id = i.getIntExtra(EXTRA_LIBRARY_ID, 0);
+            if (id != 0) openLibrary(id);
+        }
         else if (ACTION_RELOAD.equals(a)) { i.setAction(Intent.ACTION_MAIN); retry(); }
         else if (ACTION_OPEN.equals(a)) { i.setAction(Intent.ACTION_MAIN); }
-        else if (ACTION_DOWNLOADS.equals(a)) { i.setAction(Intent.ACTION_MAIN); web.evaluateJavascript("location.hash='#/downloads'", null); }
+        else if (ACTION_SIGN_OUT.equals(a)) { i.setAction(Intent.ACTION_MAIN); signOut(); }
+        else if (ACTION_DOWNLOADS.equals(a)) {
+            i.setAction(Intent.ACTION_MAIN);
+            if (!isTelevision()) web.evaluateJavascript("location.hash='#/downloads'", null);
+        }
     }
 
     @Override
@@ -283,6 +330,16 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    // 2.4.8: the TV Menu key must not open the web slide-out. Navigation
+    // is only the Home / Search / Libraries / Settings rail.
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (isTelevision() && event.getKeyCode() == android.view.KeyEvent.KEYCODE_MENU) {
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
     // ---------------------------------------------------------------- back button
     @Override
     public void onBackPressed() {
@@ -304,6 +361,13 @@ public class MainActivity extends Activity {
                 if (web == null) return;
                 String cur = web.getUrl();
                 if (isHomeUrl(cur)) { appMenu(); return; }
+                // 2.4.9: Back from a library's title grid returns to the native
+                // Libraries screen. MainActivity is singleTask, so opening a
+                // library had popped that activity off the stack.
+                if (isTelevision() && TvLibraries.isLibraryListHash(cur)) {
+                    openTvLibraries();
+                    return;
+                }
                 // never step back into the sign-in page / first load: go to Home instead
                 android.webkit.WebBackForwardList h = web.copyBackForwardList();
                 int i = h.getCurrentIndex();
@@ -376,6 +440,12 @@ public class MainActivity extends Activity {
         /** 1.4: the web player opened / closed: follow the phone's rotation only while it is open */
         @android.webkit.JavascriptInterface
         public void player(boolean open) { runOnUiThread(() -> setPlayerOpen(open)); }
+        /** 2.4.6: TV Settings screen (user, server, version, Change server, Sign out). */
+        @android.webkit.JavascriptInterface
+        public void openTvSettings() { runOnUiThread(MainActivity.this::openTvSettings); }
+        /** 2.4.8: native TV Libraries screen. */
+        @android.webkit.JavascriptInterface
+        public void openTvLibraries() { runOnUiThread(MainActivity.this::openTvLibraries); }
         /** 2.4: real MediaCodec / AudioCapabilities / display HDR modes, for Direct Play decisions. */
         @android.webkit.JavascriptInterface
         public String decoderCaps() { return Caps.detect(MainActivity.this).toString(); }
@@ -649,6 +719,7 @@ public class MainActivity extends Activity {
             if (mainFrameFailed) return;
             error.setVisibility(View.GONE);
             v.evaluateJavascript(WATCH_JS, null);
+            if (isTelevision()) v.evaluateJavascript(tvSimpleJs(), null);
             // the watcher reveals the page; fall back after a few seconds in case this isn't the usual web app
             if (!firstLoadDone) ui.postDelayed(() -> { if (!mainFrameFailed && !leaving && web != null) { firstLoadDone = true; loading.setVisibility(View.GONE); } }, 8000);
         }

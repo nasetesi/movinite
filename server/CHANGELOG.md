@@ -1,5 +1,61 @@
 # Changelog
 
+## 2.6.9 -- 2026-11-27
+A fix on top of 2.6.8 so a mid-watch resume can start, and so an HEVC remux can start at all. Schema stays at 15. No new client is needed.
+
+- **Resuming a transcode no longer returns HTTP 500 on the first segment.** `playlist()` always listed a VOD from segment 0, even when `kickoff()` started ffmpeg later (for example segment 47 at 1:34). The 2.6.7 guard correctly refused to rewind that run for a stray `seg0` request, but `get_segment(0)` then returned `None` and `_hls_segment_response()` raised HTTP 500 "Transcode failed". ExoPlayer on Android TV reported `ERROR_CODE_IO_BAD_HTTP_STATUS` and dropped back to the details page, even though ffmpeg was writing segments from the playhead. The playlist now uses `#EXT-X-MEDIA-SEQUENCE` at the session's `start_seg` and lists only from that segment, including when a later playlist reload arrives with `start=0` and kickoff keeps the playhead. A still-ignored early segment request returns 404, not a fake transcode failure.
+- **An HEVC remux no longer 500s on `Session.start()`.** Remux does not enable hardware (`profile == "remux"`), so `stages` started as `["cpu"]`, and the no-CPU-HEVC filter then left `[]`. Logging `self.stage` in `start()` raised `IndexError: list index out of range` from `hls_playlist` -> `kickoff` -> `start`. The filter is skipped for remux (it is stream copy, not a CPU HEVC encode), and an empty `stages` list falls back to `["cpu"]`. This was already present in 2.6.7 and was not introduced by 2.6.8.
+- **Regression test:** `tests/test_v269.py` pins the mid-start playlist shape, the 404-vs-500 status for an ignored backward segment, and a non-empty `stages` list on an HEVC remux session.
+
+## 2.4.7 -- 2026-11-27
+A follow-up to the Android TV Settings screen in 2.4.6 (versionCode 15). The phone UI and the native player are unchanged.
+
+- **Sign out and Change server stay on screen.** 2.4.6 laid the Settings page out as one tall unscrollable column with 72dp paddings and 72dp buttons. A 1080p Android TV often reports density 320, so the screen is only 540dp tall (720p at that density is 360dp) and both actions were clipped below the fold — Sign out never appeared, and neither button was in the focus tree. The actions are now pinned in a footer so they stay visible and D-pad focusable, and the user/server/version details can scroll if needed.
+
+## 2.4.6 -- 2026-11-27
+An Android TV-only app update on top of 2.4.4 (versionCode 14). The native ExoPlayer is unchanged from 2.4.4 — this is not the shelved 2.4.5 player redesign. The phone UI is unchanged. Schema is unchanged (already 15 on 2.6.8 servers).
+
+- **The TV menu has four entries: Home, Search, Libraries and Settings.** My List, the account avatar, Activity, Downloads, Invites, Server status, Poster Sounds and the admin Settings pages are hidden on television. Libraries still opens the library list, which playback needs. The phone app is not affected.
+- **Settings shows the signed-in user, the server (name and address) and the app version (version name and build), with Change server and Sign out.** Change server opens the existing server picker and keeps the session if the address is the same server, or clears it if the host changes. Sign out asks for confirmation, ends the session, and returns to the TV sign-in screen. Back from Settings returns to Home. The remote can move between the two buttons; nothing is left unreachable.
+
+## 2.6.8 -- 2026-11-27
+A fix on top of 2.6.7 so **remux delivery works for HEVC titles**. Schema stays at 15. No new client is needed; the Roku channel can re-enable remux with a one-line change (`RemuxEnabled()`), and the native Android TV player benefits with no APK change.
+
+- **An HEVC remux now plays instead of producing no picture at all.** `_remux_cmd()` deliberately muxes HEVC as fMP4 (`init0.mp4` + `seg0.m4s`, cut at `-hls_time SEG`) because hls.js cannot play HEVC in MPEG-TS, but the playlist served for a remux was built by `playlist()`'s bounded branch, which hardcodes `seg%d.ts`, pins `#EXT-X-VERSION:3` and ignores its own `fmp4_init` argument. So the playlist advertised `.ts` names with no `#EXT-X-MAP`, the `.ts` segment route has no codec guard and returned the `.m4s` bytes anyway, and the client was handed fMP4 fragments with no init segment. It could never decode a first frame, so every HEVC title badged "Remux ready" burned the client's start timeout and then fell back to transcoding. H.264 8-bit remux was unaffected, which is why this looked intermittent rather than broken. `hls_playlist()` now passes `bounds=None` whenever the stream needs an init segment, taking the generic branch that already emits `#EXT-X-MAP`, `.m4s` names and `#EXT-X-VERSION:7` -- the same playlist shape an HEVC *transcode* has always used successfully. The session still gets its keyframe plan: `get_session()` derives bounds itself.
+- **The tail of an HEVC remux no longer 404s.** `Session.nseg` was `len(bounds)` whenever a keyframe plan existed, but an HEVC remux is cut by the hls muxer at `-hls_time SEG`, not at those bounds -- and a real plan is sparser than the muxer's segments (`probe_bounds()` keeps a split point only 3 s or more past the last one, while `SEG` is 2 s). A 30 s title has 15 segments but about 10 bounds, so segments past that count were rejected by `n >= s.nseg`. The HEVC-remux case now uses the duration-based count; H.264 remux still uses the plan.
+- **Regression test:** `tests/test_remux_hevc_268.py` pins both, plus a guard that the bounded branch really cannot carry fMP4 (which is why the route must null `bounds`) and that H.264 remux still segments at the probed keyframes. The nseg test fails on 2.6.7 and passes here.
+
+## 2.6.7 -- 2026-11-27
+A fix on top of 2.6.6 so a mid-watch transcode is not torn down and restarted from the opening. Schema stays at 15. No new Android app is needed (the native Android TV player, the in-page player, and the Roku channel all benefit from the server change).
+
+- **A stray start-at-zero request no longer rewinds a transcode that is already running later in the title.** The HLS playlist is a VOD list from segment 0, so a client such as the Android TV ExoPlayer can ask for `start=0` or segment 0 while you are an hour in. The server used to stop ffmpeg and start again at the opening, which wiped the playhead segments and made the player exit. A live or paused encode now keeps its place. If ffmpeg has already exited, it restarts at the playhead, not at the opening.
+- **Leftover later segments from the previous run no longer look like a huge buffer ahead of a restart at 0.** That false “ahead” figure was pausing the new encode before the first segment was written, so hardware fallback could sit on “no output after 20s.” `highest_done()` now ignores those leftovers.
+
+## 2.6.6 -- 2026-11-27
+A small player change on top of 2.6.5: the first-load wait no longer shows a “Buffering…” line. Schema stays at 15. No new Android app is needed (the in-page player, including the phone WebView and a TV web session, is served by this package). The Roku channel and the native Android TV ExoPlayer are unchanged.
+
+- **A centered circular progress ring in the Movinite purple accent replaces the first-load “Buffering…” message.** Mid-play rebuffers use the same ring, without that word. The ring is determinate when the player has a real readiness signal: seconds already buffered versus a 2-second start threshold, HLS fragments loaded versus the one segment needed to start, or the server’s new `/api/items/{id}/play-start` count of transcode/remux segments ready for this viewer. If none of those are known yet, the ring spins and no percentage is invented. The 12-second no-picture fallback is unchanged, and the overlay hides only once `videoWidth > 0`.
+
+## 2.6.5 -- 2026-11-27
+A fix on top of 2.6.4 so Direct Play and transcode are not starved by a looping transcode, and so the phone web player does not get stuck on Direct Play for HEVC and 4K. Schema stays at 15. No new Android app is needed (the in-page player is served by this package). The Roku channel itself is unchanged in this release.
+
+- **Bogus client display sizes no longer cap a title at 360p.** A Roku channel bug sent `disp=88 dec=88`, and the server treated 88 pixels as a real screen, so a 4K file was transcoded to 360p and stalled. Values below 480 pixels are ignored. If the client reported only a bogus size, the cap is 1080p. A missing size is still no cap. The channel bug itself is not fixed here.
+- **A transcode that produces no output no longer tears down and restarts in a tight loop.** After a VAAPI stall the session still falls back to CPU and stays there. Empty starts of the same session are rate-limited (three in 60 seconds, then a 45-second backoff). The wait loop no longer extends its deadline forever when a restart is skipped. Opening a new stream, including Direct Play of the same file, pauses a runaway transcode that still has no output, so it cannot keep the share busy.
+- **Destroying a session no longer raises `FileNotFoundError` on `ffmpeg.log`.** If the session directory is already gone, `start()` logs a warning and returns instead of crashing.
+- **The phone web player treats `direct_maybe` for HEVC or 4K as a transcode, not Direct Play.** The 12-second no-picture watchdog now clears only once `videoWidth > 0`, not on `canplay` or `readyState` alone, so a silent first-byte event cannot cancel the fallback.
+
+## 2.6.4 -- 2026-11-27
+A quick fix on top of 2.6.3 so the Roku app (and other non-browser clients) can finish sign-in. Schema stays at 15. No new Android app is needed. The Roku channel 0.1.4 reads this new JSON field and still accepts the cookie if a later server already set it.
+
+- **Password sign-in and phone-code approval now return the session token in the JSON body, as well as the `ms_session` cookie.** In 2.0–2.6.3 `/api/login` and an approved `/api/pair/poll` only set the httponly cookie and (for poll) removed `token` from the JSON. The web player is unaffected because it uses the cookie. Roku's `roUrlTransfer` often does not expose `Set-Cookie` in response headers, so the channel could sign in successfully and then show "Signed in, but no session cookie was returned," and a phone approval of the TV code never completed on the TV. The cookie is still set, so browsers and the Android app are unchanged.
+
+## 2.6.3 -- 2026-11-27
+A quick fix on top of 2.6.2 plus a sideloadable Roku channel. Schema stays at 15. The Android app is unchanged; the new Roku app is sideloaded and is not a store release.
+
+- **A native Roku app (BrightScript / SceneGraph) can be sideloaded (the channel source is not in this tree yet).** It talks to the existing Movinite API: server URL (default `https://media.example.com`), phone-code or password sign-in, Home rows with the same poster rules as 2.5.10, Libraries, a remote Search keyboard, a details page, resume / progress, HLS playback, Direct Play of MP4 when the Roku can decode it, text subtitles as WebVTT, and PGS / VobSub burn-in. It reports real device caps (`native=1`, HEVC, audio, HDR, display size) and always sends `mkv=0`, because Roku cannot Direct Play Matroska.
+- **`mkv=0` is now honored when a native player advertises caps.** In 2.4–2.6.2 a missing `mkv` flag defaulted to “Matroska is fine,” but an explicit `mkv=0` was also treated as true (`_flag(...) or True`). Roku clients can now tell the server not to offer Matroska as Direct Play.
+- **Sign-in tokens work as a Bearer header or `ms_session` query, not only as a cookie.** Roku’s Video and Poster nodes do not keep a browser-style cookie jar, so the channel sends `Authorization: Bearer …` and, for HLS segments and artwork, `?ms_session=`. Playlists only embed that query when the client asks (`embed_session=1`, a `Movinite-Roku` user-agent, or a request that already had `ms_session`). The web player is unchanged and still uses the cookie alone. Device lists show “Movinite app (Roku)” for this channel.
+
 ## 2.6.2 -- 2026-11-27
 A quick fix on top of 2.6.1 for Direct Play sitting on “Starting direct play — Waiting for the first picture…” until you change the quality. Schema stays at 15. No new Android app is needed.
 
