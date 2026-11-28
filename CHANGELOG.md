@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.6.3 -- 2026-11-27
+A quick fix on top of 2.6.2 plus a sideloadable Roku channel. Schema stays at 15. The Android app is unchanged; the new Roku app is sideloaded and is not a store release.
+
+- **A native Roku app (BrightScript / SceneGraph) can be sideloaded from `roku/`.** It talks to the existing Movinite API: server URL (default `https://media.tukuia.com`), phone-code or password sign-in, Home rows with the same poster rules as 2.5.10, Libraries, a remote Search keyboard, a details page, resume / progress, HLS playback, Direct Play of MP4 when the Roku can decode it, text subtitles as WebVTT, and PGS / VobSub burn-in. It reports real device caps (`native=1`, HEVC, audio, HDR, display size) and always sends `mkv=0`, because Roku cannot Direct Play Matroska.
+- **`mkv=0` is now honored when a native player advertises caps.** In 2.4–2.6.2 a missing `mkv` flag defaulted to “Matroska is fine,” but an explicit `mkv=0` was also treated as true (`_flag(...) or True`). Roku clients can now tell the server not to offer Matroska as Direct Play.
+- **Sign-in tokens work as a Bearer header or `ms_session` query, not only as a cookie.** Roku’s Video and Poster nodes do not keep a browser-style cookie jar, so the channel sends `Authorization: Bearer …` and, for HLS segments and artwork, `?ms_session=`. Playlists only embed that query when the client asks (`embed_session=1`, a `Movinite-Roku` user-agent, or a request that already had `ms_session`). The web player is unchanged and still uses the cookie alone. Device lists show “Movinite app (Roku)” for this channel.
+
 ## 2.6.2 -- 2026-11-27
 A quick fix on top of 2.6.1 for Direct Play sitting on “Starting direct play — Waiting for the first picture…” until you change the quality. Schema stays at 15. No new Android app is needed.
 

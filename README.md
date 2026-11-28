@@ -1,7 +1,7 @@
 # Movinite
 
 **A self-hosted media server for your own movies, TV shows and music.** You run it on an Ubuntu server and watch in
-any browser or in the Android app. It's free and open source under the [AGPL-3.0](LICENSE).
+any browser, in the Android app, or in the sideloadable [Roku channel](roku/README.md). It's free and open source under the [AGPL-3.0](LICENSE).
 
 Add a folder or a network share (SMB/NFS) as a library. Movinite scans it, fetches posters and descriptions from TMDB
 (optional, with a free API key) and plays everything in the browser. It plays a file directly when the browser can,

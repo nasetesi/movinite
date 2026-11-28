@@ -26,3 +26,7 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+
+# Roku channel tooling
+roku/node_modules/
+roku/out/

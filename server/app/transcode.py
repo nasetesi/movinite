@@ -207,7 +207,8 @@ def client_caps_from_params(params):
         "hdr10": _flag(g("hdr10")) or _flag(g("hdr")),
         "hlg": _flag(g("hlg")),
         "dv": _flag(g("dv")) or _flag(g("dolby_vision")),
-        "mkv": _flag(g("mkv")) or True,  # Media3 plays Matroska over HTTP
+        # 2.6.3: default True (Android ExoPlayer) but honor an explicit mkv=0 (Roku cannot Direct Play Matroska).
+        "mkv": _flag(g("mkv")) if g("mkv") not in (None, "") else True,
         "surr": int(g("surr") or 0) >= 6 or _flag(g("ac3")) or _flag(g("eac3")) or _flag(g("dts")) or _flag(g("truehd")),
         "maxh": maxh,
         "acopy": _flag(g("acopy")) or _flag(g("ac3")) or _flag(g("eac3")) or _flag(g("dts")) or _flag(g("truehd")),

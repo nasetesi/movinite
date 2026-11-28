@@ -210,7 +210,7 @@ def pair_deny(request: Request, body: dict = Body(...), u=Depends(auth.require_u
 
 @app.post("/api/logout")
 def logout(request: Request, response: Response):
-    tok = request.cookies.get(auth.COOKIE)
+    tok = auth.session_token_from_request(request)
     if tok:
         u = auth.user_from_token(tok)
         if u:
@@ -2713,7 +2713,7 @@ def _profile_ok(profile):
         raise HTTPException(409, "2K and 4K need hardware transcoding")
 
 
-def _player_query(audio, player, start=None, surr=0, burn=0, acopy=0):
+def _player_query(audio, player, start=None, surr=0, burn=0, acopy=0, session=None):
     q = "?audio=%d" % audio
     if player:
         q += "&player=%s" % transcode.normalize_player(player)
@@ -2725,7 +2725,30 @@ def _player_query(audio, player, start=None, surr=0, burn=0, acopy=0):
         q += "&burn=%d" % int(burn)
     if int(acopy or 0):
         q += "&acopy=1"
+    if session:
+        from urllib.parse import quote
+        q += "&ms_session=%s" % quote(str(session), safe="")
     return q
+
+
+def _embed_session(request):
+    """Bake the session into HLS child URLs only when a Roku (or similar) asked for it.
+
+    The token is the same cookie value already issued at sign-in. Web players keep
+    using cookies only, so their playlists stay free of a session query string.
+    """
+    if request is None:
+        return None
+    q = getattr(request, "query_params", None)
+    get = q.get if q is not None and hasattr(q, "get") else lambda *a, **k: ""
+    flag = str(get("embed_session") or "")
+    ua = ""
+    headers = getattr(request, "headers", None) or {}
+    if hasattr(headers, "get"):
+        ua = headers.get("user-agent") or ""
+    if flag.lower() in ("1", "true", "yes", "on") or "Movinite-Roku" in ua or "MoviniteRoku" in ua or get("ms_session"):
+        return auth.session_token_from_request(request)
+    return None
 
 
 @app.get("/api/items/{item_id}/hls/{profile}/index.m3u8")
@@ -2770,7 +2793,8 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
         if int(burn or 0) > 0:
             raise HTTPException(409, "Image subtitles need a transcode; remux cannot burn them in")
     need_init = transcode.split_profile(profile)[1] == "hevc" or (profile == "remux" and transcode.remux_codec(it) == "hevc")
-    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn, acopy)) if need_init else None
+    sess = _embed_session(request)
+    init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn, acopy, session=sess)) if need_init else None
     # 1.7.9: start ffmpeg as soon as the playlist is requested, so the first segment overlaps the player's next RTT
     if profile != "audio":
         try:
@@ -2778,7 +2802,7 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
             transcode.kickoff(s, max(0, start))
         except ValueError:
             pass
-    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn, acopy=acopy), bounds, init), media_type="application/vnd.apple.mpegurl",
+    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn, acopy=acopy, session=sess), bounds, init), media_type="application/vnd.apple.mpegurl",
                              headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
