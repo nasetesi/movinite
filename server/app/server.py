@@ -164,9 +164,14 @@ def login(request: Request, response: Response, body: dict = Body(...)):
     if u.get("disabled_at"):
         useractivity.record("login_failed", user=u, ip=ip, device=auth._device_name(ua), detail={"reason": "disabled"})
         raise HTTPException(403, "This account is turned off. Ask the server admin.")
-    _set_cookie(request, response, auth.new_session(u["id"], ip, ua))
+    tok = auth.new_session(u["id"], ip, ua)
+    _set_cookie(request, response, tok)
     useractivity.record("login", user=u, ip=ip, device=auth._device_name(ua))
-    return {"ok": True, "must_change_pw": bool(u["must_change_pw"])}
+    # 2.6.4: also return the session in the JSON body. Browser clients keep using
+    # the httponly cookie; Roku (and other apps) cannot reliably read Set-Cookie
+    # from roUrlTransfer, so they need the token here.
+    return {"ok": True, "must_change_pw": bool(u["must_change_pw"]),
+            "token": tok, "username": u.get("username") or tried}
 
 
 @app.post("/api/pair/start")
@@ -177,7 +182,9 @@ def pair_start(request: Request, body: dict = Body(default={})):
 
 def _pair_poll_result(request, response, token):
     r = pair.poll(request, token or "")
-    tok = r.pop("token", None)
+    # 2.6.4: keep token in the JSON as well as the cookie. 2.6.3 popped it
+    # so only Set-Cookie carried the session, which Roku clients often cannot read.
+    tok = r.get("token")
     if tok:
         _set_cookie(request, response, tok)
     return r

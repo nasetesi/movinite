@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.4 -- 2026-11-27
+A quick fix on top of 2.6.3 so the Roku app (and other non-browser clients) can finish sign-in. Schema stays at 15. No new Android app is needed. The Roku channel 0.1.4 reads this new JSON field and still accepts the cookie if a later server already set it.
+
+- **Password sign-in and phone-code approval now return the session token in the JSON body, as well as the `ms_session` cookie.** In 2.0–2.6.3 `/api/login` and an approved `/api/pair/poll` only set the httponly cookie and (for poll) removed `token` from the JSON. The web player is unaffected because it uses the cookie. Roku's `roUrlTransfer` often does not expose `Set-Cookie` in response headers, so the channel could sign in successfully and then show "Signed in, but no session cookie was returned," and a phone approval of the TV code never completed on the TV. The cookie is still set, so browsers and the Android app are unchanged.
+
 ## 2.6.3 -- 2026-11-27
 A quick fix on top of 2.6.2 plus a sideloadable Roku channel. Schema stays at 15. The Android app is unchanged; the new Roku app is sideloaded and is not a store release.
 
