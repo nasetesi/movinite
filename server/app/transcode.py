@@ -430,8 +430,12 @@ class Session:
         # overlay -> hwupload), so the "full" stage is kept for every VAAPI server.
         if self.burn and self.hw[0] == "nvenc":
             self.stages = [x for x in self.stages if x != "full"] or ["enc", "cpu"]
-        if self.hevc:
+        # Remux is stream copy, not a CPU HEVC encode, so it must keep a stage
+        # (otherwise stages becomes [] and Session.start() IndexErrors on self.stage).
+        if self.hevc and self.profile != "remux":
             self.stages = [x for x in self.stages if x != "cpu"]   # no CPU HEVC: the player steps down instead
+        if not self.stages:
+            self.stages = ["cpu"]
         self.stage_i = 0
         # 2.6.1: DV 8.1 / 7 and true mistagged HDR need a software tonemap.
         # A GPU-decode hop then software map was only ~1.0x; CPU decode + 1080
@@ -536,7 +540,10 @@ class Session:
 
     @property
     def stage(self):
-        return self.stages[self.stage_i]
+        if not self.stages:
+            return "cpu"
+        i = min(max(0, self.stage_i), len(self.stages) - 1)
+        return self.stages[i]
 
     @property
     def encoder(self):
@@ -1247,23 +1254,36 @@ def note_client(player_id, user, request=None, caps=""):
              normalize_player(player_id) or "-", uname, caps or "-", ua[:400])
 
 
-def playlist(item, query="", bounds=None, fmp4_init=None):
+def playlist(item, query="", bounds=None, fmp4_init=None, start=0):
+    """Build a VOD HLS playlist.
+
+    `start` is the first segment the current ffmpeg run will produce. A mid-watch
+    resume starts ffmpeg at that index, so the playlist must not list earlier
+    segments: ExoPlayer always requests the first URI in a VOD list, and serving
+    a 500 for the advertised seg0 (2.6.7 ignored it and returned None) is what
+    failed a 1080p resume at 1:34 on 2026-11-27.
+    """
     dur = item.get("duration") or SEG
+    start = max(0, int(start or 0))
     if bounds:
         durs = [(bounds[i + 1] if i + 1 < len(bounds) else dur) - bounds[i] for i in range(len(bounds))]
+        start = min(start, max(0, len(durs) - 1))
         lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:%d" % math.ceil(max(durs) + 0.5),
-                 "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS"]
+                 "#EXT-X-MEDIA-SEQUENCE:%d" % start, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS"]
         for i, d in enumerate(durs):
+            if i < start:
+                continue
             lines.append("#EXTINF:%.3f," % max(d, 0.001))
             lines.append("seg%d.ts%s" % (i, query))
         lines.append("#EXT-X-ENDLIST")
         return "\n".join(lines) + "\n"
     n = max(1, math.ceil(dur / SEG))
+    start = min(start, max(0, n - 1))
     lines = ["#EXTM3U", "#EXT-X-VERSION:%d" % (7 if fmp4_init else 3), "#EXT-X-TARGETDURATION:%d" % math.ceil(SEG),
-             "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS"]
+             "#EXT-X-MEDIA-SEQUENCE:%d" % start, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS"]
     if fmp4_init:
         lines.append('#EXT-X-MAP:URI="%s"' % fmp4_init)
-    for i in range(n):
+    for i in range(start, n):
         d = min(SEG, dur - i * SEG)
         if d <= 0.05:
             break
@@ -1271,6 +1291,17 @@ def playlist(item, query="", bounds=None, fmp4_init=None):
         lines.append("seg%d.%s%s" % (i, "m4s" if fmp4_init else "ts", query))
     lines.append("#EXT-X-ENDLIST")
     return "\n".join(lines) + "\n"
+
+
+def segment_missing_status(session, n):
+    """HTTP status when get_segment returned None.
+
+    A mid-watch run that ignores a stray seg0 is not a transcode failure; 404
+    tells the client the URI is not in this run. A real encode failure stays 500.
+    """
+    if session is not None and not session.failed and session._should_ignore_backward(n):
+        return 404
+    return 500
 
 
 def list_sessions():

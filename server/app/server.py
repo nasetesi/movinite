@@ -2817,13 +2817,17 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
     sess = _embed_session(request)
     init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn, acopy, session=sess)) if need_init else None
     # 1.7.9: start ffmpeg as soon as the playlist is requested, so the first segment overlaps the player's next RTT
+    play_start = max(0, start)
     if profile != "audio":
         try:
             s = transcode.get_session(it, profile, max(0, audio), u["id"], player, surr=surr, burn=burn, acopy=acopy)
-            transcode.kickoff(s, max(0, start))
+            transcode.kickoff(s, play_start)
+            # A playlist reload often arrives with start=0; kickoff keeps the
+            # playhead, and the playlist must list from that run's first segment.
+            play_start = max(0, int(getattr(s, "start_seg", play_start) or 0))
         except ValueError:
             pass
-    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn, acopy=acopy, session=sess), bounds, init), media_type="application/vnd.apple.mpegurl",
+    return PlainTextResponse(transcode.playlist(it, _player_query(audio, player, surr=surr, burn=burn, acopy=acopy, session=sess), bounds, init, start=play_start), media_type="application/vnd.apple.mpegurl",
                              headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -2871,6 +2875,9 @@ def _hls_segment_response(item_id, profile, n, audio, u, player="", disp=0, dec=
         raise HTTPException(404)
     p = s.get_segment(n)
     if not p:
+        status = transcode.segment_missing_status(s, n)
+        if status == 404:
+            raise HTTPException(404, "Segment is before the current transcode start")
         raise HTTPException(500, "Transcode failed; see %s" % (s.dir / "ffmpeg.log"))
     try:
         data = p.read_bytes()
