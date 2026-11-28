@@ -445,9 +445,11 @@ class Session:
                 self.stage_i = self.stages.index("enc")
         self.fallbacks = []
         self.started_at = 0
-        if bounds:
+        if bounds and not self.hevc:
             self.nseg = len(bounds)
         else:
+            # An HEVC remux is cut by the hls muxer at -hls_time SEG, not at `bounds`,
+            # so its segment count is the duration-based one even though bounds exist.
             self.nseg = max(1, math.ceil((item.get("duration") or SEG) / SEG))
 
     # --- ffmpeg -----------------------------------------------------------

@@ -2806,6 +2806,14 @@ def hls_playlist(item_id: int, profile: str, request: Request, audio: int = 0, s
         if int(burn or 0) > 0:
             raise HTTPException(409, "Image subtitles need a transcode; remux cannot burn them in")
     need_init = transcode.split_profile(profile)[1] == "hevc" or (profile == "remux" and transcode.remux_codec(it) == "hevc")
+    if need_init:
+        # An HEVC remux is muxed by ffmpeg's hls muxer into init%d.mp4 + seg%d.m4s at
+        # -hls_time SEG - the same layout as an HEVC transcode. `bounds` describes the
+        # MPEG-TS cut points used for an H.264 remux, and feeding it to playlist() took
+        # the bounded branch, which hardcodes seg%d.ts and drops fmp4_init entirely: the
+        # playlist advertised .ts names with no #EXT-X-MAP, so the player was handed
+        # fMP4 fragments with no init segment and never produced a picture.
+        bounds = None
     sess = _embed_session(request)
     init = ("init.mp4" + _player_query(audio, player, max(0, start), surr, burn, acopy, session=sess)) if need_init else None
     # 1.7.9: start ffmpeg as soon as the playlist is requested, so the first segment overlaps the player's next RTT
