@@ -64,6 +64,13 @@
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density"
             android:windowSoftInputMode="adjustResize" />
 
+        <activity
+            android:name=".TvLibrariesActivity"
+            android:exported="false"
+            android:label="@string/tv_libraries_title"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- 2.0: offline mode (unlock + downloads) and the built-in player -->
         <activity
             android:name=".OfflineActivity"

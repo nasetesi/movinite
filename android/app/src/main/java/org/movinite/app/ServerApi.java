@@ -41,15 +41,25 @@ final class ServerApi {
         return conn;
     }
 
-    JSONObject getJson(String pathAndQuery) throws Exception {
+    String getText(String pathAndQuery) throws Exception {
         HttpURLConnection conn = open(pathAndQuery);
         try {
             int code = conn.getResponseCode();
             InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
             String body = read(in);
             if (code >= 400) throw new ApiException(code, body);
-            return new JSONObject(body.isEmpty() ? "{}" : body);
+            return body;
         } finally { conn.disconnect(); }
+    }
+
+    JSONObject getJson(String pathAndQuery) throws Exception {
+        String body = getText(pathAndQuery);
+        return new JSONObject(body.isEmpty() ? "{}" : body);
+    }
+
+    org.json.JSONArray getJsonArray(String pathAndQuery) throws Exception {
+        String body = getText(pathAndQuery);
+        return new org.json.JSONArray(body.isEmpty() ? "[]" : body);
     }
 
     JSONObject postJson(String path, JSONObject body) throws Exception {

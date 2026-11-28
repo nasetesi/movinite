@@ -59,8 +59,11 @@ public class MainActivity extends Activity {
     static final String ACTION_RELOAD = "org.movinite.app.RELOAD";
     static final String ACTION_DOWNLOADS = "org.movinite.app.DOWNLOADS";
     static final String ACTION_SIGN_OUT = "org.movinite.app.SIGN_OUT";
+    static final String ACTION_LIBRARIES = "org.movinite.app.TV_LIBRARIES";
+    static final String ACTION_OPEN_LIBRARY = "org.movinite.app.OPEN_LIBRARY";
     static final String EXTRA_TV_USER = "tv_user";
     static final String EXTRA_TV_SERVER = "tv_server";
+    static final String EXTRA_LIBRARY_ID = "library_id";
     private static final int REQ_STORAGE = 7;
     static final int REQ_NATIVE_PLAY = 243;
 
@@ -202,6 +205,16 @@ public class MainActivity extends Activity {
         startActivity(i);
     }
 
+    /** 2.4.8: native TV Libraries, same scaffold as Settings. */
+    void openTvLibraries() {
+        if (web != null) web.evaluateJavascript("location.hash='#/home'", null);
+        startActivity(new Intent(this, TvLibrariesActivity.class));
+    }
+
+    void openLibrary(int id) {
+        if (web != null) web.evaluateJavascript("location.hash='#/library/" + id + "'", null);
+    }
+
     private String tvSimpleJs() {
         try (java.io.InputStream in = getAssets().open("tv_simple.js")) {
             java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
@@ -221,6 +234,12 @@ public class MainActivity extends Activity {
         if (i == null || web == null) return;
         String a = i.getAction();
         if (ACTION_SETTINGS.equals(a)) { i.setAction(Intent.ACTION_MAIN); if (isTelevision()) openTvSettings(); else openSettings(); }
+        else if (ACTION_LIBRARIES.equals(a)) { i.setAction(Intent.ACTION_MAIN); if (isTelevision()) openTvLibraries(); }
+        else if (ACTION_OPEN_LIBRARY.equals(a)) {
+            i.setAction(Intent.ACTION_MAIN);
+            int id = i.getIntExtra(EXTRA_LIBRARY_ID, 0);
+            if (id != 0) openLibrary(id);
+        }
         else if (ACTION_RELOAD.equals(a)) { i.setAction(Intent.ACTION_MAIN); retry(); }
         else if (ACTION_OPEN.equals(a)) { i.setAction(Intent.ACTION_MAIN); }
         else if (ACTION_SIGN_OUT.equals(a)) { i.setAction(Intent.ACTION_MAIN); signOut(); }
@@ -309,6 +328,16 @@ public class MainActivity extends Activity {
         if (bridge != null) bridge.detach();
         if (web != null) { web.stopLoading(); web.setWebChromeClient(null); web.destroy(); web = null; }
         super.onDestroy();
+    }
+
+    // 2.4.8: the TV Menu key must not open the web slide-out. Navigation
+    // is only the Home / Search / Libraries / Settings rail.
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (isTelevision() && event.getKeyCode() == android.view.KeyEvent.KEYCODE_MENU) {
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     // ---------------------------------------------------------------- back button
@@ -407,6 +436,9 @@ public class MainActivity extends Activity {
         /** 2.4.6: TV Settings screen (user, server, version, Change server, Sign out). */
         @android.webkit.JavascriptInterface
         public void openTvSettings() { runOnUiThread(MainActivity.this::openTvSettings); }
+        /** 2.4.8: native TV Libraries screen. */
+        @android.webkit.JavascriptInterface
+        public void openTvLibraries() { runOnUiThread(MainActivity.this::openTvLibraries); }
         /** 2.4: real MediaCodec / AudioCapabilities / display HDR modes, for Direct Play decisions. */
         @android.webkit.JavascriptInterface
         public String decoderCaps() { return Caps.detect(MainActivity.this).toString(); }

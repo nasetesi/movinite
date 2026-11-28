@@ -14,4 +14,6 @@
     <string name="tv_sign_out_confirm_title">Sign out?</string>
     <string name="tv_sign_out_confirm">You will need to sign in again to watch on this TV.</string>
     <string name="tv_sign_out_cancel">Cancel</string>
+    <string name="tv_libraries_title">Libraries</string>
+    <string name="tv_libraries_empty">No libraries yet.</string>
 </resources>

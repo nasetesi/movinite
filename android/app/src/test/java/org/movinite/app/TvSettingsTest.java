@@ -37,7 +37,7 @@ public class TvSettingsTest {
     }
 
     @Test public void versionLabelIncludesBuild() {
-        assertEquals("2.4.7  (build 15)", TvSettings.versionLabel("2.4.7", 15));
+        assertEquals("2.4.8  (build 16)", TvSettings.versionLabel("2.4.8", 16));
         assertEquals("?  (build 0)", TvSettings.versionLabel(null, 0));
     }
 

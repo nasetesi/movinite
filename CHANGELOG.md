@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.8 -- 2026-11-27
+An Android TV-only app update on top of 2.4.7 (versionCode 16). The phone UI and the native player are unchanged, and playback logic is unchanged.
+
+- **Settings and Libraries share one TV page look.** Both use the same header size, 5% side margins, card background, corner radius, border, and the purple-plus-white focus ring. Library rows are 68dp tall and sit in a two-column grid at the same content width as the Settings card, instead of a small list on the left. Group headings such as SUNSET SERVER / WAIMEA SERVER use the same small caps labels as User / Server / App version. Search keeps the on-screen keyboard, so it stays a web page, with Back going to Home.
+- **The slide-out side menu is off.** Left at the edge of the screen, or the Menu button, no longer opens the drawer. Navigation is only Home, Search, Libraries and Settings. Back from a top-level page (Search, or the native Settings and Libraries screens) returns to Home; Back from Home leaves the app.
+- **Long titles on the details screen wrap to two lines** instead of clipping the start of a name such as The Lord of the Rings: The Fellowship of the Ring.
+- **Playback errors no longer cover the synopsis.** A dismissable banner appears under the Play / Resume buttons. The underlying HTTP 500 that can appear when a title fails to start is a server issue and is not changed here.
+
 ## 2.4.7 -- 2026-11-27
 A follow-up to the Android TV Settings screen in 2.4.6 (versionCode 15). The phone UI and the native player are unchanged.
 

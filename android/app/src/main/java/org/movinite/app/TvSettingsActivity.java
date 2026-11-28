@@ -124,7 +124,7 @@ public class TvSettingsActivity extends Activity {
             if (Build.VERSION.SDK_INT >= 28) return (int) p.getLongVersionCode();
             return p.versionCode;
         } catch (Exception e) {
-            return 15;
+            return 16;
         }
     }
 }
