@@ -1,4 +1,4 @@
-"""2.6.3: Roku session auth, honor mkv=0, device name, sideload channel files."""
+"""2.6.3: Roku session auth, honor mkv=0, device name (channel source omitted)."""
 import os
 import sys
 import tempfile
@@ -124,24 +124,9 @@ check(_embed_session(r) == tok, "embed_session=1 with ms_session embeds the toke
 r2 = Req(ua="Movinite-Roku/0.1", query={"ms_session": tok})
 check(_embed_session(r2) == tok, "Movinite-Roku UA embeds ms_session")
 
-print("Roku channel files")
+print("Roku channel source is not in this tree")
 roku = REPO / "roku"
-check((roku / "manifest").is_file(), "roku/manifest exists")
-man = (roku / "manifest").read_text()
-check("title=Movinite" in man, "manifest title is Movinite")
-check("mm_icon_focus_hd=" in man and "splash_screen" in man, "manifest has icon and splash")
-check((roku / "source/main.brs").is_file(), "source/main.brs exists")
-check((roku / "components/MainScene.xml").is_file(), "MainScene exists")
-for name in ("SetupScreen", "LoginScreen", "HomeScreen", "LibraryScreen",
-             "SearchScreen", "DetailsScreen", "PlayerScreen"):
-    check((roku / "components/screens" / (name + ".xml")).is_file(), name + " exists")
-readme = (roku / "README.md").read_text() if (roku / "README.md").is_file() else ""
-check("Developer Mode" in readme and "Home" in readme, "sideload guide mentions Developer Mode")
-check("192.0.2.10" in readme or "<roku-ip>" in readme or "roku-ip" in readme.lower()
-      or "http://" in readme, "sideload guide mentions the dev installer URL")
-# no secrets
-blob = "\n".join([man, readme])
-check(".creds" not in blob and "BEGIN " not in blob, "roku docs have no keystore or creds")
+check(not roku.exists(), "roku/ is omitted until the channel is confirmed ready")
 
 if failed:
     print("\n%d check(s) failed" % failed)

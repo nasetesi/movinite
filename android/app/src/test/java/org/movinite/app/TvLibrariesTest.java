@@ -98,7 +98,7 @@ public class TvLibrariesTest {
 
     @Test public void libraryListHashIsOnlyTheList() {
         assertTrue(TvLibraries.isLibraryListHash("#/library/3"));
-        assertTrue(TvLibraries.isLibraryListHash("https://media.tukuia.com/#/library/-5"));
+        assertTrue(TvLibraries.isLibraryListHash("https://192.0.2.10/#/library/-5"));
         assertTrue(TvLibraries.isLibraryListHash("#/library/12/"));
         assertFalse(TvLibraries.isLibraryListHash("#/library/3/collection/9"));
         assertFalse(TvLibraries.isLibraryListHash("#/libraries"));
