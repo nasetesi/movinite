@@ -361,6 +361,13 @@ public class MainActivity extends Activity {
                 if (web == null) return;
                 String cur = web.getUrl();
                 if (isHomeUrl(cur)) { appMenu(); return; }
+                // 2.4.9: Back from a library's title grid returns to the native
+                // Libraries screen. MainActivity is singleTask, so opening a
+                // library had popped that activity off the stack.
+                if (isTelevision() && TvLibraries.isLibraryListHash(cur)) {
+                    openTvLibraries();
+                    return;
+                }
                 // never step back into the sign-in page / first load: go to Home instead
                 android.webkit.WebBackForwardList h = web.copyBackForwardList();
                 int i = h.getCurrentIndex();

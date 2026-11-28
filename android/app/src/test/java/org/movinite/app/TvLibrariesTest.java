@@ -75,6 +75,38 @@ public class TvLibrariesTest {
         assertTrue(TvLibraries.groups(new JSONArray()).isEmpty());
     }
 
+    @Test public void cellsAndNeighborsMatchTwoColumnGroups() {
+        // Sunset (3) + Waimea (3), the layout on the Philips TV.
+        java.util.List<TvLibraries.Cell> c = TvLibraries.cells(3, 3);
+        assertEquals(6, c.size());
+        assertEquals(0, c.get(0).col); assertEquals(0, c.get(0).row); // Sunset Movies
+        assertEquals(1, c.get(1).col); assertEquals(0, c.get(1).row); // Sunset TV
+        assertEquals(0, c.get(2).col); assertEquals(1, c.get(2).row); // Music
+        assertEquals(0, c.get(3).col); assertEquals(2, c.get(3).row); // Waimea Movies
+        assertEquals(1, c.get(4).col); assertEquals(2, c.get(4).row); // Waimea TV
+        assertEquals(0, c.get(5).col); assertEquals(3, c.get(5).row); // Waimea Other
+        assertEquals(1, TvLibraries.neighbor(c, 0, 1, 0));  // right to Sunset TV
+        assertEquals(0, TvLibraries.neighbor(c, 0, -1, 0)); // no left
+        assertEquals(2, TvLibraries.neighbor(c, 0, 0, 1));  // down to Music
+        assertEquals(3, TvLibraries.neighbor(c, 2, 0, 1));  // Music down to Waimea Movies
+        assertEquals(5, TvLibraries.neighbor(c, 3, 0, 1));  // Waimea Movies down to Other
+        assertEquals(4, TvLibraries.neighbor(c, 1, 0, 1));  // Sunset TV down to Waimea TV
+        assertEquals(1, TvLibraries.neighbor(c, 1, 0, -1)); // Sunset TV has no up
+        assertEquals(3, TvLibraries.neighbor(c, 4, -1, 0)); // Waimea TV left
+        assertEquals(5, TvLibraries.neighbor(c, 5, 1, 0));  // Other has no right
+    }
+
+    @Test public void libraryListHashIsOnlyTheList() {
+        assertTrue(TvLibraries.isLibraryListHash("#/library/3"));
+        assertTrue(TvLibraries.isLibraryListHash("https://media.tukuia.com/#/library/-5"));
+        assertTrue(TvLibraries.isLibraryListHash("#/library/12/"));
+        assertFalse(TvLibraries.isLibraryListHash("#/library/3/collection/9"));
+        assertFalse(TvLibraries.isLibraryListHash("#/libraries"));
+        assertFalse(TvLibraries.isLibraryListHash("#/item/12"));
+        assertFalse(TvLibraries.isLibraryListHash("#/home"));
+        assertFalse(TvLibraries.isLibraryListHash(null));
+    }
+
     private static JSONObject lib(int id, String name, String kind, Integer films, int items,
                                   int shareId, String shareName, boolean remote) throws Exception {
         JSONObject o = new JSONObject();

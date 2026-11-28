@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -19,9 +20,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Android TV Libraries (2.4.8): same page scaffold as Settings, with
+ * Android TV Libraries (2.4.9): same page scaffold as Settings, with
  * share/server group labels and a 2-column grid of large focusable rows.
- * Phones do not open this screen.
+ * Each row gets a unique view id so the D-pad can move, and OK/Enter
+ * opens the library. Phones do not open this screen.
  */
 public class TvLibrariesActivity extends Activity {
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -112,50 +114,47 @@ public class TvLibrariesActivity extends Activity {
                 pair.addView(spacer, sp);
             }
         }
-        wireFocus();
+        int[] sizes = new int[groups.size()];
+        for (int i = 0; i < groups.size(); i++) sizes[i] = groups.get(i).libs.size();
+        wireFocus(TvLibraries.cells(sizes));
         if (!rows.isEmpty()) rows.get(0).requestFocus();
     }
 
     private View inflateRow(LayoutInflater inf, ViewGroup parent, TvLibraries.Lib lib) {
         View row = inf.inflate(R.layout.item_tv_library, parent, false);
+        // 2.4.9: every inflated row used to share @id/row, so nextFocus* all
+        // pointed at the first cell and the D-pad appeared dead.
+        row.setId(View.generateViewId());
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setFocusableInTouchMode(true);
+        if (row instanceof ViewGroup) {
+            ((ViewGroup) row).setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        }
         ((TextView) row.findViewById(R.id.lib_name)).setText(lib.name);
         ((TextView) row.findViewById(R.id.lib_sub)).setText(lib.subtitle);
         final int id = lib.id;
         row.setOnClickListener(v -> openLibrary(id));
+        row.setOnKeyListener((v, keyCode, ev) -> {
+            if (ev.getAction() != KeyEvent.ACTION_DOWN) return false;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER
+                    || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER || keyCode == KeyEvent.KEYCODE_BUTTON_A) {
+                v.performClick();
+                return true;
+            }
+            return false;
+        });
         return row;
     }
 
-    private void wireFocus() {
+    private void wireFocus(List<TvLibraries.Cell> cells) {
         int n = rows.size();
         for (int i = 0; i < n; i++) {
             View v = rows.get(i);
-            int left = (i % 2 == 1) ? i - 1 : i;
-            int right = (i % 2 == 0 && i + 1 < n) ? i + 1 : i;
-            int up = i - 2;
-            if (up < 0) up = (i % 2 == 1 && i - 1 >= 0) ? i - 1 : i;
-            int down = i + 2;
-            if (down >= n) down = (i + 1 < n) ? i + 1 : i;
-            v.setNextFocusLeftId(rows.get(left).getId());
-            v.setNextFocusRightId(rows.get(right).getId());
-            v.setNextFocusUpId(rows.get(up).getId());
-            v.setNextFocusDownId(rows.get(down).getId());
-        }
-        // Assign ids so nextFocus* works (views inflated without ids share NONE).
-        for (int i = 0; i < n; i++) {
-            if (rows.get(i).getId() == View.NO_ID) rows.get(i).setId(View.generateViewId());
-        }
-        for (int i = 0; i < n; i++) {
-            View v = rows.get(i);
-            int left = (i % 2 == 1) ? i - 1 : i;
-            int right = (i % 2 == 0 && i + 1 < n) ? i + 1 : i;
-            int up = i - 2;
-            if (up < 0) up = (i % 2 == 1 && i - 1 >= 0) ? i - 1 : i;
-            int down = i + 2;
-            if (down >= n) down = (i + 1 < n) ? i + 1 : i;
-            v.setNextFocusLeftId(rows.get(left).getId());
-            v.setNextFocusRightId(rows.get(right).getId());
-            v.setNextFocusUpId(rows.get(up).getId());
-            v.setNextFocusDownId(rows.get(down).getId());
+            v.setNextFocusLeftId(rows.get(TvLibraries.neighbor(cells, i, -1, 0)).getId());
+            v.setNextFocusRightId(rows.get(TvLibraries.neighbor(cells, i, 1, 0)).getId());
+            v.setNextFocusUpId(rows.get(TvLibraries.neighbor(cells, i, 0, -1)).getId());
+            v.setNextFocusDownId(rows.get(TvLibraries.neighbor(cells, i, 0, 1)).getId());
         }
     }
 

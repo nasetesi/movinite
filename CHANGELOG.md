@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.9 -- 2026-11-27
+A follow-up to the Android TV Libraries screen in 2.4.8 (versionCode 17). The phone UI and the native player are unchanged.
+
+- **The remote can move around the Libraries grid and open a library.** In 2.4.8 every library row was inflated with the same view id (`@id/row`). The D-pad's next-focus links all pointed at the first cell, so Left/Right/Up/Down appeared to do nothing and only the top-left row could be used. Each row now has a unique id, neighbors follow the two-column layout (including across group headings), OK/Enter/Center opens the library, and the list's ScrollView no longer takes focus.
+- **Back from a library's title grid returns to Libraries, then Home.** Opening a library has to bring MainActivity (singleTask) to the front, which had popped the Libraries screen off the stack, so Back jumped straight to Home. Back on a library list now reopens the native Libraries screen; Back there still returns to Home.
+
 ## 2.4.8 -- 2026-11-27
 An Android TV-only app update on top of 2.4.7 (versionCode 16). The phone UI and the native player are unchanged, and playback logic is unchanged.
 

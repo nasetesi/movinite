@@ -45,6 +45,84 @@ final class TvLibraries {
         }
     }
 
+    /** One cell in the 2-column TV grid, used to wire D-pad neighbors. */
+    static final class Cell {
+        final int index;
+        final int row;
+        final int col;
+        Cell(int index, int row, int col) {
+            this.index = index;
+            this.row = row;
+            this.col = col;
+        }
+    }
+
+    /**
+     * Place libraries into a 2-column grid, starting a new row at each group
+     * and after every two items. Group sizes are the number of libraries in
+     * each group, in display order.
+     */
+    static List<Cell> cells(int... groupSizes) {
+        List<Cell> out = new ArrayList<>();
+        int index = 0, gridRow = 0;
+        for (int n : groupSizes) {
+            if (n < 0) continue;
+            for (int i = 0; i < n; i++) {
+                if (i > 0 && i % 2 == 0) gridRow++;
+                out.add(new Cell(index, gridRow, i % 2));
+                index++;
+            }
+            if (n > 0) gridRow++;
+        }
+        return out;
+    }
+
+    /** Neighbor in one direction; returns the same index if there isn't one. */
+    static int neighbor(List<Cell> cells, int index, int dx, int dy) {
+        if (cells == null || index < 0 || index >= cells.size()) return index;
+        Cell c = cells.get(index);
+        if (dx != 0 && dy == 0) {
+            int wantCol = c.col + dx;
+            for (Cell o : cells) {
+                if (o.row == c.row && o.col == wantCol) return o.index;
+            }
+            return index;
+        }
+        if (dy != 0 && dx == 0) {
+            int best = -1, bestRow = dy > 0 ? Integer.MAX_VALUE : Integer.MIN_VALUE;
+            for (Cell o : cells) {
+                if (o.col != c.col) continue;
+                if (dy > 0 && o.row > c.row && o.row < bestRow) { best = o.index; bestRow = o.row; }
+                if (dy < 0 && o.row < c.row && o.row > bestRow) { best = o.index; bestRow = o.row; }
+            }
+            return best >= 0 ? best : index;
+        }
+        return index;
+    }
+
+    /** True for the library list itself (#/library/3), not a deeper collection path. */
+    static boolean isLibraryListHash(String urlOrHash) {
+        if (urlOrHash == null) return false;
+        String h = urlOrHash.trim();
+        int hash = h.indexOf('#');
+        if (hash >= 0) h = h.substring(hash + 1);
+        if (h.startsWith("/")) h = h.substring(1);
+        int q = h.indexOf('?');
+        if (q >= 0) h = h.substring(0, q);
+        if (h.endsWith("/")) h = h.substring(0, h.length() - 1);
+        if (!h.startsWith("library/")) return false;
+        String rest = h.substring("library/".length());
+        if (rest.isEmpty()) return false;
+        if (rest.charAt(0) == '-') {
+            if (rest.length() == 1) return false;
+            rest = rest.substring(1);
+        }
+        for (int i = 0; i < rest.length(); i++) {
+            if (!Character.isDigit(rest.charAt(i))) return false;
+        }
+        return true;
+    }
+
     static String kindLabel(String kind) {
         String k = kind == null ? "" : kind.trim().toLowerCase();
         switch (k) {
